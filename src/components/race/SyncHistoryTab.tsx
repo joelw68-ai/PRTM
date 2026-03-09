@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import {
   getSyncHistory,
   clearSyncHistory,
@@ -144,7 +145,8 @@ const SyncHistoryTab: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `sync-history-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `sync-history-${getLocalDateString()}.csv`;
+
     a.click();
     URL.revokeObjectURL(url);
   };

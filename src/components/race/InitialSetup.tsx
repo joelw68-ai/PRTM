@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+
+import { getLocalDateString } from '@/lib/utils';
 import DateInputDark from '@/components/ui/DateInputDark';
 import { supabase } from '@/lib/supabase';
 import { parseRows } from '@/lib/validatedQuery';
@@ -269,7 +271,8 @@ const InitialSetup: React.FC<InitialSetupProps> = ({ currentRole }) => {
   const defaultCrewForm: Partial<TeamMember> = {
     name: '', email: '', phone: '', role: 'Crew',
     permissions: ['view'], specialties: [], isActive: true,
-    joinedDate: new Date().toISOString().split('T')[0],
+    joinedDate: getLocalDateString(),
+
     emergencyContactName: '', emergencyContactPhone: '',
     notes: '', hourlyRate: undefined, dailyRate: undefined
   };
@@ -538,7 +541,8 @@ const InitialSetup: React.FC<InitialSetupProps> = ({ currentRole }) => {
         permissions: crewForm.permissions || ['view'],
         specialties: crewForm.specialties,
         isActive: crewForm.isActive ?? true,
-        joinedDate: crewForm.joinedDate || new Date().toISOString().split('T')[0],
+        joinedDate: crewForm.joinedDate || getLocalDateString(),
+
         emergencyContactName: crewForm.emergencyContactName,
         emergencyContactPhone: crewForm.emergencyContactPhone,
         notes: crewForm.notes,

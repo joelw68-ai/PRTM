@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 
 import { useApp } from '@/contexts/AppContext';
 import InvoiceUpload from './InvoiceUpload';
@@ -131,7 +132,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
     notes: '',
     rating: 5,
     isActive: true,
-    createdDate: new Date().toISOString().split('T')[0]
+    createdDate: getLocalDateString()
+
   };
 
   const [newVendor, setNewVendor] = useState<Vendor>(defaultVendor);
@@ -141,8 +143,7 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
     id: '',
     vendorId: '',
     vendorName: '',
-    status: 'Draft',
-    createdDate: new Date().toISOString().split('T')[0],
+    createdDate: getLocalDateString(),
     items: [],
     subtotal: 0,
     discount: 0,
@@ -152,6 +153,7 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
     notes: '',
     createdBy: 'Current User'
   };
+
 
   const [newPO, setNewPO] = useState<PurchaseOrder>(defaultPO);
   const [newPOItem, setNewPOItem] = useState<PurchaseOrderItem>({
@@ -308,10 +310,11 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
       subtotal,
       discount,
       total,
-      expectedDelivery: vendor ? 
-        new Date(Date.now() + vendor.leadTimeDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : 
+      expectedDelivery: vendor ?
+        getLocalDateString(new Date(Date.now() + vendor.leadTimeDays * 24 * 60 * 60 * 1000)) :
         undefined
     };
+
     
     setPurchaseOrders(prev => [po, ...prev]);
     setShowPOModal(false);
@@ -321,10 +324,10 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
   const handleUpdatePOStatus = (poId: string, status: PurchaseOrder['status']) => {
     setPurchaseOrders(prev => prev.map(po => {
       if (po.id === poId) {
-        const updates: Partial<PurchaseOrder> = { status };
-        if (status === 'Submitted') updates.submittedDate = new Date().toISOString().split('T')[0];
+        const updates: any = { status };
+        if (status === 'Submitted') updates.submittedDate = getLocalDateString();
         if (status === 'Received') {
-          updates.receivedDate = new Date().toISOString().split('T')[0];
+          updates.receivedDate = getLocalDateString();
           
           // Update vendor performance
           const vendor = vendors.find(v => v.id === po.vendorId);
@@ -353,6 +356,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
       return po;
     }));
   };
+
+
 
   const handleReportQualityIssue = (vendorId: string) => {
     setVendorPerformance(prev => prev.map(vp => {
@@ -420,7 +425,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `vendors_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `purchase_orders_${getLocalDateString()}.csv`;
+
     a.click();
   };
 
@@ -434,7 +440,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `purchase_orders_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `vendor_list_${getLocalDateString()}.csv`;
+
     a.click();
   };
 

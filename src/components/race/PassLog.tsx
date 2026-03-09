@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import { toast } from 'sonner';
 import DateInputDark from '@/components/ui/DateInputDark';
 
@@ -128,15 +129,21 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
   const activeEngine = getActiveEngine();
   const activeSupercharger = getActiveSupercharger();
-
   // Default form state for new pass
   // First pass ever: car setup fields default to 0
   // Subsequent passes: pre-fill car setup from the most recent previous pass
   const getDefaultPassState = (): Partial<PassLogEntry> => {
     const mostRecent = passLogs.length > 0 ? passLogs[0] : null;
 
+    // Build today's date in LOCAL time (not UTC).
+    // new Date().toISOString() converts to UTC which can shift the calendar day
+    // in negative-UTC timezones (e.g. US time zones).  Instead, use the local
+    // year/month/day components directly.
+    const now = new Date();
+    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
     return {
-      date: new Date().toISOString().split('T')[0],
+      date: localDate,
       time: new Date().toTimeString().slice(0, 5),
       track: '',
       location: '',
@@ -174,6 +181,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       car_id: selectedCarId || '',
     };
   };
+
 
 
 
@@ -231,9 +239,12 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
         
         // Auto-fetch weather for today (not historical)
-        const today = new Date().toISOString().split('T')[0];
-        const isToday = formData.date === today;
+        // Use local date components to avoid UTC shift from toISOString()
+        const now = new Date();
+        const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const isToday = formData.date === todayLocal;
         if (isToday) {
+
           // Small delay to let form data update first
           setTimeout(async () => {
             try {
@@ -394,7 +405,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
         notes: '',
         isFavorite: false,
         visitCount: 1,
-        lastVisited: new Date().toISOString().split('T')[0]
+        lastVisited: getLocalDateString()
+
       };
       
       await addSavedTrack(newTrack);
@@ -414,10 +426,14 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     if (!formData.date) return false;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const selectedDate = new Date(formData.date);
+    // Parse as LOCAL time by appending T00:00:00 (no trailing Z).
+    // new Date("2026-03-09") parses as UTC midnight, which in negative-UTC
+    // timezones (e.g. US) becomes the previous calendar day in local time.
+    const selectedDate = new Date(formData.date + 'T00:00:00');
     selectedDate.setHours(0, 0, 0, 0);
     return selectedDate < today;
   };
+
 
   // Fetch weather from WeatherAPI.com (supports both current and historical)
   const fetchWeather = async () => {
@@ -462,13 +478,15 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
         
         // Show different success message for historical vs current weather
         if (data.isHistorical) {
-          const formattedDate = new Date(formData.date!).toLocaleDateString('en-US', { 
+          // Parse as local time to avoid UTC date shift in the formatted display
+          const formattedDate = new Date(formData.date! + 'T00:00:00').toLocaleDateString('en-US', { 
             weekday: 'short', 
             month: 'short', 
             day: 'numeric', 
             year: 'numeric' 
           });
           setWeatherSuccess(`Historical weather loaded for ${locationName} on ${formattedDate}`);
+
         } else {
           setWeatherSuccess(`Current weather loaded for ${locationName}`);
         }
@@ -633,7 +651,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `pass_log_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `pass_log_${getLocalDateString()}.csv`;
+
     a.click();
   };
 

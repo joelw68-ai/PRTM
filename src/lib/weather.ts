@@ -367,7 +367,11 @@ export async function fetchWeatherData(
     if (!date) return false;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const selectedDate = new Date(date);
+    // Parse date string as LOCAL time (not UTC) by appending T00:00:00 without Z.
+    // new Date("2026-03-09") parses as UTC midnight which shifts the day in
+    // negative-UTC timezones.  new Date("2026-03-09T00:00:00") parses as local
+    // midnight, keeping the calendar day correct.
+    const selectedDate = new Date(date + 'T00:00:00');
     selectedDate.setHours(0, 0, 0, 0);
     return selectedDate < today;
   })();
@@ -378,6 +382,7 @@ export async function fetchWeatherData(
     return fetchCurrentWeather(location);
   }
 }
+
 
 // ─── Fetch extended weather data for the dashboard widget ────────────────────
 
@@ -514,8 +519,13 @@ export async function fetchRaceDayForecast(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const target = new Date(eventDate + 'T00:00:00');
+  target.setHours(0, 0, 0, 0);
   const diffMs = target.getTime() - today.getTime();
-  const daysUntil = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  // Use Math.round (not Math.ceil) so DST transitions (±1 hr) don't shift
+  // the day count.  E.g. 23 h (spring-forward) → round(0.958) = 1,
+  // 25 h (fall-back) → round(1.042) = 1.
+  const daysUntil = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
 
   const unavailable: RaceDayForecastData = {
     location: '', region: '', date: eventDate,

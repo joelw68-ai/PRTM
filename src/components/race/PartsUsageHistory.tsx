@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import DateInputDark from '@/components/ui/DateInputDark';
 import TimeInputDark from '@/components/ui/TimeInputDark';
 
@@ -107,7 +108,8 @@ const PartsUsageHistory: React.FC = () => {
           break;
       }
       
-      const cutoffStr = cutoffDate.toISOString().split('T')[0];
+      const cutoffStr = getLocalDateString(cutoffDate);
+
       records = records.filter(r => r.date >= cutoffStr);
     }
     
@@ -231,7 +233,8 @@ const PartsUsageHistory: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `parts_usage_history_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `parts_usage_history_${getLocalDateString()}.csv`;
+
     a.click();
   };
   
@@ -974,7 +977,8 @@ const PartsUsageHistory: React.FC = () => {
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">Date *</label>
                   <DateInputDark
-                    defaultValue={new Date().toISOString().split('T')[0]}
+                    defaultValue={getLocalDateString()}
+
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   />
 

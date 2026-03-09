@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { 
   HelpCircle, 
   Book, 
-  Video, 
   FileText, 
   ChevronDown, 
   ChevronUp,
@@ -12,10 +11,9 @@ import {
   Wrench,
   Shield,
   Settings,
-  RefreshCw,
-  Printer,
-  Download
+  RefreshCw
 } from 'lucide-react';
+
 
 const HeroSection: React.FC = () => {
   const [expandedSection, setExpandedSection] = useState<string | null>('getting-started');

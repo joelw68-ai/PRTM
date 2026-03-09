@@ -1,4 +1,5 @@
-// ===== EXPENSE EXPORT UTILITIES =====
+import { supabase } from './supabase';
+import { getLocalDateString } from './utils';
 // Handles CSV export, printable PDF reports, per-event reports, and monthly statements
 
 export interface ExportableExpense {
@@ -138,7 +139,8 @@ export const exportToCSV = (
     ...rows.map(row => row.map(escapeCSV).join(','))
   ].join('\n');
 
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = getLocalDateString();
+
   const filename = `misc_expenses_${dateStr}.csv`;
   downloadFile(csvContent, filename, 'text/csv;charset=utf-8;');
 };
@@ -709,6 +711,7 @@ export const exportPerEventCSV = (
     ...rows.map(row => row.map(escapeCSV).join(','))
   ].join('\n');
 
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = getLocalDateString();
+
   downloadFile(csvContent, `expense_by_event_${dateStr}.csv`, 'text/csv;charset=utf-8;');
 };

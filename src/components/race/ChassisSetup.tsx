@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { getLocalDateString } from '@/lib/utils';
+
 import DateInputDark from '@/components/ui/DateInputDark';
 
 import { supabase } from '@/lib/supabase';
@@ -268,7 +270,8 @@ const ChassisSetup: React.FC<ChassisSetupProps> = ({ currentRole = 'Crew' }) => 
   const [setupName, setSetupName] = useState('New Setup');
   const [setupDescription, setSetupDescription] = useState('');
   const [raceEvent, setRaceEvent] = useState('');
-  const [raceDate, setRaceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [raceDate, setRaceDate] = useState(getLocalDateString());
+
   const [trackName, setTrackName] = useState('');
   const [trackConditions, setTrackConditions] = useState('');
   const [weatherConditions, setWeatherConditions] = useState('');
@@ -403,9 +406,9 @@ const ChassisSetup: React.FC<ChassisSetupProps> = ({ currentRole = 'Crew' }) => 
     setSelectedSetupId(setup.id);
     setSetupName(setup.name);
     setSetupDescription(setup.description || '');
-    setRaceEvent(setup.race_event || '');
-    setRaceDate(setup.race_date || new Date().toISOString().split('T')[0]);
-    setTrackName(setup.track_name || '');
+    setRaceDate(setup.race_date || getLocalDateString());
+
+
     setTrackConditions(setup.track_conditions || '');
     setWeatherConditions(setup.weather_conditions || '');
     setPerformanceNotes(setup.performance_notes || '');
@@ -720,10 +723,10 @@ const ChassisSetup: React.FC<ChassisSetupProps> = ({ currentRole = 'Crew' }) => 
   const createNewSetup = () => {
     setSelectedSetupId(null);
     setSetupName('New Setup');
-    setSetupDescription('');
+    setRaceDate(getLocalDateString());
+
     setRaceEvent('');
-    setRaceDate(new Date().toISOString().split('T')[0]);
-    setTrackName('');
+
     setTrackConditions('');
     setWeatherConditions('');
     setPerformanceNotes('');

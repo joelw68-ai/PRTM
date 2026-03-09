@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import DateInputDark from '@/components/ui/DateInputDark';
 import CarDropdown from '@/components/race/CarDropdown';
 import { useCar } from '@/contexts/CarContext';
@@ -325,12 +326,12 @@ const WorkOrderSystem: React.FC = () => {
         partNumber: part.partNumber,
         partDescription: part.name,
         action: 'installed',
-        date: new Date().toISOString().split('T')[0],
+        date: getLocalDateString(),
         time: new Date().toTimeString().slice(0, 5),
         installedOn: workOrder.category,
         passesAtAction: passLogs.length,
 
-        installDate: new Date().toISOString().split('T')[0],
+        installDate: getLocalDateString(),
         workOrderId: workOrder.id,
         cost: part.cost || 0,
         laborHours: (workOrder.actualHours || workOrder.estimatedHours || 0) / parts.length,
@@ -352,7 +353,7 @@ const WorkOrderSystem: React.FC = () => {
           onHand: newOnHand,
           totalValue: newOnHand * inventoryPart.unitCost,
           status: newStatus,
-          lastUsed: new Date().toISOString().split('T')[0]
+          lastUsed: getLocalDateString()
         });
 
       }
@@ -370,7 +371,7 @@ const WorkOrderSystem: React.FC = () => {
     // Update work order status
     await updateWorkOrder(workOrderId, { 
       status: 'Completed',
-      completedDate: new Date().toISOString().split('T')[0]
+      completedDate: getLocalDateString()
     });
   };
 
@@ -398,8 +399,8 @@ const WorkOrderSystem: React.FC = () => {
                alert.urgency === 'high' ? 'High' : 
                alert.urgency === 'medium' ? 'Medium' : 'Low',
       status: 'Open',
-      createdDate: new Date().toISOString().split('T')[0],
-      dueDate: new Date(Date.now() + (alert.urgency === 'critical' ? 3 : alert.urgency === 'high' ? 7 : 14) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      createdDate: getLocalDateString(),
+      dueDate: getLocalDateString(new Date(Date.now() + (alert.urgency === 'critical' ? 3 : alert.urgency === 'high' ? 7 : 14) * 24 * 60 * 60 * 1000)),
       assignedTo: teamMembers.length > 0 ? teamMembers[0].name : 'Unassigned',
       estimatedHours,
       parts: suggestedPartsList,
@@ -446,8 +447,8 @@ const WorkOrderSystem: React.FC = () => {
     category: 'General',
     priority: 'Medium',
     status: 'Open',
-    createdDate: new Date().toISOString().split('T')[0],
-    dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    createdDate: getLocalDateString(),
+    dueDate: getLocalDateString(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
     assignedTo: '',
     estimatedHours: 1,
     parts: [],
@@ -529,7 +530,7 @@ const WorkOrderSystem: React.FC = () => {
 
     const newId = `PART-${String(partsInventory.length + 1).padStart(4, '0')}`;
     const newPartNumber = part.partNumber || `WO-${newId}`;
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateString();
     
     const inventoryItem: PartInventoryItem = {
       id: newId,

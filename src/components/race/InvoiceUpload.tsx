@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { uploadWithFallback, getStorageErrorMessage } from '@/lib/storageUpload';
 import { parseRows } from '@/lib/validatedQuery';
@@ -99,7 +100,8 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
     vendor_id: '',
     vendor_name: '',
     invoice_number: '',
-    invoice_date: new Date().toISOString().split('T')[0],
+    invoice_date: getLocalDateString(),
+
     due_date: '',
     amount: 0,
     tax: 0,
@@ -255,7 +257,8 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
         code: vendorCode,
         category: newVendorCategory,
         is_active: true,
-        created_date: new Date().toISOString().split('T')[0],
+        created_date: getLocalDateString(),
+
         updated_at: new Date().toISOString()
       };
       if (user?.id) payload.user_id = user.id;
@@ -499,7 +502,8 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
   const handleUpdateStatus = async (id: string, status: Invoice['status']) => {
     try {
       const updates: any = { status, updated_at: new Date().toISOString() };
-      if (status === 'Paid') updates.payment_date = new Date().toISOString().split('T')[0];
+      if (status === 'Paid') updates.payment_date = getLocalDateString();
+
       const { error } = await supabase.from('vendor_invoices').update(updates).eq('id', id);
       if (error) throw error;
       await loadInvoices();
@@ -566,7 +570,8 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
   const resetForm = () => {
     setNewInvoice({
       vendor_id: '', vendor_name: '', invoice_number: '',
-      invoice_date: new Date().toISOString().split('T')[0],
+      invoice_date: getLocalDateString(),
+
       due_date: '', amount: 0, tax: 0, total: 0,
       status: 'Pending', po_number: '', notes: '', category: '',
       payment_method: '', linked_event_id: '', linked_work_order_id: '',

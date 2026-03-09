@@ -1,3 +1,4 @@
+import { getLocalDateString } from './utils';
 /**
  * Receipt OCR Processing Module
  * 
@@ -275,7 +276,8 @@ const extractDate = (text: string): OcrField | null => {
           }
 
           if (date && !isNaN(date.getTime())) {
-            const isoDate = date.toISOString().split('T')[0];
+            const isoDate = getLocalDateString(date);
+
             return {
               value: isoDate,
               confidence,

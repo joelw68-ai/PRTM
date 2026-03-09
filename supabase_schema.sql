@@ -384,6 +384,8 @@ CREATE TABLE IF NOT EXISTS public.race_events (
   event_type        TEXT DEFAULT 'Race',
   track_name        TEXT,
   track_location    TEXT,
+  track_address     TEXT,
+  track_zip         TEXT,
   start_date        TEXT NOT NULL,
   end_date          TEXT,
   start_time        TEXT,
@@ -400,6 +402,7 @@ CREATE TABLE IF NOT EXISTS public.race_events (
   created_at        TIMESTAMPTZ DEFAULT NOW(),
   updated_at        TIMESTAMPTZ DEFAULT NOW()
 );
+
 
 ALTER TABLE public.race_events ENABLE ROW LEVEL SECURITY;
 
@@ -914,6 +917,8 @@ CREATE INDEX IF NOT EXISTS idx_parts_inv_user_id      ON public.parts_inventory(
 CREATE INDEX IF NOT EXISTS idx_parts_inv_category     ON public.parts_inventory(category);
 CREATE INDEX IF NOT EXISTS idx_race_events_user_id    ON public.race_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_race_events_date       ON public.race_events(start_date DESC);
+CREATE INDEX IF NOT EXISTS idx_race_events_track_zip  ON public.race_events(track_zip);
+
 CREATE INDEX IF NOT EXISTS idx_team_members_user_id   ON public.team_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_media_gallery_user_id  ON public.media_gallery(user_id);
 CREATE INDEX IF NOT EXISTS idx_saved_tracks_user_id   ON public.saved_tracks(user_id);

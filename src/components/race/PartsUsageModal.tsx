@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { PartInventoryItem } from '@/data/partsInventory';
@@ -103,7 +104,8 @@ const PartsUsageModal: React.FC<PartsUsageModalProps> = ({
     setError(null);
 
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getLocalDateString();
+
       
       for (const sel of selectedParts) {
         const newOnHand = sel.part.onHand - sel.quantity;

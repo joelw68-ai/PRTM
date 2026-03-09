@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import DateInputDark from '@/components/ui/DateInputDark';
 
 import { useAuth, UserProfile } from '@/contexts/AuthContext';
@@ -114,7 +115,8 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
     permissions: ['view'],
     specialties: [],
     isActive: true,
-    joinedDate: new Date().toISOString().split('T')[0],
+    joinedDate: getLocalDateString(),
+
     emergencyContactName: '',
     emergencyContactPhone: '',
     notes: '',
@@ -249,8 +251,9 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
 
     setShowAddMember(false);
     setEditingMember(null);
-    setNewMember({ ...defaultNewMember, joinedDate: new Date().toISOString().split('T')[0] });
+    setNewMember({ ...defaultNewMember, joinedDate: getLocalDateString() });
   };
+
 
 
 
@@ -642,9 +645,10 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
             <button
               onClick={() => {
                 setEditingMember(null);
-                setNewMember({ ...defaultNewMember, joinedDate: new Date().toISOString().split('T')[0] });
+                setNewMember({ ...defaultNewMember });
                 setShowAddMember(true);
               }}
+
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-red-600 text-white rounded-lg font-medium hover:from-orange-600 hover:to-red-700 transition-all"
             >
               <UserPlus className="w-4 h-4" />

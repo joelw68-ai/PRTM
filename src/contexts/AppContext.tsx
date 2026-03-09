@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import * as dbLogger from '@/lib/dbLogger';
 import { toast } from 'sonner';
 import { checkNewlyTriggeredAlerts, loadAlertSettings } from '@/lib/maintenanceAlerts';
@@ -729,7 +730,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const userId = user?.id;
     const swapLog: EngineSwapLog = {
       id: `SWAP-${String(engineSwapLogs.length + 1).padStart(3, '0')}`,
-      date: new Date().toISOString().split('T')[0],
+      date: getLocalDateString(),
       time: new Date().toTimeString().slice(0, 5),
       previousEngineId, newEngineId, reason, performedBy, notes
     };
@@ -954,7 +955,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const incrementTrackVisit = useCallback(async (id: string) => {
     setSavedTracks(prev => prev.map(t => 
-      t.id === id ? { ...t, visitCount: t.visitCount + 1, lastVisited: new Date().toISOString().split('T')[0] } : t
+      t.id === id ? { ...t, visitCount: t.visitCount + 1, lastVisited: getLocalDateString() } : t
     ));
     await trackSave(() => db.incrementTrackVisitCount(id), 'incrementTrackVisit');
   }, [trackSave]);
@@ -991,7 +992,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     
     const swapLog: DrivetrainSwapLog = {
       id: `DT-SWAP-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      date: new Date().toISOString().split('T')[0],
+      date: getLocalDateString(),
       time: new Date().toTimeString().slice(0, 5),
       componentType,
       previousComponentId,

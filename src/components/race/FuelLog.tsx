@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { getLocalDateString } from '@/lib/utils';
+
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import DateInputDark from '@/components/ui/DateInputDark';
@@ -223,7 +225,8 @@ const FuelLog: React.FC<FuelLogProps> = ({ currentRole = 'Crew' }) => {
 
   // Form state
   const [formData, setFormData] = useState<Partial<FuelLogEntry>>({
-    date: new Date().toISOString().split('T')[0],
+    date: getLocalDateString(),
+
     gallonsPurchased: undefined,
     costPerGallon: undefined,
     vendor: '',
@@ -446,7 +449,8 @@ const FuelLog: React.FC<FuelLogProps> = ({ currentRole = 'Crew' }) => {
     setShowAddModal(false);
     setEditingEntry(null);
     setFormData({
-      date: new Date().toISOString().split('T')[0],
+      date: getLocalDateString(),
+
       gallonsPurchased: undefined,
       costPerGallon: undefined,
       vendor: '',
@@ -641,7 +645,8 @@ const FuelLog: React.FC<FuelLogProps> = ({ currentRole = 'Crew' }) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `fuel-log-${viewMode === 'team' ? 'team-' : ''}${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `fuel-log-${viewMode === 'team' ? 'team-' : ''}${getLocalDateString()}.csv`;
+
     a.click();
     URL.revokeObjectURL(url);
   };

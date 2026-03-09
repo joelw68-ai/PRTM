@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import DateInputDark from '@/components/ui/DateInputDark';
+import { getLocalDateString } from '@/lib/utils';
+
 
 import { useApp } from '@/contexts/AppContext';
 import BackupRestore from './BackupRestore';
@@ -55,8 +57,6 @@ import {
   Edit2,
   Trash2,
   X,
-  ChevronDown,
-  ChevronUp,
   AlertTriangle,
   Lock,
   Eye,
@@ -65,7 +65,6 @@ import {
   Check,
   Info,
   History,
-  Filter,
   Search,
   Clock,
   FileText,
@@ -79,6 +78,7 @@ import {
   Phone,
   RotateCcw
 } from 'lucide-react';
+
 
 
 
@@ -243,7 +243,8 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
     permissions: ['view'],
     specialties: [],
     isActive: true,
-    joinedDate: new Date().toISOString().split('T')[0],
+    joinedDate: getLocalDateString(),
+
     emergencyContactName: '',
     emergencyContactPhone: '',
     notes: '',
@@ -370,7 +371,8 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
       permissions: newMember.permissions || ['view'],
       specialties: newMember.specialties,
       isActive: newMember.isActive ?? true,
-      joinedDate: newMember.joinedDate || new Date().toISOString().split('T')[0],
+      joinedDate: newMember.joinedDate || getLocalDateString(),
+
       emergencyContactName: newMember.emergencyContactName,
       emergencyContactPhone: newMember.emergencyContactPhone,
       notes: newMember.notes,
@@ -388,7 +390,8 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
     
     setShowMemberModal(false);
     setEditingMember(null);
-    setNewMember({ ...defaultNewMember, joinedDate: new Date().toISOString().split('T')[0] });
+    setNewMember({ ...defaultNewMember, joinedDate: getLocalDateString() });
+
   };
 
 
@@ -469,7 +472,8 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `audit-log-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `audit-log-${getLocalDateString()}.csv`;
+
     a.click();
     URL.revokeObjectURL(url);
 
@@ -1181,7 +1185,8 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
                     <button
                       onClick={() => {
                         setEditingMember(null);
-                        setNewMember({ ...defaultNewMember, joinedDate: new Date().toISOString().split('T')[0] });
+                        setNewMember({ ...defaultNewMember, joinedDate: getLocalDateString() });
+
                         setShowMemberModal(true);
                       }}
                       className="flex items-center gap-2 px-3 py-1.5 bg-orange-500 text-white rounded-lg text-sm hover:bg-orange-600"
@@ -1332,7 +1337,8 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
                       <button
                         onClick={() => {
                           setEditingMember(null);
-                          setNewMember({ ...defaultNewMember, joinedDate: new Date().toISOString().split('T')[0] });
+                          setNewMember({ ...defaultNewMember, joinedDate: getLocalDateString() });
+
                           setShowMemberModal(true);
                         }}
                         className="flex items-center gap-2 px-3 py-1.5 bg-orange-500 text-white rounded-lg text-sm hover:bg-orange-600"

@@ -18,8 +18,6 @@ import {
   Loader2,
   FolderUp,
   Tag,
-  Calendar,
-  FolderOpen,
   Trash2,
   FileImage,
   Info,
@@ -27,6 +25,7 @@ import {
   ChevronUp,
   Zap
 } from 'lucide-react';
+
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

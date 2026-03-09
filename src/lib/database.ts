@@ -1,5 +1,5 @@
-// Database service layer for Supabase operations
 import { supabase } from './supabase';
+import { getLocalDateString } from './utils';
 import { parseRows } from './validatedQuery';
 import {
   PassLogRowSchema,
@@ -1136,7 +1136,8 @@ export const incrementTrackVisitCount = async (id: string): Promise<void> => {
     if (data) {
       await supabase.from('saved_tracks').update({ 
         visit_count: (data.visit_count || 0) + 1,
-        last_visited: new Date().toISOString().split('T')[0],
+        last_visited: getLocalDateString(),
+
         updated_at: new Date().toISOString()
       }).eq('id', id);
     }
@@ -1610,7 +1611,8 @@ const toVendorRecord = (row: any): VendorRecord => ({
   notes: row.notes || '',
   rating: parseInt(row.rating) || 5,
   isActive: row.is_active ?? true,
-  createdDate: row.created_date || new Date().toISOString().split('T')[0]
+  createdDate: row.created_date || getLocalDateString()
+
 });
 
 export const fetchVendors = async (userId?: string): Promise<VendorRecord[]> => {

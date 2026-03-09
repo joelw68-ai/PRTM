@@ -1,4 +1,6 @@
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+
+import { getLocalDateString } from '@/lib/utils';
 
 import { useApp } from '@/contexts/AppContext';
 import { useCar } from '@/contexts/CarContext';
@@ -25,11 +27,8 @@ import {
 import {
   DollarSign,
   TrendingUp,
-  TrendingDown,
   PieChart as PieChartIcon,
   BarChart3,
-  Download,
-  Calendar,
   FileText,
   Wrench,
   Package,
@@ -42,12 +41,10 @@ import {
   FileSpreadsheet,
   Target,
   Users,
-  Fuel,
   Settings,
   Shield,
   ChevronDown,
   ChevronUp,
-  Eye,
   Building2,
   User,
   ClipboardList,
@@ -55,6 +52,7 @@ import {
   Receipt,
   Car
 } from 'lucide-react';
+
 
 import { purchaseOrders, vendorPerformance, vendors } from '@/data/vendorData';
 import { supabase } from '@/lib/supabase';
@@ -540,7 +538,7 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cost_report_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `cost_report_${getLocalDateString()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };

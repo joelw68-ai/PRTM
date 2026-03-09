@@ -1,4 +1,5 @@
-// Parts Usage History Types and Data
+import { getLocalDateString } from '@/lib/utils';
+
 
 export type PartUsageAction = 'installed' | 'removed' | 'replaced' | 'inspected' | 'serviced';
 
@@ -99,7 +100,8 @@ export const getUsageByDateRange = (startDate: string, endDate: string): PartUsa
 export const getRecentUsage = (days: number = 30): PartUsageRecord[] => {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - days);
-  const cutoffStr = cutoffDate.toISOString().split('T')[0];
+  const cutoffStr = getLocalDateString(cutoffDate);
+
   return partsUsageHistory.filter(u => u.date >= cutoffStr);
 };
 

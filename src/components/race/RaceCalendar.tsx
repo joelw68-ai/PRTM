@@ -5,6 +5,7 @@ import { useApp } from '@/contexts/AppContext';
 import RaceDayWeatherCard from '@/components/race/RaceDayWeatherCard';
 import { SavedTrack } from '@/lib/database';
 import { toast } from 'sonner';
+import { getLocalDateString } from '@/lib/utils';
 
 import { CrewRole } from '@/lib/permissions';
 import {
@@ -14,23 +15,21 @@ import {
   ChevronRight,
   MapPin,
   Trophy,
-  Clock,
   DollarSign,
   Flag,
   X,
   Edit2,
   Trash2,
   CheckCircle,
-  XCircle,
   Timer,
   Target,
   CalendarDays,
   Loader2,
   AlertCircle,
-  Star,
   Link2,
   Download
 } from 'lucide-react';
+
 
 
 export interface RaceEvent {
@@ -66,6 +65,8 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
 
   const { raceEvents, addRaceEvent, updateRaceEvent, deleteRaceEvent, savedTracks, addSavedTrack, updateSavedTrack } = useApp();
 
+
+
   const trackSelectRef = useRef<HTMLSelectElement>(null);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
@@ -80,10 +81,12 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
     eventType: 'Race',
     trackName: '',
     trackLocation: '',
-    startDate: new Date().toISOString().split('T')[0],
+    startDate: getLocalDateString(),
+
     status: 'Scheduled',
     sanctioningBody: 'NHRA'
   });
+
 
   // Sort saved tracks: favorites first, then by visit count
   const sortedTracks = useMemo(() => {
@@ -190,7 +193,9 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
         notes: '',
         isFavorite: false,
         visitCount: 1,
-        lastVisited: new Date().toISOString().split('T')[0]
+        lastVisited: getLocalDateString()
+
+
       };
 
       await addSavedTrack(newTrack);
@@ -238,7 +243,8 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
 
   // Upcoming events
   const upcomingEvents = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateString();
+
     return raceEvents
       .filter(e => e.startDate >= today && e.status !== 'Cancelled')
       .sort((a, b) => a.startDate.localeCompare(b.startDate))
@@ -247,12 +253,14 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
 
   // Past events with results
   const pastEvents = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateString();
+
     return raceEvents
       .filter(e => e.startDate < today || e.status === 'Completed')
       .sort((a, b) => b.startDate.localeCompare(a.startDate))
       .slice(0, 10);
   }, [raceEvents]);
+
 
   // Season stats
   const seasonStats = useMemo(() => {
@@ -332,7 +340,9 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
         eventType: 'Race',
         trackName: '',
         trackLocation: '',
-        startDate: new Date().toISOString().split('T')[0],
+        startDate: getLocalDateString(),
+
+
         status: 'Scheduled',
         sanctioningBody: 'NHRA'
       });
@@ -434,7 +444,9 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateString();
+
+
     link.href = url;
     link.download = `race-calendar-${today}.csv`;
     document.body.appendChild(link);

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import DateInputDark from '@/components/ui/DateInputDark';
 import CarDropdown from '@/components/race/CarDropdown';
 import { useCar } from '@/contexts/CarContext';
@@ -184,7 +185,8 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   const [editingDT, setEditingDT] = useState<DrivetrainComponent | null>(null);
   const defaultDT: DrivetrainComponent = {
     id: '', category: 'transmission', name: '', make: '', model: '', serialNumber: '', builder: '',
-    installDate: new Date().toISOString().split('T')[0], dateRemoved: '', totalPasses: 0,
+    installDate: getLocalDateString(), dateRemoved: '', totalPasses: 0,
+
     passesSinceService: 0, hours: 0, status: 'Ready', currentlyInstalled: false, notes: '', components: {}
   };
   const [newDT, setNewDT] = useState<DrivetrainComponent>(defaultDT);
@@ -224,13 +226,15 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   // Default component for new components
   const defaultComponent: ComponentTracker = {
     name: '',
-    installDate: new Date().toISOString().split('T')[0],
+    installDate: getLocalDateString(),
+
     passCount: 0,
     serviceInterval: 50,
     inspectionInterval: 25,
     replaceInterval: 100,
-    lastService: new Date().toISOString().split('T')[0],
-    lastInspection: new Date().toISOString().split('T')[0],
+    lastService: getLocalDateString(),
+    lastInspection: getLocalDateString(),
+
     status: 'Good',
     notes: '',
     partNumber: '',
@@ -279,7 +283,8 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
     name: '',
     serialNumber: '',
     builder: '',
-    installDate: new Date().toISOString().split('T')[0],
+    installDate: getLocalDateString(),
+
     totalPasses: 0,
     passesSinceRebuild: 0,
     status: 'Ready',
@@ -293,7 +298,8 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
     name: '',
     serialNumber: '',
     builder: '',
-    installDate: new Date().toISOString().split('T')[0],
+    installDate: getLocalDateString(),
+
     totalPasses: 0,
     passesSinceRefresh: 0,
     status: 'Ready',
@@ -307,7 +313,8 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
     name: '',
     serialNumber: '',
     model: '',
-    installDate: new Date().toISOString().split('T')[0],
+    installDate: getLocalDateString(),
+
     totalPasses: 0,
     passesSinceService: 0,
     status: 'Ready',

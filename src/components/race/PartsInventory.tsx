@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 
 import { useApp } from '@/contexts/AppContext';
 
@@ -136,7 +137,8 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
     totalValue: 0,
     vendor: '',
     vendorPartNumber: '',
-    lastOrdered: new Date().toISOString().split('T')[0],
+    lastOrdered: getLocalDateString(),
+
     lastUsed: '',
     location: '',
     status: 'In Stock',
@@ -380,8 +382,9 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
       vendorId: vendor.id,
       vendorName: vendor.name,
       status: 'Draft',
-      createdDate: new Date().toISOString().split('T')[0],
-      expectedDelivery: new Date(Date.now() + vendor.leadTimeDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      createdDate: getLocalDateString(),
+      expectedDelivery: getLocalDateString(new Date(Date.now() + vendor.leadTimeDays * 24 * 60 * 60 * 1000)),
+
       items: poItems,
       subtotal,
       discount,
@@ -433,7 +436,8 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `parts_inventory_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `parts_inventory_${getLocalDateString()}.csv`;
+
     a.click();
 
     // Log the export

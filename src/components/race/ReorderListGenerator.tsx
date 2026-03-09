@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState, useMemo } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 
 import { useApp } from '@/contexts/AppContext';
 import {
@@ -235,9 +236,10 @@ const ReorderListGenerator: React.FC<ReorderListGeneratorProps> = ({ isOpen, onC
       vendorId: group.vendor?.id || '',
       vendorName: group.vendorName,
       status: 'Submitted',
-      createdDate: new Date().toISOString().split('T')[0],
-      submittedDate: new Date().toISOString().split('T')[0],
-      expectedDelivery: new Date(Date.now() + group.leadTimeDays * 86400000).toISOString().split('T')[0],
+      createdDate: getLocalDateString(),
+      submittedDate: getLocalDateString(),
+      expectedDelivery: getLocalDateString(new Date(Date.now() + group.leadTimeDays * 86400000)),
+
       items,
       subtotal: group.subtotal,
       discount: group.discount,
@@ -329,7 +331,8 @@ const ReorderListGenerator: React.FC<ReorderListGeneratorProps> = ({ isOpen, onC
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `reorder_list_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `reorder_list_${getLocalDateString()}.csv`;
+
     a.click();
     URL.revokeObjectURL(url);
   };

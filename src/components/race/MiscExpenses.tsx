@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { parseRows } from '@/lib/validatedQuery';
 import { MiscExpenseRowSchema } from '@/lib/validators';
@@ -138,7 +139,8 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
     category: '',
     custom_description: '',
     amount: '',
-    expense_date: new Date().toISOString().split('T')[0],
+    expense_date: getLocalDateString(),
+
     paid_by: '',
     payment_method: '',
     notes: '',
@@ -240,7 +242,8 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
       category: '',
       custom_description: '',
       amount: '',
-      expense_date: new Date().toISOString().split('T')[0],
+      expense_date: getLocalDateString(),
+
       paid_by: '',
       payment_method: '',
       notes: '',

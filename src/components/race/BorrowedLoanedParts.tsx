@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { getLocalDateString } from '@/lib/utils';
+
 import { supabase } from '@/lib/supabase';
 import { parseRows } from '@/lib/validatedQuery';
 import { BorrowedLoanedPartRowSchema } from '@/lib/validators';
@@ -83,7 +85,8 @@ const emptyForm: FormData = {
   quantity: 1,
   person_name: '',
   contact: '',
-  date_transaction: new Date().toISOString().split('T')[0],
+  date_transaction: getLocalDateString(),
+
   expected_return_date: '',
   actual_return_date: '',
   condition_out: '',
@@ -119,8 +122,8 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  // ─── Helpers ─────────────────────────────────────────────────────
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
+
 
   const isOverdue = (part: BorrowedLoanedPart): boolean => {
     if (part.status === 'returned') return false;

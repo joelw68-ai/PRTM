@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCar } from '@/contexts/CarContext';
@@ -8,10 +9,11 @@ import { BorrowedLoanedPartRowSchema } from '@/lib/validators';
 import {
 
   Gauge, AlertTriangle, Clock, Zap, Wind, TrendingUp, Calendar, Wrench,
-  Shield, RefreshCw, Loader2, Camera, Edit2, Package, ArrowLeftRight,
+  Shield, RefreshCw, Camera, Edit2, Package, ArrowLeftRight,
   Bell, ArrowDownToLine, ArrowUpFromLine, Cog, Car, FileText,
   SlidersHorizontal, ChevronRight, BarChart3, MapPin, Building2
 } from 'lucide-react';
+
 
 import {
   PassLogEntry,
@@ -188,7 +190,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     loadBL();
   }, [effectiveUserId, user?.id, isDemoMode]);
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getLocalDateString();
+
+
 
   const blOverdueItems = useMemo(() =>
     borrowedLoanedParts.filter(p => p.expected_return_date && p.expected_return_date < todayStr),
@@ -239,14 +243,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   const availableEngines = carEngines.filter(e => !e.currentlyInstalled && e.status === 'Ready');
   const lowStockParts = carPartsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
 
-  // Upcoming race events
+  // Upcoming race events — use local date (not UTC) to match todayStr
   const upcomingEvents = useMemo(() => {
-    const now = new Date().toISOString().split('T')[0];
     return (raceEvents || [])
-      .filter((e: RaceEvent) => e.startDate >= now && e.status !== 'Cancelled')
+      .filter((e: RaceEvent) => e.startDate >= todayStr && e.status !== 'Cancelled')
       .sort((a: RaceEvent, b: RaceEvent) => a.startDate.localeCompare(b.startDate))
       .slice(0, 4);
-  }, [raceEvents]);
+  }, [raceEvents, todayStr]);
+
 
 
 

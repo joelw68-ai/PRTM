@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '@/contexts/AppContext';
+import { getLocalDateString } from '@/lib/utils';
+
 import { CrewRole } from '@/lib/permissions';
 import {
   BarChart3,
   TrendingUp,
-  TrendingDown,
   Target,
   Gauge,
   Timer,
@@ -16,14 +17,13 @@ import {
   ArrowUp,
   ArrowDown,
   Minus,
-  Filter,
   Download,
   Clock,
   AlertTriangle,
-  CheckCircle,
   LineChart as LineChartIcon,
   Info
 } from 'lucide-react';
+
 import {
   LineChart,
   Line,
@@ -376,7 +376,8 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `analytics-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `analytics-${getLocalDateString()}.json`;
+
     a.click();
     URL.revokeObjectURL(url);
   };

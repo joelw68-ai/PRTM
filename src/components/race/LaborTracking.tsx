@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import DateInputDark from '@/components/ui/DateInputDark';
 
 
@@ -72,8 +73,9 @@ const LaborTracking: React.FC<LaborTrackingProps> = ({ laborEntries, setLaborEnt
   const DEFAULT_DAILY_RATE = 800;
   
   const [newEntry, setNewEntry] = useState<Partial<DailyLaborEntry>>({
-    date: new Date().toISOString().split('T')[0],
+    date: getLocalDateString(),
     teamMemberId: '',
+
     teamMemberName: '',
     hours: 0,
     hourlyRate: DEFAULT_HOURLY_RATE,
@@ -242,7 +244,8 @@ const LaborTracking: React.FC<LaborTrackingProps> = ({ laborEntries, setLaborEnt
     setShowAddModal(false);
     setEditingEntry(null);
     setNewEntry({
-      date: new Date().toISOString().split('T')[0],
+      date: getLocalDateString(),
+
       teamMemberId: '',
       teamMemberName: '',
       hours: 0,
@@ -357,7 +360,8 @@ const LaborTracking: React.FC<LaborTrackingProps> = ({ laborEntries, setLaborEnt
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `labor_tracking_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `labor_tracking_${getLocalDateString()}.csv`;
+
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -422,7 +426,8 @@ const LaborTracking: React.FC<LaborTrackingProps> = ({ laborEntries, setLaborEnt
             onClick={() => {
               setEditingEntry(null);
               setNewEntry({
-                date: new Date().toISOString().split('T')[0],
+                date: getLocalDateString(),
+
                 teamMemberId: '',
                 teamMemberName: '',
                 hours: 0,

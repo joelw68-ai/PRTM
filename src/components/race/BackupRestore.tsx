@@ -1,4 +1,6 @@
 import React, { useState, useRef, useCallback, Component, ErrorInfo, ReactNode } from 'react';
+import { getLocalDateString } from '@/lib/utils';
+
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -18,15 +20,14 @@ import {
   Info,
   Clock,
   HardDrive,
-  RefreshCw,
   X,
   FileArchive,
   Table2,
   BookOpen,
-  ArrowRight,
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
+
 
 // ============ ERROR BOUNDARY ============
 interface ErrorBoundaryState {
@@ -376,7 +377,8 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const dateStr = new Date().toISOString().split('T')[0];
+      const dateStr = getLocalDateString();
+
       a.download = `pro-mod-logbook-backup-${dateStr}.json`;
       document.body.appendChild(a);
       a.click();
@@ -462,7 +464,8 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');
       a.href = url;
-      const dateStr = new Date().toISOString().split('T')[0];
+      const dateStr = getLocalDateString();
+
       a.download = `pro-mod-logbook-backup-${dateStr}.csv.zip`;
       document.body.appendChild(a);
       a.click();

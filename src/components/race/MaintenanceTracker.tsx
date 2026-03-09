@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { getLocalDateString } from '@/lib/utils';
 import DateInputDark from '@/components/ui/DateInputDark';
 import CarDropdown from '@/components/race/CarDropdown';
 import { useCar } from '@/contexts/CarContext';
@@ -112,7 +113,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     category: 'Drivetrain',
     passInterval: 50,
     currentPasses: 0,
-    lastService: new Date().toISOString().split('T')[0],
+    lastService: getLocalDateString(),
     nextServicePasses: 50,
     status: 'Good',
     priority: 'Medium',
@@ -127,8 +128,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     id: '',
     item: '',
     sfiSpec: '',
-    certificationDate: new Date().toISOString().split('T')[0],
-    expirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000 * 2).toISOString().split('T')[0],
+    certificationDate: getLocalDateString(),
+    expirationDate: getLocalDateString(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000 * 2)),
     vendor: '',
     serialNumber: '',
     status: 'Valid',
@@ -151,7 +152,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     const item = maintenanceItems.find(m => m.id === itemId);
     if (item) {
       updateMaintenanceItem(itemId, {
-        lastService: new Date().toISOString().split('T')[0],
+        lastService: getLocalDateString(),
         currentPasses: 0,
         nextServicePasses: item.passInterval,
         status: 'Good'
@@ -167,8 +168,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
       category: item.category,
       priority: item.status === 'Overdue' ? 'Critical' as const : item.status === 'Due' ? 'High' as const : 'Medium' as const,
       status: 'Open' as const,
-      createdDate: new Date().toISOString().split('T')[0],
-      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      createdDate: getLocalDateString(),
+      dueDate: getLocalDateString(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
       assignedTo: '',
       estimatedHours: 2,
       parts: [],
