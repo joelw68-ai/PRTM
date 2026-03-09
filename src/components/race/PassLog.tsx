@@ -130,44 +130,51 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   const activeSupercharger = getActiveSupercharger();
 
   // Default form state for new pass
-  const getDefaultPassState = (): Partial<PassLogEntry> => ({
-    date: new Date().toISOString().split('T')[0],
-    time: new Date().toTimeString().slice(0, 5),
-    track: '',
-    location: '',
-    sessionType: 'Test',
-    lane: 'Left',
-    result: 'Single',
-    reactionTime: 0,
-    sixtyFoot: 0,
-    threeThirty: 0,
-    eighth: 0,
-    mph: 0,
-    weather: {
-      temperature: 70,
-      humidity: 50,
-      pressure: 29.92,
-      windSpeed: 0,
-      windDirection: 'N',
-      trackTemp: 100,
-      conditions: 'Clear'
-    },
-    saeCorrection: 1.000,
-    densityAltitude: 0,
-    correctedHP: 3500,
-    engineId: activeEngine?.id || '',
-    superchargerId: activeSupercharger?.id || '',
-    tirePressureFront: 15,
-    tirePressureRearLeft: 5.5,
-    tirePressureRearRight: 5.5,
-    wheelieBarSetting: 4.5,
-    launchRPM: 5800,
-    boostSetting: 42,
-    notes: '',
-    crewChief: '',
-    aborted: false,
-    car_id: selectedCarId || '',
-  });
+  // First pass ever: car setup fields default to 0
+  // Subsequent passes: pre-fill car setup from the most recent previous pass
+  const getDefaultPassState = (): Partial<PassLogEntry> => {
+    const mostRecent = passLogs.length > 0 ? passLogs[0] : null;
+
+    return {
+      date: new Date().toISOString().split('T')[0],
+      time: new Date().toTimeString().slice(0, 5),
+      track: '',
+      location: '',
+      sessionType: 'Test',
+      lane: 'Left',
+      result: 'Single',
+      reactionTime: 0,
+      sixtyFoot: 0,
+      threeThirty: 0,
+      eighth: 0,
+      mph: 0,
+      weather: {
+        temperature: 70,
+        humidity: 50,
+        pressure: 29.92,
+        windSpeed: 0,
+        windDirection: 'N',
+        trackTemp: mostRecent ? (mostRecent.weather?.trackTemp ?? 0) : 0,
+        conditions: 'Clear'
+      },
+      saeCorrection: 1.000,
+      densityAltitude: 0,
+      correctedHP: 3500,
+      engineId: activeEngine?.id || '',
+      superchargerId: activeSupercharger?.id || '',
+      tirePressureFront: mostRecent ? (mostRecent.tirePressureFront ?? 0) : 0,
+      tirePressureRearLeft: mostRecent ? (mostRecent.tirePressureRearLeft ?? 0) : 0,
+      tirePressureRearRight: mostRecent ? (mostRecent.tirePressureRearRight ?? 0) : 0,
+      wheelieBarSetting: mostRecent ? (mostRecent.wheelieBarSetting ?? 0) : 0,
+      launchRPM: mostRecent ? (mostRecent.launchRPM ?? 0) : 0,
+      boostSetting: mostRecent ? (mostRecent.boostSetting ?? 0) : 0,
+      notes: '',
+      crewChief: '',
+      aborted: false,
+      car_id: selectedCarId || '',
+    };
+  };
+
 
 
   // Form state for add/edit

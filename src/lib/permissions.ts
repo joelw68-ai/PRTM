@@ -10,8 +10,10 @@ export type CrewRole =
   | 'Tuner'
   | 'Mechanic'
   | 'Crew'
+  | 'Viewer'
   | 'Sponsor'
   | 'Guest';
+
 
 // ============ PERMISSION DEFINITIONS ============
 
@@ -217,48 +219,32 @@ export const rolePermissions: Record<CrewRole, Permission[]> = {
   ],
   
   Crew: [
-    // Basic crew member - can check checklists and view most things - Basic todo access
     'checklist.view', 'checklist.check',
-    'passlog.view',
-    'engine.view',
-    'supercharger.view',
-    'cylinderhead.view',
-    'maintenance.view',
-    'sfi.view',
-    'parts.view',
-    'workorder.view',
-    'team.view',
-    'settings.view',
-    'calendar.view',
-    'analytics.view',
+    'passlog.view', 'passlog.add',
+    'engine.view', 'supercharger.view', 'cylinderhead.view',
+    'maintenance.view', 'sfi.view', 'parts.view', 'workorder.view',
+    'team.view', 'settings.view', 'calendar.view', 'analytics.view',
     'todo.view', 'todo.add', 'todo.edit', 'todo.complete'
   ],
-  
-  Sponsor: [
-    // View-only access to most things - View only todo
-    'checklist.view',
-    'passlog.view',
-    'engine.view',
-    'supercharger.view',
-    'cylinderhead.view',
-    'maintenance.view',
-    'sfi.view',
-    'parts.view',
-    'workorder.view',
-    'team.view',
-    'calendar.view',
-    'analytics.view',
-    'todo.view'
+
+  Viewer: [
+    'checklist.view', 'passlog.view', 'engine.view', 'supercharger.view',
+    'cylinderhead.view', 'maintenance.view', 'sfi.view', 'parts.view',
+    'workorder.view', 'team.view', 'calendar.view', 'analytics.view', 'todo.view'
   ],
-  
+
+  Sponsor: [
+    'checklist.view', 'passlog.view', 'engine.view', 'supercharger.view',
+    'cylinderhead.view', 'maintenance.view', 'sfi.view', 'parts.view',
+    'workorder.view', 'team.view', 'calendar.view', 'analytics.view', 'todo.view'
+  ],
+
   Guest: [
-    // Minimal access - View only todo
-    'checklist.view',
-    'passlog.view',
-    'calendar.view',
-    'todo.view'
+    'checklist.view', 'passlog.view', 'calendar.view', 'todo.view'
   ]
 };
+
+
 
 
 // ============ ROLE HIERARCHY ============

@@ -28,8 +28,10 @@ import {
   Loader2,
   AlertCircle,
   Star,
-  Link2
+  Link2,
+  Download
 } from 'lucide-react';
+
 
 export interface RaceEvent {
   id: string;
@@ -37,6 +39,8 @@ export interface RaceEvent {
   eventType: 'Race' | 'Test Session' | 'Practice' | 'Meeting' | 'Maintenance';
   trackName: string;
   trackLocation: string;
+  trackAddress?: string;
+  trackZip?: string;
   startDate: string;
   endDate?: string;
   startTime?: string;
@@ -52,13 +56,16 @@ export interface RaceEvent {
   roundsWon?: number;
 }
 
+
+
 interface RaceCalendarProps {
   currentRole?: CrewRole;
 }
 
 const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => {
 
-  const { raceEvents, addRaceEvent, updateRaceEvent, deleteRaceEvent, savedTracks, addSavedTrack } = useApp();
+  const { raceEvents, addRaceEvent, updateRaceEvent, deleteRaceEvent, savedTracks, addSavedTrack, updateSavedTrack } = useApp();
+
   const trackSelectRef = useRef<HTMLSelectElement>(null);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
@@ -87,7 +94,8 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
     });
   }, [savedTracks]);
 
-  // Handle saved track selection in the event form
+  // Handle saved track selection in the event form — also fills trackAddress and trackZip
+
   const handleSavedTrackSelect = (trackId: string) => {
     if (!trackId) return;
     const track = savedTracks.find(t => t.id === trackId);
@@ -95,7 +103,9 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
       setNewEvent(prev => ({
         ...prev,
         trackName: track.name,
-        trackLocation: track.location
+        trackLocation: track.location,
+        trackAddress: track.address || '',
+        trackZip: track.zip || ''
       }));
     }
     // Reset the select back to placeholder
@@ -104,9 +114,24 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
     }
   };
 
+  // Helper: try to extract a US ZIP code (5-digit or 5+4) from an address string
+  const parseZipFromAddress = (address: string): string => {
+    if (!address) return '';
+    // Match 5-digit ZIP optionally followed by -4 digits, typically at end of address
+    const match = address.match(/\b(\d{5}(?:-\d{4})?)\s*$/);
+    if (match) return match[1];
+    // Also try to find it anywhere in the string
+    const anyMatch = address.match(/\b(\d{5}(?:-\d{4})?)\b/);
+    return anyMatch ? anyMatch[1] : '';
+  };
+
   // Auto-save a new track to saved_tracks if it doesn't already exist
-  const autoSaveTrackIfNew = async (trackName: string, trackLocation: string) => {
+  // Now includes trackAddress, trackZip, and parses city/state from trackLocation
+  const autoSaveTrackIfNew = async (trackName: string, trackLocation: string, trackAddress?: string, trackZip?: string) => {
     if (!trackName.trim() || !trackLocation.trim()) return;
+
+    // Resolve ZIP: use explicit value, or try to parse from address
+    const resolvedZip = trackZip?.trim() || parseZipFromAddress(trackAddress || '');
 
     // Check if this track already exists (case-insensitive match on name + location)
     const exists = savedTracks.some(
@@ -114,7 +139,32 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
            t.location.toLowerCase() === trackLocation.trim().toLowerCase()
     );
 
-    if (exists) return; // Already saved, nothing to do
+    if (exists) {
+      // Track already exists — but update its address/zip if we have data and it's missing
+      const existingTrack = savedTracks.find(
+        t => t.name.toLowerCase() === trackName.trim().toLowerCase() &&
+             t.location.toLowerCase() === trackLocation.trim().toLowerCase()
+      );
+      if (existingTrack) {
+        const needsAddressUpdate = trackAddress?.trim() && !existingTrack.address?.trim();
+        const needsZipUpdate = resolvedZip && !existingTrack.zip?.trim();
+        if (needsAddressUpdate || needsZipUpdate) {
+          const parsed = parseCityState(trackLocation);
+          try {
+            await addSavedTrack({
+              ...existingTrack,
+              address: trackAddress?.trim() || existingTrack.address || '',
+              zip: resolvedZip || existingTrack.zip || '',
+              city: parsed.city || existingTrack.city || '',
+              state: parsed.state || existingTrack.state || '',
+            });
+          } catch (err) {
+            console.warn('Auto-update track address/zip failed (non-blocking):', err);
+          }
+        }
+      }
+      return;
+    }
 
     // Also check by name alone (different location variant of same track)
     const nameMatch = savedTracks.find(
@@ -122,11 +172,18 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
     );
     if (nameMatch) return; // Track name already exists with a different location — don't duplicate
 
+    // Parse city/state from the "City, ST" location string
+    const parsed = parseCityState(trackLocation);
+
     try {
       const newTrack: SavedTrack = {
         id: crypto.randomUUID(),
         name: trackName.trim(),
         location: trackLocation.trim(),
+        address: trackAddress?.trim() || '',
+        city: parsed.city || '',
+        state: parsed.state || '',
+        zip: resolvedZip,
         elevation: 0,
         trackLength: '1/8 mile',
         surfaceType: 'Concrete',
@@ -137,14 +194,16 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
       };
 
       await addSavedTrack(newTrack);
-      toast.success(`Track "${trackName}" auto-saved`, {
-        description: 'Now available in Pass Log and Initial Setup',
+      toast.success(`Track "${trackName}" auto-saved to Initial Setup`, {
+        description: `${trackLocation}${trackAddress ? ' — address included' : ''}${resolvedZip ? ` (ZIP: ${resolvedZip})` : ''}. Now available in Pass Log, Setup, and Calendar.`,
         duration: 4000,
       });
     } catch (err) {
       console.warn('Auto-save track failed (non-blocking):', err);
     }
   };
+
+
 
 
   // Auto-hide save message after 4 seconds
@@ -232,6 +291,8 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
       eventType: newEvent.eventType as RaceEvent['eventType'] || 'Race',
       trackName: newEvent.trackName || '',
       trackLocation: newEvent.trackLocation || '',
+      trackAddress: newEvent.trackAddress || undefined,
+      trackZip: newEvent.trackZip || parseZipFromAddress(newEvent.trackAddress || '') || undefined,
       startDate: newEvent.startDate || '',
       endDate: newEvent.endDate || undefined,
       startTime: newEvent.startTime || undefined,
@@ -247,6 +308,7 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
       roundsWon: newEvent.roundsWon || undefined
     };
 
+
     try {
       if (editingEvent) {
         await updateRaceEvent(event.id, event);
@@ -255,9 +317,12 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
       }
 
       // Auto-save the track to saved_tracks if it's a new track (non-blocking)
+      // Passes trackZip so it syncs to Initial Setup
       if (event.trackName && event.trackLocation) {
-        autoSaveTrackIfNew(event.trackName, event.trackLocation).catch(() => {});
+        autoSaveTrackIfNew(event.trackName, event.trackLocation, event.trackAddress, event.trackZip).catch(() => {});
       }
+
+
 
       setSaveMessage({ type: 'success', text: editingEvent ? 'Event updated!' : 'Event saved!' });
       setShowAddModal(false);
@@ -293,6 +358,96 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
       setSelectedEvent(null);
     }
   };
+
+  // ── Export CSV ──
+  const handleExportCSV = () => {
+    if (raceEvents.length === 0) {
+      toast.error('No events to export', {
+        description: 'Add some events to your calendar first.',
+        duration: 3000,
+      });
+      return;
+    }
+
+    // CSV column headers
+    const headers = [
+      'Title',
+      'Event Type',
+      'Track Name',
+      'Location',
+      'Address',
+      'ZIP Code',
+      'Start Date',
+      'End Date',
+      'Start Time',
+      'End Time',
+      'Sanctioning Body',
+      'Entry Fee',
+      'Purse',
+      'Status',
+      'Result',
+      'Best ET',
+      'Best MPH',
+      'Rounds Won',
+      'Notes'
+    ];
+
+    // Helper to escape CSV values (wrap in quotes if contains comma, quote, or newline)
+    const escapeCSV = (value: string): string => {
+      if (!value) return '';
+      const str = String(value);
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    // Build rows sorted by start date
+    const sortedEvents = [...raceEvents].sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+    const rows = sortedEvents.map(event => [
+      escapeCSV(event.title),
+      escapeCSV(event.eventType),
+      escapeCSV(event.trackName),
+      escapeCSV(event.trackLocation),
+      escapeCSV(event.trackAddress || ''),
+      escapeCSV(event.trackZip || ''),
+      escapeCSV(event.startDate),
+      escapeCSV(event.endDate || ''),
+      escapeCSV(event.startTime || ''),
+      escapeCSV(event.endTime || ''),
+      escapeCSV(event.sanctioningBody || ''),
+      event.entryFee != null ? String(event.entryFee) : '',
+      event.purse != null ? String(event.purse) : '',
+      escapeCSV(event.status),
+      escapeCSV(event.result || ''),
+      event.bestET != null ? String(event.bestET) : '',
+      event.bestMPH != null ? String(event.bestMPH) : '',
+      event.roundsWon != null ? String(event.roundsWon) : '',
+      escapeCSV(event.notes || '')
+    ]);
+
+    // Assemble CSV content with BOM for Excel compatibility
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(row => row.join(','))].join('\r\n');
+
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const today = new Date().toISOString().split('T')[0];
+    link.href = url;
+    link.download = `race-calendar-${today}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    toast.success(`Exported ${sortedEvents.length} event${sortedEvents.length !== 1 ? 's' : ''} to CSV`, {
+      description: `File: race-calendar-${today}.csv`,
+      duration: 4000,
+    });
+  };
+
 
   const getEventTypeColor = (type: string) => {
     switch (type) {
@@ -408,6 +563,13 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
               </button>
             </div>
             <button
+              onClick={handleExportCSV}
+              title="Export events to CSV"
+              className="flex items-center justify-center p-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 hover:text-white transition-colors border border-slate-600"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+            <button
               onClick={() => setShowAddModal(true)}
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-red-600 text-white rounded-lg font-medium hover:from-orange-600 hover:to-red-700 transition-all"
             >
@@ -416,6 +578,7 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
             </button>
           </div>
         </div>
+
 
         {/* Season Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
@@ -504,7 +667,9 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
                       <p className="text-sm mt-1">Click "Add Event" to create your first event</p>
                     </div>
                   ) : (
-                    raceEvents.map(event => (
+                    [...raceEvents]
+                      .sort((a, b) => a.startDate.localeCompare(b.startDate))
+                      .map(event => (
                       <div
                         key={event.id}
                         className="p-4 hover:bg-slate-700/20 transition-colors cursor-pointer"
@@ -532,6 +697,7 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
                     ))
                   )}
                 </div>
+
               </div>
             )}
           </div>
@@ -735,12 +901,12 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
                       <option value="">Select...</option>
                       <option value="NHRA">NHRA</option>
                       <option value="PDRA">PDRA</option>
-                      <option value="NMCA">NMCA</option>
                       <option value="IHRA">IHRA</option>
-                      <option value="ADRL">ADRL</option>
+                      <option value="DI Winter Series">DI Winter Series</option>
                       <option value="Other">Other</option>
                     </select>
                   </div>
+
 
 
                   {/* ── Saved Tracks Dropdown ── */}
@@ -821,6 +987,51 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
                       ))}
                     </select>
                   </div>
+
+                  {/* Track Address + ZIP Code */}
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">Track Address</label>
+                    <input
+                      type="text"
+                      value={newEvent.trackAddress || ''}
+                      onChange={(e) => {
+                        const addr = e.target.value;
+                        setNewEvent(prev => ({
+                          ...prev,
+                          trackAddress: addr,
+                          // Auto-parse ZIP from address if ZIP field is empty
+                          trackZip: prev.trackZip || parseZipFromAddress(addr)
+                        }));
+                      }}
+                      onBlur={() => {
+                        // On blur, try to auto-fill ZIP if still empty
+                        if (!newEvent.trackZip && newEvent.trackAddress) {
+                          const parsed = parseZipFromAddress(newEvent.trackAddress);
+                          if (parsed) {
+                            setNewEvent(prev => ({ ...prev, trackZip: parsed }));
+                          }
+                        }
+                      }}
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                      placeholder="e.g., 11211 N County Road 225"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">Street address — syncs to Initial Setup racetracks</p>
+                  </div>
+
+                  {/* ZIP Code */}
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">ZIP Code</label>
+                    <input
+                      type="text"
+                      value={newEvent.trackZip || ''}
+                      onChange={(e) => setNewEvent({ ...newEvent, trackZip: e.target.value })}
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                      placeholder="e.g., 32609"
+                      maxLength={10}
+                    />
+                    <p className="text-xs text-slate-500 mt-1">Auto-parsed from address or enter manually</p>
+                  </div>
+
 
 
                   <div>

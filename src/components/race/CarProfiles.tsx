@@ -15,8 +15,12 @@ interface CarProfilesProps {
 const carClasses = [
   'Pro Mod', 'Pro Nitrous', 'Pro Boost', 'Outlaw Pro Mod', 'X275',
   'Radial vs World', 'No Prep', 'Top Sportsman', 'Top Dragster',
-  'Super Street', 'Street Outlaw', 'Limited Drag Radial', 'Other'
+  'Super Street', 'Limited Drag Radial',
+  'Outlaw 10.5', 'Pro Street 10.5', 'Small Tire 28 x 10.5', 'Ultra Street',
+  'Outlaw 632', 'Nitro Funny Car', 'Top Alcohol Funny Car',
+  'Top Fuel Dragster', 'Top Alcohol Dragster', 'Factory Stock', 'Other'
 ];
+
 
 const defaultForm = {
   carNumber: '',

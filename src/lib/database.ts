@@ -249,6 +249,8 @@ const toRaceEvent = (row: any): RaceEvent => ({
   eventType: row.event_type || 'Race',
   trackName: row.track_name || '',
   trackLocation: row.track_location || '',
+  trackAddress: row.track_address || undefined,
+  trackZip: row.track_zip || undefined,
   startDate: row.start_date,
   endDate: row.end_date,
   startTime: row.start_time,
@@ -263,6 +265,7 @@ const toRaceEvent = (row: any): RaceEvent => ({
   bestMPH: row.best_mph ? parseFloat(row.best_mph) : undefined,
   roundsWon: row.rounds_won
 });
+
 
 const toTeamMember = (row: any): TeamMember => ({
   id: row.id,
@@ -716,6 +719,26 @@ export const upsertTrackWeatherHistory = async (track: TrackWeatherHistory, user
 
 // Race Events
 
+/**
+ * Helper: detect if a Supabase/PostgREST error is caused by an unknown column.
+ * PostgREST returns PostgreSQL error code 42703 ("undefined_column") or includes
+ * "Could not find the … column" in the message when the payload references a
+ * column that doesn't exist in the table.
+ */
+const isUnknownColumnError = (error: any): boolean => {
+  if (!error) return false;
+  const msg = (error.message || '').toLowerCase();
+  const code = error.code || '';
+  const hint = (error.hint || '').toLowerCase();
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    msg.includes('could not find') ||
+    msg.includes('column') && (msg.includes('does not exist') || msg.includes('not found') || msg.includes('schema cache')) ||
+    hint.includes('column') ||
+    msg.includes('undefined_column')
+  );
+};
 
 export const fetchRaceEvents = async (userId?: string): Promise<RaceEvent[]> => {
   const { data, error } = await supabase.from('race_events').select('*').order('start_date', { ascending: false });
@@ -723,8 +746,20 @@ export const fetchRaceEvents = async (userId?: string): Promise<RaceEvent[]> => 
   return parseRows(data, RaceEventRowSchema, 'race_events').map(toRaceEvent);
 };
 
+/**
+ * upsertRaceEvent — Create or update a race event.
+ *
+ * RESILIENT COLUMN HANDLING:
+ * The `track_address` and `track_zip` columns may not exist in the database
+ * if the user hasn't run the latest migration (sql_race_events_address.sql).
+ * 
+ * Strategy: Try with all columns first. If PostgREST rejects the payload
+ * because of unknown columns, retry WITHOUT track_address and track_zip.
+ * This ensures existing events can still be saved even before the migration runs.
+ */
 export const upsertRaceEvent = async (event: RaceEvent, userId?: string): Promise<void> => {
-  const payload: any = {
+  // Build the base payload (columns that always exist)
+  const basePayload: any = {
     id: event.id,
     title: event.title,
     event_type: event.eventType,
@@ -745,11 +780,47 @@ export const upsertRaceEvent = async (event: RaceEvent, userId?: string): Promis
     rounds_won: emptyToNull(event.roundsWon)
   };
   
-  if (userId) payload.user_id = userId;
+  if (userId) basePayload.user_id = userId;
+
+  // Build the full payload including new columns (track_address, track_zip)
+  const fullPayload: any = {
+    ...basePayload,
+    track_address: emptyToNull(event.trackAddress),
+    track_zip: emptyToNull(event.trackZip),
+  };
+
+  // Attempt 1: Try with all columns (including track_address, track_zip)
+  const { error: fullError } = await supabase.from('race_events').upsert(fullPayload);
   
-  const { error } = await supabase.from('race_events').upsert(payload);
-  if (error) throw error;
+  if (!fullError) {
+    // Success — columns exist, all good
+    return;
+  }
+
+  // Check if the error is specifically about unknown columns
+  if (isUnknownColumnError(fullError)) {
+    console.warn(
+      '[upsertRaceEvent] track_address/track_zip columns not found in DB — retrying without them.',
+      'Run sql_race_events_address.sql to add these columns.',
+      { code: fullError.code, message: fullError.message }
+    );
+
+    // Attempt 2: Retry with base payload only (no track_address, track_zip)
+    const { error: baseError } = await supabase.from('race_events').upsert(basePayload);
+    if (baseError) {
+      console.error('[upsertRaceEvent] Retry also failed:', baseError);
+      throw baseError;
+    }
+    // Success on retry — event saved without address/zip columns
+    return;
+  }
+
+  // Not a column error — throw the original error
+  throw fullError;
 };
+
+
+
 
 
 export const deleteRaceEvent = async (id: string): Promise<void> => {
@@ -975,6 +1046,10 @@ export interface SavedTrack {
   id: string;
   name: string;
   location: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
   elevation?: number;
   trackLength?: string;
   surfaceType?: string;
@@ -990,6 +1065,10 @@ const toSavedTrack = (row: any): SavedTrack => ({
   id: row.id,
   name: row.name,
   location: row.location,
+  address: row.address || '',
+  city: row.city || '',
+  state: row.state || '',
+  zip: row.zip || '',
   elevation: row.elevation || 0,
   trackLength: row.track_length || '1/8 mile',
   surfaceType: row.surface_type || 'Concrete',
@@ -1000,6 +1079,7 @@ const toSavedTrack = (row: any): SavedTrack => ({
   createdAt: row.created_at,
   updatedAt: row.updated_at
 });
+
 
 export const fetchSavedTracks = async (userId?: string): Promise<SavedTrack[]> => {
   let query = supabase
@@ -1021,6 +1101,10 @@ export const upsertSavedTrack = async (track: SavedTrack, userId?: string): Prom
     id: track.id,
     name: track.name,
     location: track.location,
+    address: emptyToNull(track.address),
+    city: emptyToNull(track.city),
+    state: emptyToNull(track.state),
+    zip: emptyToNull(track.zip),
     elevation: emptyToNull(track.elevation),
     track_length: emptyToNull(track.trackLength),
     surface_type: emptyToNull(track.surfaceType),
@@ -1036,6 +1120,7 @@ export const upsertSavedTrack = async (track: SavedTrack, userId?: string): Prom
   const { error } = await supabase.from('saved_tracks').upsert(payload);
   if (error) throw error;
 };
+
 
 
 export const deleteSavedTrack = async (id: string): Promise<void> => {
