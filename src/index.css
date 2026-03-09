@@ -1,0 +1,358 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 220 23% 95%;
+    --sidebar-foreground: 215 25% 27%;
+    --sidebar-primary: 221 83% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 90%;
+    --sidebar-accent-foreground: 215 25% 27%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 221 83% 53%;
+  }
+
+  .dark {
+    --background: 222 47% 3%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 5%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 5%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 0 84% 60%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 217.2 32.6% 12%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 12%;
+    --muted-foreground: 215 20.2% 55%;
+
+    --accent: 0 84% 60%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 50%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 15%;
+    --input: 217.2 32.6% 15%;
+    --ring: 0 84% 60%;
+
+    --sidebar-background: 222 47% 5%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 0 84% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 215 25% 15%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 215 25% 15%;
+    --sidebar-ring: 0 84% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans dark:bg-background dark:text-foreground;
+  }
+
+  /* Prevent images from overflowing their containers */
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  pre, code {
+    @apply font-mono;
+  }
+}
+
+
+.markdown-editor {
+  @apply font-mono text-base leading-relaxed;
+}
+
+.markdown-preview {
+  @apply prose max-w-none prose-blue dark:prose-invert;
+}
+
+.markdown-preview pre {
+  @apply bg-secondary p-4 rounded-md overflow-x-auto;
+}
+
+.markdown-preview code {
+  @apply text-sm font-mono text-primary;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview h4,
+.markdown-preview h5,
+.markdown-preview h6 {
+  @apply font-sans font-semibold text-foreground;
+}
+
+.markdown-preview ul,
+.markdown-preview ul,
+.markdown-preview ol {
+  @apply my-4 ml-6;
+}
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgb(15 23 42);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(51 65 85);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(71 85 105);
+}
+
+/* Hide scrollbar utility */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+
+/* Line clamp utility */
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Racing grid pattern */
+.racing-grid {
+  background-image: 
+    linear-gradient(rgba(239, 68, 68, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(239, 68, 68, 0.1) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Telemetry display font */
+.font-telemetry {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   DATE INPUT CALENDAR ICON FIX — WHITE ICONS ON DARK BACKGROUNDS
+   These rules apply to PLAIN native date/time inputs that are NOT
+   wrapped by DateInputDark or TimeInputDark components.
+   ============================================================ */
+
+/* Force date/time inputs to use dark color scheme for white text */
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"],
+input[type="month"],
+input[type="week"] {
+  color-scheme: dark !important;
+  color: white !important;
+}
+
+/* WebKit calendar picker indicator — force white via filter
+   (only for inputs that are NOT using the custom dark-override components) */
+input[type="date"]:not(.date-input-dark-override)::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]:not(.date-input-dark-override)::-webkit-calendar-picker-indicator,
+input[type="month"]:not(.date-input-dark-override)::-webkit-calendar-picker-indicator,
+input[type="week"]:not(.date-input-dark-override)::-webkit-calendar-picker-indicator {
+  filter: invert(1) !important;
+  opacity: 1 !important;
+  cursor: pointer !important;
+}
+
+/* Time inputs also get inverted icon (only non-override ones) */
+input[type="time"]:not(.time-input-dark-override)::-webkit-calendar-picker-indicator {
+  filter: invert(1) !important;
+  opacity: 1 !important;
+  cursor: pointer !important;
+}
+
+/* date-input-white class used in other components */
+.date-input-white,
+input.date-input-white[type="date"] {
+  color-scheme: dark !important;
+  color: white !important;
+}
+
+.date-input-white::-webkit-calendar-picker-indicator,
+input.date-input-white[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) !important;
+  opacity: 1 !important;
+  cursor: pointer !important;
+}
+
+/* ============================================================
+   DATEINPUTDARK COMPONENT — COMPLETELY HIDE native calendar icon
+   The custom white Calendar SVG rendered in React is the ONLY
+   visible icon. The native icon is removed with display:none,
+   opacity:0, and width:0 so it can never show through.
+   ============================================================ */
+.date-input-dark-override {
+  color-scheme: dark !important;
+  color: white !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+.date-input-dark-override::-webkit-calendar-picker-indicator {
+  display: none !important;
+  opacity: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+/* Firefox: hide the native date icon */
+.date-input-dark-override::-moz-calendar-picker-indicator {
+  display: none !important;
+}
+
+/* ============================================================
+   TIMEINPUTDARK COMPONENT — COMPLETELY HIDE native clock icon
+   The custom white Clock SVG rendered in React is the ONLY
+   visible icon. The native icon is removed with display:none,
+   opacity:0, and width:0 so it can never show through.
+   ============================================================ */
+.time-input-dark-override {
+  color-scheme: dark !important;
+  color: white !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+.time-input-dark-override::-webkit-calendar-picker-indicator {
+  display: none !important;
+  opacity: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+/* Firefox: hide the native time icon */
+.time-input-dark-override::-moz-calendar-picker-indicator {
+  display: none !important;
+}
+
+/* ============================================================
+   TODO LIST MODAL — COMPLETELY DIFFERENT APPROACH
+   Hide the native calendar icon entirely and use a custom SVG
+   overlay (rendered in React) so we never depend on browser
+   pseudo-element styling.
+   ============================================================ */
+
+/* Make the native picker icon invisible but still clickable */
+.todo-modal input[type="date"]::-webkit-calendar-picker-indicator,
+.todo-form input[type="date"]::-webkit-calendar-picker-indicator,
+input.todo-date-input::-webkit-calendar-picker-indicator,
+input.todo-date-input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0 !important;
+  width: 20px !important;
+  height: 20px !important;
+  cursor: pointer !important;
+  position: relative !important;
+  z-index: 10 !important;
+}
+
+/* Ensure the todo date input itself has dark scheme */
+.todo-modal input[type="date"],
+.todo-form input[type="date"],
+input.todo-date-input,
+input.todo-date-input[type="date"] {
+  color-scheme: dark !important;
+  color: white !important;
+}
+
+/* ============================================================
+   FINAL OVERRIDE — For any remaining plain native date inputs
+   that are NOT wrapped by DateInputDark. The :not() selector
+   ensures DateInputDark's hidden-icon rules are never overridden.
+   ============================================================ */
+input[type=date]:not(.date-input-dark-override)::-webkit-calendar-picker-indicator {
+  filter: invert(1) !important;
+  opacity: 1 !important;
+}
+
+input[type=date]:not(.date-input-dark-override) {
+  color-scheme: dark !important;
+}
+
+/* Ensure .date-input-dark-override ALWAYS wins — placed last for max specificity */
+input.date-input-dark-override[type="date"]::-webkit-calendar-picker-indicator {
+  display: none !important;
+  opacity: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Ensure .time-input-dark-override ALWAYS wins — placed last for max specificity */
+input.time-input-dark-override[type="time"]::-webkit-calendar-picker-indicator {
+  display: none !important;
+  opacity: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  pointer-events: none !important;
+}
