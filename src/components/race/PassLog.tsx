@@ -426,16 +426,14 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   // Check if the selected date is in the past (for historical weather)
   const isDateInPast = (): boolean => {
     if (!formData.date) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    // Parse as LOCAL time by appending T00:00:00 (no trailing Z).
-    // new Date("2026-03-09") parses as UTC midnight, which in negative-UTC
-    // timezones (e.g. US) becomes the previous calendar day in local time.
-    const selectedDate = parseLocalDate(formData.date);
-
-    selectedDate.setHours(0, 0, 0, 0);
-    return selectedDate < today;
+    // Compare YYYY-MM-DD strings directly to avoid any Date-object UTC
+    // conversion.  getLocalDateString() builds today's date from local
+    // year/month/day components, so the comparison is always in the
+    // user's local timezone — no off-by-one near midnight.
+    const todayStr = getLocalDateString();
+    return formData.date < todayStr;
   };
+
 
 
   // Fetch weather from WeatherAPI.com (supports both current and historical)

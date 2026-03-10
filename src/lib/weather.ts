@@ -1,7 +1,8 @@
 // Weather API utility — calls WeatherAPI.com directly from the browser.
 // API key is read from VITE_WEATHER_API_KEY environment variable.
 // No Supabase Edge Function needed.
-import { parseLocalDate } from './utils';
+import { parseLocalDate, getLocalDateString } from './utils';
+
 
 
 // ─── Configuration ───────────────────────────────────────────────────────────
@@ -367,12 +368,14 @@ export async function fetchWeatherData(
 ): Promise<WeatherResult> {
   const isHistorical = (() => {
     if (!date) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const selectedDate = parseLocalDate(date);
-    selectedDate.setHours(0, 0, 0, 0);
-    return selectedDate < today;
+    // Compare YYYY-MM-DD strings directly to avoid any Date-object UTC
+    // conversion.  getLocalDateString() builds today's date from local
+    // year/month/day components, so the comparison is always in the
+    // user's local timezone — no off-by-one near midnight.
+    const todayStr = getLocalDateString();
+    return date < todayStr;
   })();
+
 
 
   if (isHistorical && date) {
@@ -515,16 +518,17 @@ export async function fetchRaceDayForecast(
   location: string,
   eventDate: string
 ): Promise<RaceDayForecastData> {
-  const today = new Date();
-
-  today.setHours(0, 0, 0, 0);
+  // Derive "today" from local date components via getLocalDateString() to avoid
+  // the UTC-midnight off-by-one bug that occurs when using new Date() directly.
+  const todayStr = getLocalDateString();
+  const today = parseLocalDate(todayStr);
   const target = parseLocalDate(eventDate);
-  target.setHours(0, 0, 0, 0);
   const diffMs = target.getTime() - today.getTime();
   // Use Math.round (not Math.ceil) so DST transitions (±1 hr) don't shift
   // the day count.  E.g. 23 h (spring-forward) → round(0.958) = 1,
   // 25 h (fall-back) → round(1.042) = 1.
   const daysUntil = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
 
 
 
