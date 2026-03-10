@@ -289,6 +289,119 @@ async function fetchCurrentWeather(location: string): Promise<WeatherResult> {
   };
 }
 
+// ─── Fetch today's weather via the forecast endpoint ─────────────────────────
+// Uses forecast.json?days=1 instead of the current endpoint so the API response
+// explicitly contains today's date in its payload.  The current endpoint's
+// `last_updated` timestamp can lag behind midnight and show yesterday's date,
+// causing an off-by-one bug when the caller compares dates.
+
+async function fetchTodayWeather(location: string, date: string, time?: string): Promise<WeatherResult> {
+  const data = await callWeatherApi({
+    endpoint: 'forecast',
+    location,
+    days: 1,
+    aqi: 'no',
+    alerts: 'no',
+  });
+
+  const loc = data.location as Record<string, unknown>;
+  const forecast = data.forecast as Record<string, unknown> | undefined;
+  const forecastDays = (forecast?.forecastday as Array<Record<string, unknown>>) || [];
+
+  // Find today's forecast day by matching the date string.
+  // Fall back to the first (and usually only) day if no exact match.
+  const todayForecast = forecastDays.find((d) => (d.date as string) === date) || forecastDays[0];
+
+  if (!todayForecast) {
+    // Shouldn't happen, but fall back to the current endpoint as a safety net
+    return fetchCurrentWeather(location);
+  }
+
+  const hours = (todayForecast.hour as Array<Record<string, unknown>>) || [];
+
+  // If the caller provided a specific time, find the closest hourly entry.
+  // Otherwise pick the hour closest to the current local time.
+  let targetHour: number;
+  if (time) {
+    targetHour = parseInt(time.split(':')[0]) || new Date().getHours();
+  } else {
+    targetHour = new Date().getHours();
+  }
+
+  const hourEntry = hours.find((h) => {
+    const hTime = h.time as string; // e.g. "2026-03-10 14:00"
+    const hourPart = parseInt(hTime.split(' ')[1]?.split(':')[0] || '-1');
+    return hourPart === targetHour;
+  });
+
+  // If we found a matching hour, use its detailed data; otherwise use the
+  // current-conditions block from the same response (which IS included in
+  // forecast responses and is always tagged with today's date).
+  if (hourEntry) {
+    const hCondition = (hourEntry.condition as Record<string, unknown>) || {};
+    const tempF = hourEntry.temp_f as number;
+    const humidity = hourEntry.humidity as number;
+    const pressureInHg = (hourEntry.pressure_in as number) || 29.92;
+    const windMph = (hourEntry.wind_mph as number) || 0;
+    const windDeg = (hourEntry.wind_degree as number) || 0;
+    const conditionText = (hCondition.text as string) || 'Clear';
+
+    const saeData = calculateSAECorrectionInternal(tempF, pressureInHg, humidity);
+    const dewPoint = calculateDewPoint(tempF, humidity);
+
+    return {
+      weather: {
+        temperature: Math.round(tempF),
+        humidity: Math.round(humidity),
+        pressure: Math.round(pressureInHg * 100) / 100,
+        windSpeed: Math.round(windMph),
+        windDirection: degreeToDirection(windDeg),
+        conditions: mapCondition(conditionText),
+        location: (loc.name as string) || '',
+        region: (loc.region as string) || '',
+        dewPoint,
+      },
+      ...saeData,
+      isHistorical: false,
+    };
+  }
+
+  // No matching hour found — use the "current" block from the forecast response
+  // (forecast.json always includes a `current` object alongside the forecast days)
+  const current = data.current as Record<string, unknown> | undefined;
+  if (current) {
+    const condition = (current.condition as Record<string, unknown>) || {};
+    const tempF = current.temp_f as number;
+    const humidity = current.humidity as number;
+    const pressureInHg = current.pressure_in as number;
+    const windMph = current.wind_mph as number;
+    const windDeg = current.wind_degree as number;
+    const conditionText = (condition.text as string) || 'Clear';
+
+    const saeData = calculateSAECorrectionInternal(tempF, pressureInHg, humidity);
+    const dewPoint = calculateDewPoint(tempF, humidity);
+
+    return {
+      weather: {
+        temperature: Math.round(tempF),
+        humidity: Math.round(humidity),
+        pressure: Math.round(pressureInHg * 100) / 100,
+        windSpeed: Math.round(windMph),
+        windDirection: degreeToDirection(windDeg),
+        conditions: mapCondition(conditionText),
+        location: (loc.name as string) || '',
+        region: (loc.region as string) || '',
+        dewPoint,
+      },
+      ...saeData,
+      isHistorical: false,
+    };
+  }
+
+  // Last resort: fall back to the standalone current endpoint
+  return fetchCurrentWeather(location);
+}
+
 // ─── Fetch historical weather ────────────────────────────────────────────────
 
 async function fetchHistoricalWeather(location: string, date: string, time?: string): Promise<WeatherResult> {
@@ -359,31 +472,32 @@ async function fetchHistoricalWeather(location: string, date: string, time?: str
   };
 }
 
-// ─── Main export: fetch weather (auto-detects current vs historical) ─────────
+// ─── Main export: fetch weather (auto-detects current vs historical vs today) ─
 
 export async function fetchWeatherData(
   location: string,
   date?: string,
   time?: string
 ): Promise<WeatherResult> {
-  const isHistorical = (() => {
-    if (!date) return false;
-    // Compare YYYY-MM-DD strings directly to avoid any Date-object UTC
-    // conversion.  getLocalDateString() builds today's date from local
-    // year/month/day components, so the comparison is always in the
-    // user's local timezone — no off-by-one near midnight.
-    const todayStr = getLocalDateString();
-    return date < todayStr;
-  })();
-
-
-
-  if (isHistorical && date) {
-    return fetchHistoricalWeather(location, date, time);
-  } else {
+  if (!date) {
+    // No date provided at all — use the current endpoint (e.g. auto-fetch on modal open)
     return fetchCurrentWeather(location);
   }
+
+  const todayStr = getLocalDateString();
+
+  if (date < todayStr) {
+    // Past date — use the history endpoint
+    return fetchHistoricalWeather(location, date, time);
+  }
+
+  // Today (or future date within forecast range) — use the forecast endpoint
+  // so the API response explicitly contains today's date in its payload,
+  // eliminating the off-by-one bug from the current endpoint's `last_updated`
+  // timestamp which may still show yesterday near midnight.
+  return fetchTodayWeather(location, date, time);
 }
+
 
 
 // ─── Fetch extended weather data for the dashboard widget ────────────────────

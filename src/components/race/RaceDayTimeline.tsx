@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '@/contexts/AppContext';
 import { useCar } from '@/contexts/CarContext';
-import { parseLocalDateTime, formatLocalDate } from '@/lib/utils';
+import { parseLocalDateTime, formatLocalDate, getLocalDateString } from '@/lib/utils';
+
 import { RaceEvent } from '@/components/race/RaceCalendar';
 
 import {
@@ -257,7 +258,9 @@ const RaceDayTimeline: React.FC = () => {
     const map = new Map<string, TimelineEntry[]>();
 
     filteredEntries.forEach(entry => {
-      const dateKey = entry.timestamp.toISOString().slice(0, 10);
+      // Use local year/month/day to avoid UTC midnight shifting to the wrong date
+      const dateKey = getLocalDateString(entry.timestamp);
+
       if (!map.has(dateKey)) map.set(dateKey, []);
       map.get(dateKey)!.push(entry);
     });

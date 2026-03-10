@@ -410,8 +410,10 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
     for (let i = 11; i >= 0; i--) {
       const date = new Date();
       date.setMonth(date.getMonth() - i);
-      const key = date.toISOString().substring(0, 7);
+      // Use local year/month to avoid UTC midnight shifting to the wrong month
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       months[key] = { parts: 0, labor: 0, maintenance: 0, vendors: 0, total: 0, estimated: 0 };
+
     }
     
     workOrderCosts.forEach(wo => {
