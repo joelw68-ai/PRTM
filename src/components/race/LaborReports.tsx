@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
+import { parseLocalDate } from '@/lib/utils';
+
 import { useApp } from '@/contexts/AppContext';
 import { DailyLaborEntry } from './LaborTracking';
 import {
@@ -70,7 +72,8 @@ const LaborReports: React.FC<LaborReportsProps> = ({ laborEntries }) => {
   const availableYears = useMemo(() => {
     const years = new Set<number>();
     laborEntries.forEach(entry => {
-      years.add(new Date(entry.date).getFullYear());
+      years.add(parseLocalDate(entry.date).getFullYear());
+
     });
     if (years.size === 0) years.add(new Date().getFullYear());
     return Array.from(years).sort((a, b) => b - a);
@@ -81,7 +84,8 @@ const LaborReports: React.FC<LaborReportsProps> = ({ laborEntries }) => {
     const months: Record<string, MonthlyData> = {};
     
     laborEntries.forEach(entry => {
-      const date = new Date(entry.date);
+      const date = parseLocalDate(entry.date);
+
       const year = date.getFullYear();
       const monthNum = date.getMonth();
       const monthKey = `${year}-${String(monthNum + 1).padStart(2, '0')}`;
@@ -221,13 +225,14 @@ const LaborReports: React.FC<LaborReportsProps> = ({ laborEntries }) => {
     
     // Count entries per member
     laborEntries.forEach(entry => {
-      const date = new Date(entry.date);
+      const date = parseLocalDate(entry.date);
       if (date.getFullYear() === selectedYear) {
         if (members[entry.teamMemberName]) {
           members[entry.teamMemberName].entries += 1;
         }
       }
     });
+
     
     return Object.values(members).sort((a, b) => b.totalCost - a.totalCost);
   }, [filteredMonthlyData, laborEntries, selectedYear]);

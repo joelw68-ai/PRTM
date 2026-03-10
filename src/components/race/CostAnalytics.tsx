@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils';
+
+
 
 import { useApp } from '@/contexts/AppContext';
 import { useCar } from '@/contexts/CarContext';
@@ -268,6 +270,7 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
   };
 
   // Calculate date filter
+
   const getDateFilter = () => {
     const now = new Date();
     switch (dateRange) {
@@ -275,14 +278,16 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
       case '90d': return new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
       case '6m': return new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
       case '1y': return new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-      default: return new Date('2020-01-01');
+      default: return parseLocalDate('2020-01-01');
     }
   };
+
 
   // Calculate daily labor costs
   const dailyLaborStats = useMemo(() => {
     const dateFilter = getDateFilter();
-    const filteredLabor = laborEntries.filter(e => new Date(e.date) >= dateFilter);
+    const filteredLabor = laborEntries.filter(e => parseLocalDate(e.date) >= dateFilter);
+
     
     const totalHours = filteredLabor.reduce((sum, e) => sum + e.hours, 0);
     const totalCost = filteredLabor.reduce((sum, e) => sum + e.totalCost, 0);
@@ -295,7 +300,8 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
     const dateFilter = getDateFilter();
     
     return workOrders
-      .filter(wo => new Date(wo.createdDate) >= dateFilter)
+      .filter(wo => parseLocalDate(wo.createdDate) >= dateFilter)
+
       .map(wo => {
         const parts = Array.isArray(wo.parts) ? wo.parts : [];
         const partsCost = parts.reduce((sum, p) => sum + ((p.cost || 0) * (p.quantity || 0)), 0);
@@ -434,7 +440,9 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([month, data]) => ({
         month,
-        label: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        label: formatLocalDate(month + '-01', { month: 'short', year: '2-digit' }),
+
+
         ...data
       }));
   }, [workOrderCosts]);

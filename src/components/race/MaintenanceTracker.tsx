@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate } from '@/lib/utils';
+
 import DateInputDark from '@/components/ui/DateInputDark';
 import CarDropdown from '@/components/race/CarDropdown';
 import { useCar } from '@/contexts/CarContext';
@@ -221,7 +222,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   };
 
   const calculateSFIStatus = (expirationDate: string): { status: SFICertification['status'], daysUntilExpiration: number } => {
-    const expDate = new Date(expirationDate);
+    const expDate = parseLocalDate(expirationDate);
+
     const today = new Date();
     const diffTime = expDate.getTime() - today.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));

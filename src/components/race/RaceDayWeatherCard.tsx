@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { formatLocalDate } from '@/lib/utils';
 import { fetchRaceDayForecast, RaceDayForecastData, RaceDayHour } from '@/lib/weather';
 import {
   Cloud,
@@ -109,10 +110,9 @@ const RaceDayWeatherCard: React.FC<RaceDayWeatherCardProps> = ({
     fetchForecast();
   }, [trackLocation, trackName, eventDate]);
 
-  // Format the event date for display
+  // Format the event date for display using the centralized utility
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr + 'T00:00:00');
-    return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    return formatLocalDate(dateStr, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   };
 
   // Days until event label

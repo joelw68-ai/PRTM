@@ -1,5 +1,8 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { parseLocalDate, formatLocalDate } from '@/lib/utils';
+
 import DateInputDark from '@/components/ui/DateInputDark';
+
 
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -255,8 +258,9 @@ const ToDoList: React.FC<ToDoListProps> = ({ currentRole = 'Crew', crewMemberNam
     items.sort((a, b) => {
       let comparison = 0;
       if (sortBy === 'dueDate') {
-        const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-        const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+        const dateA = a.dueDate ? parseLocalDate(a.dueDate).getTime() : Infinity;
+        const dateB = b.dueDate ? parseLocalDate(b.dueDate).getTime() : Infinity;
+
         comparison = dateA - dateB;
       } else if (sortBy === 'priority') {
         const priorityOrder = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
@@ -691,8 +695,9 @@ const ToDoList: React.FC<ToDoListProps> = ({ currentRole = 'Crew', crewMemberNam
 
   const isOverdue = (dueDate?: string) => {
     if (!dueDate) return false;
-    return new Date(dueDate) < new Date() && new Date(dueDate).toDateString() !== new Date().toDateString();
+    return parseLocalDate(dueDate) < new Date() && parseLocalDate(dueDate).toDateString() !== new Date().toDateString();
   };
+
 
   // Stats (only for active items)
   const stats = useMemo(() => ({
@@ -818,14 +823,17 @@ const ToDoList: React.FC<ToDoListProps> = ({ currentRole = 'Crew', crewMemberNam
                 isOverdue(item.dueDate) && item.status !== 'Completed' && !isArchivedView
                   ? 'text-red-400' : 'text-slate-400'
               }`}>
-                {isOverdue(item.dueDate) && item.status !== 'Completed' && !isArchivedView && (
+                {isOverdue(item.dueDate) && item.status !== 'Completed' && !isArchivedView ? (
                   <AlertTriangle className="w-3 h-3" />
+                ) : (
+                  <Calendar className="w-3 h-3" />
                 )}
-                <Calendar className="w-3 h-3" />
-                {new Date(item.dueDate).toLocaleDateString()}
+                {formatLocalDate(item.dueDate)}
+
               </span>
             )}
             
+
             <span className="text-slate-500 text-xs">
               Created by {item.createdBy} ({item.createdByRole})
             </span>

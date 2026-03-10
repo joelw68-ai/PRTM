@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils';
+
+
 
 import { useApp } from '@/contexts/AppContext';
 import InvoiceUpload from './InvoiceUpload';
@@ -332,7 +334,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
           // Update vendor performance
           const vendor = vendors.find(v => v.id === po.vendorId);
           if (vendor) {
-            const expectedDate = po.expectedDelivery ? new Date(po.expectedDelivery) : null;
+            const expectedDate = po.expectedDelivery ? parseLocalDate(po.expectedDelivery) : null;
+
             const receivedDate = new Date();
             const isOnTime = !expectedDate || receivedDate <= expectedDate;
             
@@ -1240,8 +1243,10 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
                       </div>
                       <div>
                         <p className="text-white font-medium">
-                          {new Date(month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                          {formatLocalDate(month + '-01', { month: 'long', year: 'numeric' })}
+
                         </p>
+
                         <p className="text-sm text-slate-400">{data.orders} orders placed</p>
                       </div>
                     </div>

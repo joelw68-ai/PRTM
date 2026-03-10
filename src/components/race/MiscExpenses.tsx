@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils';
+
+
 import { supabase } from '@/lib/supabase';
 import { parseRows } from '@/lib/validatedQuery';
 import { MiscExpenseRowSchema } from '@/lib/validators';
@@ -503,7 +505,8 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
     result.sort((a, b) => {
       let cmp = 0;
       switch (sortBy) {
-        case 'date': cmp = new Date(a.expense_date).getTime() - new Date(b.expense_date).getTime(); break;
+        case 'date': cmp = parseLocalDate(a.expense_date).getTime() - parseLocalDate(b.expense_date).getTime(); break;
+
         case 'amount': cmp = a.amount - b.amount; break;
         case 'category': cmp = a.category.localeCompare(b.category); break;
       }
@@ -565,14 +568,15 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
     const base = carFilteredExpenses;
     const now = new Date();
     const thisMonth = base.filter(e => {
-      const d = new Date(e.expense_date);
+      const d = parseLocalDate(e.expense_date);
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     });
     const lastMonth = base.filter(e => {
-      const d = new Date(e.expense_date);
+      const d = parseLocalDate(e.expense_date);
       const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       return d.getMonth() === lm.getMonth() && d.getFullYear() === lm.getFullYear();
     });
+
     return {
       total: base.reduce((s, e) => s + Number(e.amount), 0),
       count: base.length,
@@ -826,7 +830,9 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
                               <div className="flex items-center gap-4 mt-1 text-sm flex-wrap">
                                 <span className="text-slate-500 flex items-center gap-1">
                                   <Calendar className="w-3.5 h-3.5" />
-                                  {new Date(expense.expense_date).toLocaleDateString()}
+                                  {formatLocalDate(expense.expense_date)}
+
+
                                 </span>
                                 {expense.paid_by && (
                                   <span className="text-slate-500 flex items-center gap-1">
@@ -1238,10 +1244,12 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
                   >
                     <option value="">None</option>
                     {raceEvents.map(e => (
-                      <option key={e.id} value={e.id}>{e.title} ({new Date(e.startDate).toLocaleDateString()})</option>
+                      <option key={e.id} value={e.id}>{e.title} ({formatLocalDate(e.startDate)})</option>
+
                     ))}
                   </select>
                 </div>
+
 
                 {/* Receipt Upload */}
                 <div>
@@ -1365,10 +1373,11 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
                 <p className="text-slate-400 mt-1">{getDisplayCategory(selectedExpense)}</p>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-0">
                 {[
                   { label: 'Category', value: getDisplayCategory(selectedExpense) },
-                  { label: 'Date', value: new Date(selectedExpense.expense_date).toLocaleDateString() },
+                  { label: 'Date', value: formatLocalDate(selectedExpense.expense_date) },
+
                   ...(selectedExpense.paid_by ? [{ label: 'Paid By', value: selectedExpense.paid_by }] : []),
                   ...(selectedExpense.payment_method ? [{ label: 'Payment Method', value: selectedExpense.payment_method }] : []),
                   { label: 'In Cost Report', value: selectedExpense.add_to_cost_report ? 'Yes' : 'No', color: selectedExpense.add_to_cost_report ? 'text-green-400' : 'text-slate-400' },
@@ -1378,7 +1387,6 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
                     <span className="text-slate-400 text-sm">{row.label}</span>
                     <span className={`text-sm font-medium ${row.color || 'text-white'}`}>{row.value}</span>
                   </div>
-
                 ))}
               </div>
 
@@ -1396,7 +1404,6 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
                 ) : null;
               })()}
 
-              {/* Receipt Preview */}
               {selectedExpense.receipt_url && (
                 <div className="mt-4">
                   <p className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-2">Receipt</p>
@@ -1423,7 +1430,6 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
                 </div>
               )}
 
-              {/* Audit */}
               <div className="mt-3 space-y-1">
                 <div className="flex items-center gap-2 text-xs text-slate-500">
                   <Clock className="w-3 h-3" />
@@ -1437,7 +1443,6 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
                 )}
               </div>
 
-              {/* Actions */}
               <div className="flex gap-2 mt-4 pt-4 border-t border-slate-700">
                 <button
                   onClick={() => { handleOpenEdit(selectedExpense); setShowDetailModal(false); }}
@@ -1455,6 +1460,7 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
             </div>
           </div>
         )}
+
 
         {/* ===== EXPORT MODAL ===== */}
         <ExpenseExportModal

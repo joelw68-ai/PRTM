@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate } from '@/lib/utils';
+
 import DateInputDark from '@/components/ui/DateInputDark';
 
 
@@ -96,7 +97,8 @@ const LaborTracking: React.FC<LaborTrackingProps> = ({ laborEntries, setLaborEnt
       case 'week': return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       case 'month': return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       case 'year': return new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-      default: return new Date('2020-01-01');
+      default: return parseLocalDate('2020-01-01');
+
     }
   };
 
@@ -110,9 +112,10 @@ const LaborTracking: React.FC<LaborTrackingProps> = ({ laborEntries, setLaborEnt
       const matchesMember = filterMember === 'all' || entry.teamMemberId === filterMember;
       const matchesCategory = filterCategory === 'all' || entry.category === filterCategory;
       const matchesEvent = filterEvent === 'all' || entry.eventId === filterEvent || (filterEvent === 'unassigned' && !entry.eventId);
-      const matchesDate = new Date(entry.date) >= dateFilter;
+      const matchesDate = parseLocalDate(entry.date) >= dateFilter;
       return matchesSearch && matchesMember && matchesCategory && matchesEvent && matchesDate;
-    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }).sort((a, b) => parseLocalDate(b.date).getTime() - parseLocalDate(a.date).getTime());
+
   }, [laborEntries, searchTerm, filterMember, filterCategory, filterEvent, dateRange]);
 
   // Statistics
@@ -831,9 +834,9 @@ const LaborTracking: React.FC<LaborTrackingProps> = ({ laborEntries, setLaborEnt
                                 </tr>
                               </thead>
                               <tbody>
-                                {eventData.entries
-                                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                                  .map(entry => (
+                                  {eventData.entries
+                                    .sort((a, b) => parseLocalDate(b.date).getTime() - parseLocalDate(a.date).getTime())
+                                    .map(entry => (
                                     <tr key={entry.id} className="border-t border-slate-700/30">
                                       <td className="py-2 text-white">{entry.date}</td>
                                       <td className="py-2 text-white">{entry.teamMemberName}</td>
@@ -854,6 +857,7 @@ const LaborTracking: React.FC<LaborTrackingProps> = ({ laborEntries, setLaborEnt
                                       <td className="py-2 text-right text-purple-400 font-medium">${entry.totalCost.toLocaleString()}</td>
                                     </tr>
                                   ))}
+
                               </tbody>
                               <tfoot>
                                 <tr className="border-t border-slate-600">
@@ -963,14 +967,15 @@ const LaborTracking: React.FC<LaborTrackingProps> = ({ laborEntries, setLaborEnt
                   onChange={(e) => handleEventSelect(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                 >
-                  <option value="">No event (General labor)</option>
-                  {raceEvents
-                    .sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime())
+                  <option value="">No event</option>
+                  {[...raceEvents]
+                    .sort((a, b) => parseLocalDate(b.startDate).getTime() - parseLocalDate(a.startDate).getTime())
                     .map(event => (
                       <option key={event.id} value={event.id}>
                         {event.title} - {event.startDate} {event.trackName && `(${event.trackName})`}
                       </option>
                     ))}
+
                 </select>
                 <p className="text-xs text-slate-500 mt-1">
                   Link this labor entry to a specific race event for cost tracking

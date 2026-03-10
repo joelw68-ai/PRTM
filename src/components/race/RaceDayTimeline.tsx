@@ -1,7 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '@/contexts/AppContext';
 import { useCar } from '@/contexts/CarContext';
+import { parseLocalDateTime, formatLocalDate } from '@/lib/utils';
 import { RaceEvent } from '@/components/race/RaceCalendar';
+
 import {
   Clock,
   Calendar,
@@ -112,7 +114,8 @@ const RaceDayTimeline: React.FC = () => {
         entries.push({
           id: `pass-${pass.id}`,
           type: 'pass',
-          timestamp: new Date(`${pass.date}T${pass.time || '12:00'}:00`),
+           timestamp: parseLocalDateTime(pass.date, pass.time || '12:00'),
+
           title: `Pass — ${pass.eighth.toFixed(3)}s @ ${pass.mph.toFixed(1)} MPH`,
           subtitle: `${pass.sessionType}${pass.round ? ` R${pass.round}` : ''} • ${pass.lane} Lane • ${pass.result}`,
           details: {
@@ -134,7 +137,8 @@ const RaceDayTimeline: React.FC = () => {
         entries.push({
           id: `weather-${pass.id}`,
           type: 'weather',
-          timestamp: new Date(`${pass.date}T${pass.time || '12:00'}:00`),
+          timestamp: parseLocalDateTime(pass.date, pass.time || '12:00'),
+
           title: `Weather Snapshot — ${pass.weather.conditions}`,
           subtitle: `Recorded with pass at ${pass.time || '—'}`,
           details: {
@@ -159,7 +163,8 @@ const RaceDayTimeline: React.FC = () => {
         entries.push({
           id: `maint-${item.id}`,
           type: 'maintenance',
-          timestamp: new Date(`${item.lastService}T08:00:00`),
+          timestamp: parseLocalDateTime(item.lastService, '08:00'),
+
           title: `Maintenance — ${item.component}`,
           subtitle: `${item.category} • ${item.status} • Priority: ${item.priority}`,
           details: {
@@ -217,7 +222,8 @@ const RaceDayTimeline: React.FC = () => {
         entries.push({
           id: `wo-${wo.id}`,
           type: 'workorder',
-          timestamp: new Date(`${wo.createdDate}T09:00:00`),
+          timestamp: parseLocalDateTime(wo.createdDate, '09:00'),
+
           title: `Work Order — ${wo.title}`,
           subtitle: `${wo.category} • ${wo.status} • ${wo.priority} Priority`,
           details: {
@@ -246,7 +252,6 @@ const RaceDayTimeline: React.FC = () => {
     return timelineEntries.filter(e => visibleTypes.has(e.type));
   }, [timelineEntries, visibleTypes]);
 
-  // ─── Group entries by date ───
   const groupedByDate = useMemo(() => {
     const groups: { date: string; label: string; entries: TimelineEntry[] }[] = [];
     const map = new Map<string, TimelineEntry[]>();
@@ -258,10 +263,9 @@ const RaceDayTimeline: React.FC = () => {
     });
 
     map.forEach((entries, dateKey) => {
-      const d = new Date(dateKey + 'T12:00:00');
       groups.push({
         date: dateKey,
-        label: d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }),
+        label: formatLocalDate(dateKey, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }),
         entries,
       });
     });
@@ -269,6 +273,7 @@ const RaceDayTimeline: React.FC = () => {
     groups.sort((a, b) => a.date.localeCompare(b.date));
     return groups;
   }, [filteredEntries]);
+
 
   // ─── Toggle type filter ───
   const toggleType = (type: TimelineEntryType) => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getLocalDateString } from '../utils';
+import { getLocalDateString, parseLocalDate } from '../utils';
 
 describe('getLocalDateString', () => {
   // ── Format validation ──────────────────────────────────────────────────────
@@ -9,7 +9,7 @@ describe('getLocalDateString', () => {
     expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it('returns today's date when called with no argument', () => {
+  it('returns today\u2019s date when called with no argument', () => {
     const now = new Date();
     const expected = [
       now.getFullYear(),
@@ -27,7 +27,7 @@ describe('getLocalDateString', () => {
     expect(getLocalDateString(july4)).toBe('2024-07-04');
   });
 
-  it('handles New Year's Day correctly', () => {
+  it('handles New Year\u2019s Day correctly', () => {
     const newYear = new Date(2026, 0, 1, 10, 0, 0);
     expect(getLocalDateString(newYear)).toBe('2026-01-01');
   });
@@ -64,10 +64,6 @@ describe('getLocalDateString', () => {
   });
 
   // ── Midnight edge case (the original bug) ─────────────────────────────────
-  // In US timezones (UTC-5 to UTC-10), midnight local = 5:00–10:00 AM UTC.
-  // toISOString() at midnight local would still show the correct UTC date,
-  // but the *previous* day's 11 PM local → next day in UTC.
-  // getLocalDateString must always reflect the LOCAL date.
 
   it('returns the correct LOCAL date at midnight (00:00:00)', () => {
     const midnight = new Date(2025, 5, 15, 0, 0, 0); // June 15 at midnight local
@@ -80,8 +76,6 @@ describe('getLocalDateString', () => {
   });
 
   // ── 11:59 PM edge case ─────────────────────────────────────────────────────
-  // At 11:59 PM local in UTC+ timezones, toISOString() could show the
-  // *previous* UTC date.  getLocalDateString must still return the local date.
 
   it('returns the correct LOCAL date at 11:59:59 PM', () => {
     const lateNight = new Date(2025, 5, 15, 23, 59, 59);
@@ -116,10 +110,6 @@ describe('getLocalDateString', () => {
   });
 
   // ── Contrast with toISOString().split('T')[0] ─────────────────────────────
-  // This test documents the bug that getLocalDateString was created to fix.
-  // It constructs a date at midnight local time and verifies that
-  // getLocalDateString returns the local date, regardless of what
-  // toISOString would return.
 
   it('always matches local date components, not UTC', () => {
     const d = new Date(2025, 0, 15, 0, 0, 0); // Jan 15 midnight local
@@ -138,8 +128,6 @@ describe('getLocalDateString', () => {
     const result = getLocalDateString(undefined);
     const after = new Date();
 
-    // The result should match either `before` or `after` (in case of
-    // midnight rollover during the call — astronomically unlikely but safe)
     const expected1 = [
       before.getFullYear(),
       String(before.getMonth() + 1).padStart(2, '0'),
@@ -152,5 +140,148 @@ describe('getLocalDateString', () => {
     ].join('-');
 
     expect([expected1, expected2]).toContain(result);
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// parseLocalDate
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('parseLocalDate', () => {
+  // ── Basic correctness ──────────────────────────────────────────────────────
+
+  it('returns a Date object', () => {
+    expect(parseLocalDate('2026-03-09')).toBeInstanceOf(Date);
+  });
+
+  it('parses the date as local midnight, not UTC', () => {
+    const d = parseLocalDate('2026-03-09');
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(2);   // March = 2
+    expect(d.getDate()).toBe(9);
+    expect(d.getHours()).toBe(0);
+    expect(d.getMinutes()).toBe(0);
+    expect(d.getSeconds()).toBe(0);
+  });
+
+  it('never shifts the day backwards (the UTC midnight bug)', () => {
+    // This is the core bug: new Date("2026-03-09") in UTC-5 gives
+    // March 8 at 7 PM local.  parseLocalDate must always give March 9.
+    const d = parseLocalDate('2026-03-09');
+    expect(d.getDate()).toBe(9);
+  });
+
+  // ── Single-digit months and days ───────────────────────────────────────────
+
+  it('handles single-digit month (January)', () => {
+    const d = parseLocalDate('2025-01-15');
+    expect(d.getMonth()).toBe(0);
+    expect(d.getDate()).toBe(15);
+  });
+
+  it('handles single-digit day', () => {
+    const d = parseLocalDate('2025-10-05');
+    expect(d.getMonth()).toBe(9);
+    expect(d.getDate()).toBe(5);
+  });
+
+  // ── Double-digit months and days ───────────────────────────────────────────
+
+  it('handles double-digit month and day', () => {
+    const d = parseLocalDate('2025-12-25');
+    expect(d.getMonth()).toBe(11);
+    expect(d.getDate()).toBe(25);
+  });
+
+  // ── Leap year ──────────────────────────────────────────────────────────────
+
+  it('handles Feb 29 on a leap year', () => {
+    const d = parseLocalDate('2024-02-29');
+    expect(d.getMonth()).toBe(1);
+    expect(d.getDate()).toBe(29);
+  });
+
+  // ── Month boundaries ───────────────────────────────────────────────────────
+
+  it('handles last day of February (non-leap)', () => {
+    const d = parseLocalDate('2025-02-28');
+    expect(d.getMonth()).toBe(1);
+    expect(d.getDate()).toBe(28);
+  });
+
+  it('handles last day of a 30-day month', () => {
+    const d = parseLocalDate('2025-04-30');
+    expect(d.getMonth()).toBe(3);
+    expect(d.getDate()).toBe(30);
+  });
+
+  it('handles last day of a 31-day month', () => {
+    const d = parseLocalDate('2025-01-31');
+    expect(d.getMonth()).toBe(0);
+    expect(d.getDate()).toBe(31);
+  });
+
+  // ── Year boundaries ────────────────────────────────────────────────────────
+
+  it('handles Jan 1', () => {
+    const d = parseLocalDate('2026-01-01');
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(0);
+    expect(d.getDate()).toBe(1);
+  });
+
+  it('handles Dec 31', () => {
+    const d = parseLocalDate('2025-12-31');
+    expect(d.getFullYear()).toBe(2025);
+    expect(d.getMonth()).toBe(11);
+    expect(d.getDate()).toBe(31);
+  });
+
+  // ── Comparison correctness ─────────────────────────────────────────────────
+
+  it('compares correctly: later date > earlier date', () => {
+    const a = parseLocalDate('2025-06-15');
+    const b = parseLocalDate('2025-06-14');
+    expect(a.getTime()).toBeGreaterThan(b.getTime());
+  });
+
+  it('compares correctly: same date = same timestamp', () => {
+    const a = parseLocalDate('2025-06-15');
+    const b = parseLocalDate('2025-06-15');
+    expect(a.getTime()).toBe(b.getTime());
+  });
+
+  // ── Round-trip with getLocalDateString ──────────────────────────────────────
+
+  it('round-trips through getLocalDateString', () => {
+    const original = '2026-03-09';
+    const parsed = parseLocalDate(original);
+    const formatted = getLocalDateString(parsed);
+    expect(formatted).toBe(original);
+  });
+
+  it('round-trips edge dates through getLocalDateString', () => {
+    const dates = ['2024-02-29', '2025-01-01', '2025-12-31', '2025-06-15'];
+    for (const dateStr of dates) {
+      expect(getLocalDateString(parseLocalDate(dateStr))).toBe(dateStr);
+    }
+  });
+
+  // ── Contrast with bare new Date(string) ────────────────────────────────────
+  // Documents the bug that parseLocalDate was created to fix.
+
+  it('getDate() always matches the day in the input string', () => {
+    // For any YYYY-MM-DD string, parseLocalDate must return a Date whose
+    // getDate() equals the day component, regardless of timezone offset.
+    const testCases = [
+      { input: '2026-03-09', expectedDay: 9 },
+      { input: '2025-01-01', expectedDay: 1 },
+      { input: '2025-11-30', expectedDay: 30 },
+      { input: '2024-02-29', expectedDay: 29 },
+    ];
+    for (const { input, expectedDay } of testCases) {
+      expect(parseLocalDate(input).getDate()).toBe(expectedDay);
+    }
   });
 });

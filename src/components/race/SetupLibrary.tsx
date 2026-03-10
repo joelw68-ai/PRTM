@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils';
+
+
 import DateInputDark from '@/components/ui/DateInputDark';
 import CarDropdown from '@/components/race/CarDropdown';
 import { useCar } from '@/contexts/CarContext';
@@ -1126,7 +1128,9 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                           <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-3">
                               <span className="text-sm font-medium text-slate-300">
-                                {new Date(log.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                                {formatLocalDate(log.date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+
+
                               </span>
                               {log.time && <span className="text-xs text-slate-500">{log.time}</span>}
                               {idx === 0 && <span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-400 text-xs rounded font-medium">LATEST</span>}

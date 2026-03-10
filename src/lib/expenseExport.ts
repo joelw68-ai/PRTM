@@ -1,5 +1,7 @@
 import { supabase } from './supabase';
-import { getLocalDateString } from './utils';
+import { getLocalDateString, parseLocalDate, formatLocalDate } from './utils';
+
+
 // Handles CSV export, printable PDF reports, per-event reports, and monthly statements
 
 export interface ExportableExpense {
@@ -33,7 +35,7 @@ const formatCurrency = (amount: number): string =>
 
 const formatDate = (dateStr: string): string => {
   try {
-    return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
+    return formatLocalDate(dateStr, {
       year: 'numeric', month: 'short', day: 'numeric'
     });
   } catch {
@@ -41,15 +43,19 @@ const formatDate = (dateStr: string): string => {
   }
 };
 
+
 const formatDateLong = (dateStr: string): string => {
   try {
-    return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
+    return formatLocalDate(dateStr, {
       year: 'numeric', month: 'long', day: 'numeric'
     });
   } catch {
     return dateStr;
   }
 };
+
+
+
 
 const getDisplayCategory = (exp: ExportableExpense): string => {
   if (exp.category === 'Other' && exp.custom_description) return exp.custom_description;
@@ -523,11 +529,12 @@ export const exportMonthlyStatementPDF = (
   // Group by month
   const byMonth: Record<string, ExportableExpense[]> = {};
   filtered.forEach(e => {
-    const d = new Date(e.expense_date + 'T00:00:00');
+    const d = parseLocalDate(e.expense_date);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     if (!byMonth[key]) byMonth[key] = [];
     byMonth[key].push(e);
   });
+
 
   const monthKeys = Object.keys(byMonth).sort();
 

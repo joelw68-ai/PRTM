@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils';
+
+
 
 import { supabase } from '@/lib/supabase';
 import { parseRows } from '@/lib/validatedQuery';
@@ -135,16 +137,18 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
     if (part.status === 'returned') return false;
     if (!part.expected_return_date) return false;
     if (part.expected_return_date < today) return false; // overdue, not due-soon
-    const dueDate = new Date(part.expected_return_date + 'T00:00:00');
-    const todayDate = new Date(today + 'T00:00:00');
+    const dueDate = parseLocalDate(part.expected_return_date);
+    const todayDate = parseLocalDate(today);
+
     const diffDays = Math.ceil((dueDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
     return diffDays >= 0 && diffDays <= 3;
   };
 
   const getDaysUntilDue = (part: BorrowedLoanedPart): number | null => {
     if (!part.expected_return_date) return null;
-    const dueDate = new Date(part.expected_return_date + 'T00:00:00');
-    const todayDate = new Date(today + 'T00:00:00');
+    const dueDate = parseLocalDate(part.expected_return_date);
+    const todayDate = parseLocalDate(today);
+
     return Math.ceil((dueDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
   };
 
@@ -834,7 +838,8 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
                           </span>
                           <span className="flex items-center gap-1.5">
                             <Calendar className="w-3.5 h-3.5" />
-                            {new Date(part.date_transaction).toLocaleDateString()}
+                            {formatLocalDate(part.date_transaction)}
+
                           </span>
                           {part.expected_return_date && (
                             <span
@@ -845,10 +850,10 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
                             >
                               <RotateCcw className="w-3.5 h-3.5" />
                               Due:{' '}
-                              {new Date(
-                                part.expected_return_date
-                              ).toLocaleDateString()}
+                              {formatLocalDate(part.expected_return_date)}
+
                             </span>
+
                           )}
                         </div>
                       </div>
@@ -959,12 +964,12 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
                               Actual Return Date
                             </p>
                             <p className="text-sm text-slate-300">
-                              {new Date(
-                                part.actual_return_date
-                              ).toLocaleDateString()}
+                              {formatLocalDate(part.actual_return_date)}
                             </p>
+
                           </div>
                         )}
+
                         {linkedItem && (
                           <div>
                             <p className="text-xs text-slate-500 mb-1">Linked Inventory</p>

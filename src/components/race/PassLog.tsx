@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils';
+
+
 import { toast } from 'sonner';
 import DateInputDark from '@/components/ui/DateInputDark';
 
@@ -429,7 +431,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     // Parse as LOCAL time by appending T00:00:00 (no trailing Z).
     // new Date("2026-03-09") parses as UTC midnight, which in negative-UTC
     // timezones (e.g. US) becomes the previous calendar day in local time.
-    const selectedDate = new Date(formData.date + 'T00:00:00');
+    const selectedDate = parseLocalDate(formData.date);
+
     selectedDate.setHours(0, 0, 0, 0);
     return selectedDate < today;
   };
@@ -479,12 +482,13 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
         // Show different success message for historical vs current weather
         if (data.isHistorical) {
           // Parse as local time to avoid UTC date shift in the formatted display
-          const formattedDate = new Date(formData.date! + 'T00:00:00').toLocaleDateString('en-US', { 
+          const formattedDate = formatLocalDate(formData.date!, { 
             weekday: 'short', 
             month: 'short', 
             day: 'numeric', 
             year: 'numeric' 
           });
+
           setWeatherSuccess(`Historical weather loaded for ${locationName} on ${formattedDate}`);
 
         } else {

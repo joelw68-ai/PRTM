@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { parseLocalDate, formatLocalDate } from '@/lib/utils';
+
+
 import DateInputDark from '@/components/ui/DateInputDark';
 import { useAuth } from '@/contexts/AuthContext';
 import { CrewRole, hasPermission, isAdminRole } from '@/lib/permissions';
@@ -315,12 +318,13 @@ const MediaGallery: React.FC<MediaGalleryProps> = ({ currentRole }) => {
   // Format date
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '';
-    return new Date(dateStr).toLocaleDateString('en-US', {
+    return formatLocalDate(dateStr, {
       year: 'numeric',
       month: 'short',
       day: 'numeric'
     });
   };
+
 
   // Stats
   const photoCount = mediaItems.filter(m => m.mediaType === 'photo').length;

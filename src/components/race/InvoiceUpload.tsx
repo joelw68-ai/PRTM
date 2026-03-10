@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils';
+
+
 import { supabase } from '@/lib/supabase';
 import { uploadWithFallback, getStorageErrorMessage } from '@/lib/storageUpload';
 import { parseRows } from '@/lib/validatedQuery';
@@ -602,12 +604,13 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
     result.sort((a, b) => {
       let comparison = 0;
       switch (sortBy) {
-        case 'date': comparison = new Date(a.invoice_date).getTime() - new Date(b.invoice_date).getTime(); break;
+        case 'date': comparison = parseLocalDate(a.invoice_date).getTime() - parseLocalDate(b.invoice_date).getTime(); break;
         case 'amount': comparison = a.total - b.total; break;
         case 'due':
-          const dateA = a.due_date ? new Date(a.due_date).getTime() : Infinity;
-          const dateB = b.due_date ? new Date(b.due_date).getTime() : Infinity;
+          const dateA = a.due_date ? parseLocalDate(a.due_date).getTime() : Infinity;
+          const dateB = b.due_date ? parseLocalDate(b.due_date).getTime() : Infinity;
           comparison = dateA - dateB; break;
+
         case 'vendor': comparison = a.vendor_name.localeCompare(b.vendor_name); break;
       }
       return sortDir === 'desc' ? -comparison : comparison;
@@ -622,12 +625,13 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
     const overdue = invoices.filter(i => {
       if (i.status === 'Paid') return false;
       if (!i.due_date) return false;
-      return new Date(i.due_date) < now;
+      return parseLocalDate(i.due_date) < now;
     });
     const paid = invoices.filter(i => i.status === 'Paid');
     const thisMonth = invoices.filter(i => {
-      const d = new Date(i.invoice_date);
+      const d = parseLocalDate(i.invoice_date);
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+
     });
     return {
       totalInvoices: invoices.length,
@@ -666,18 +670,18 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
 
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
-
   const isOverdue = (invoice: Invoice) => {
     if (invoice.status === 'Paid') return false;
     if (!invoice.due_date) return false;
-    return new Date(invoice.due_date) < new Date();
+    return parseLocalDate(invoice.due_date) < new Date();
   };
 
   const getDaysUntilDue = (dueDate: string | null) => {
     if (!dueDate) return null;
-    const diff = Math.ceil((new Date(dueDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+    const diff = Math.ceil((parseLocalDate(dueDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
     return diff;
   };
+
 
   return (
     <div className="space-y-6">
@@ -825,7 +829,9 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
                         </div>
                         <div className="flex items-center gap-4 mt-1 text-sm flex-wrap">
                           <span className="text-slate-400 flex items-center gap-1"><Building2 className="w-3.5 h-3.5" />{invoice.vendor_name}</span>
-                          <span className="text-slate-500 flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{new Date(invoice.invoice_date).toLocaleDateString()}</span>
+                          <span className="text-slate-500 flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{formatLocalDate(invoice.invoice_date)}</span>
+
+
                           {invoice.po_number && <span className="text-slate-500 flex items-center gap-1"><Tag className="w-3.5 h-3.5" />{invoice.po_number}</span>}
                           {invoice.category && <span className="text-slate-500 text-xs px-2 py-0.5 bg-slate-700/50 rounded">{invoice.category}</span>}
                         </div>
@@ -851,8 +857,10 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
                         <div className="text-right hidden md:block">
                           <p className="text-xs text-slate-500">Due</p>
                           <p className={`text-sm font-medium ${overdue ? 'text-red-400' : daysUntilDue !== null && daysUntilDue <= 7 ? 'text-yellow-400' : 'text-slate-300'}`}>
-                            {new Date(invoice.due_date).toLocaleDateString()}
+                            {formatLocalDate(invoice.due_date)}
+
                           </p>
+
                           {daysUntilDue !== null && invoice.status !== 'Paid' && (
                             <p className={`text-xs ${overdue ? 'text-red-400' : 'text-slate-500'}`}>
                               {overdue ? `${Math.abs(daysUntilDue)} days overdue` : daysUntilDue === 0 ? 'Due today' : `${daysUntilDue} days left`}
@@ -1020,11 +1028,11 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
               {/* Link to Race Event / Work Order */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1"><Flag className="w-3.5 h-3.5 text-blue-400" /> Link to Race Event</label>
                   <select value={newInvoice.linked_event_id} onChange={(e) => setNewInvoice(prev => ({ ...prev, linked_event_id: e.target.value }))} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white">
                     <option value="">None</option>
-                    {raceEvents.map(e => (<option key={e.id} value={e.id}>{e.title} ({new Date(e.startDate).toLocaleDateString()})</option>))}
+                    {raceEvents.map(e => (<option key={e.id} value={e.id}>{e.title} ({formatLocalDate(e.startDate)})</option>))}
                   </select>
+
                 </div>
                 <div>
                   <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1"><Wrench className="w-3.5 h-3.5 text-purple-400" /> Link to Work Order</label>
@@ -1145,13 +1153,15 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
                   <div className="space-y-2">
                     {[
                       { label: 'Vendor', value: selectedInvoice.vendor_name },
-                      { label: 'Invoice Date', value: new Date(selectedInvoice.invoice_date).toLocaleDateString() },
-                      ...(selectedInvoice.due_date ? [{ label: 'Due Date', value: new Date(selectedInvoice.due_date).toLocaleDateString(), color: isOverdue(selectedInvoice) ? 'text-red-400' : undefined }] : []),
+                      { label: 'Invoice Date', value: formatLocalDate(selectedInvoice.invoice_date) },
+                      ...(selectedInvoice.due_date ? [{ label: 'Due Date', value: formatLocalDate(selectedInvoice.due_date), color: isOverdue(selectedInvoice) ? 'text-red-400' : undefined }] : []),
                       ...(selectedInvoice.po_number ? [{ label: 'PO Number', value: selectedInvoice.po_number }] : []),
                       ...(selectedInvoice.category ? [{ label: 'Category', value: selectedInvoice.category }] : []),
                       ...(selectedInvoice.payment_method ? [{ label: 'Payment Method', value: selectedInvoice.payment_method }] : []),
-                      ...(selectedInvoice.payment_date ? [{ label: 'Payment Date', value: new Date(selectedInvoice.payment_date).toLocaleDateString(), color: 'text-green-400' }] : []),
+                      ...(selectedInvoice.payment_date ? [{ label: 'Payment Date', value: formatLocalDate(selectedInvoice.payment_date), color: 'text-green-400' }] : []),
+
                       ...(selectedInvoice.file_name ? [{ label: 'File', value: `${selectedInvoice.file_name} (${formatFileSize(selectedInvoice.file_size)})` }] : []),
+
                     ].map((row: InvoiceDetailRow, i) => (
                       <div key={i} className="flex justify-between py-1.5 border-b border-slate-700/50">
                         <span className="text-slate-400 text-sm">{row.label}</span>
@@ -1233,10 +1243,10 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
                       )}
                       {selectedInvoice.payment_date && (
                         <div className="flex items-center gap-2 text-xs text-green-400">
-                          <CreditCard className="w-3 h-3" />
-                          <span>Paid on: {new Date(selectedInvoice.payment_date).toLocaleDateString()}</span>
+                          <span>Paid on: {formatLocalDate(selectedInvoice.payment_date)}</span>
                         </div>
                       )}
+
                     </div>
                   </div>
 

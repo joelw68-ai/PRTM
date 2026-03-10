@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate } from '@/lib/utils';
+
 import DateInputDark from '@/components/ui/DateInputDark';
 import TimeInputDark from '@/components/ui/TimeInputDark';
 
@@ -114,7 +115,9 @@ const PartsUsageHistory: React.FC = () => {
     }
     
     // Sort by date descending
-    return records.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    records.sort((a, b) => parseLocalDate(b.date).getTime() - parseLocalDate(a.date).getTime());
+    return records;
+
   }, [searchTerm, actionFilter, dateFilter, componentFilter]);
   
   // Calculate lifecycle stats for all unique parts
@@ -160,8 +163,11 @@ const PartsUsageHistory: React.FC = () => {
       .filter(s => s.averagePassesPerUse > 0 && s.currentlyInstalled)
       .map(s => {
         const currentPart = partsUsageHistory
+
           .filter(u => u.partNumber === s.partNumber && u.action === 'installed')
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+          .sort((a, b) => parseLocalDate(b.date).getTime() - parseLocalDate(a.date).getTime())[0];
+
+
         
         if (!currentPart) return null;
         

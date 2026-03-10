@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate } from '@/lib/utils';
+
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCar } from '@/contexts/CarContext';
@@ -203,8 +204,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     borrowedLoanedParts.filter(p => {
       if (!p.expected_return_date) return false;
       if (p.expected_return_date < todayStr) return false;
-      const dueDate = new Date(p.expected_return_date + 'T00:00:00');
-      const todayDate = new Date(todayStr + 'T00:00:00');
+      const dueDate = parseLocalDate(p.expected_return_date);
+      const todayDate = parseLocalDate(todayStr);
+
       const diffDays = Math.ceil((dueDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
       return diffDays >= 0 && diffDays <= 3;
     }),
@@ -479,7 +481,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               {upcomingEvents.map((event: RaceEvent) => {
 
                 const eventDate = event.startDate || '';
-                const daysUntil = eventDate ? Math.ceil((new Date(eventDate + 'T00:00:00').getTime() - new Date(todayStr + 'T00:00:00').getTime()) / (1000 * 60 * 60 * 24)) : null;
+                const daysUntil = eventDate ? Math.ceil((parseLocalDate(eventDate).getTime() - parseLocalDate(todayStr).getTime()) / (1000 * 60 * 60 * 24)) : null;
+
                 return (
                   <div key={event.id} className="bg-slate-900/50 rounded-lg p-4 border border-slate-700/30 hover:border-cyan-500/30 transition-colors">
                     <div className="flex items-start justify-between mb-2">
@@ -991,7 +994,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <div className="space-y-1.5">
                     {blOverdueItems.slice(0, 4).map(item => {
                       const days = item.expected_return_date
-                        ? Math.abs(Math.ceil((new Date(todayStr + 'T00:00:00').getTime() - new Date(item.expected_return_date + 'T00:00:00').getTime()) / (1000 * 60 * 60 * 24)))
+                        ? Math.abs(Math.ceil((parseLocalDate(todayStr).getTime() - parseLocalDate(item.expected_return_date).getTime()) / (1000 * 60 * 60 * 24)))
+
                         : 0;
                       return (
                         <div key={item.id} className="flex items-center gap-2 text-sm">
@@ -1019,7 +1023,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <div className="space-y-1.5">
                     {blDueSoonItems.slice(0, 4).map(item => {
                       const days = item.expected_return_date
-                        ? Math.ceil((new Date(item.expected_return_date + 'T00:00:00').getTime() - new Date(todayStr + 'T00:00:00').getTime()) / (1000 * 60 * 60 * 24))
+                        ? Math.ceil((parseLocalDate(item.expected_return_date).getTime() - parseLocalDate(todayStr).getTime()) / (1000 * 60 * 60 * 24))
+
                         : 0;
                       return (
                         <div key={item.id} className="flex items-center gap-2 text-sm">
@@ -1049,6 +1054,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             </div>
           )}
         </div>
+
 
         {/* ═══════════════════════════════════════════════════════════
             SECTION 11: SFI CERTIFICATIONS ALERTS

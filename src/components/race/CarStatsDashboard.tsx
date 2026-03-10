@@ -1,4 +1,6 @@
 import React, { useMemo } from 'react';
+import { parseLocalDate } from '@/lib/utils';
+
 import { useApp } from '@/contexts/AppContext';
 import { useCar } from '@/contexts/CarContext';
 import { BarChart3, Zap, Gauge, Wrench, Shield, DollarSign, TrendingUp } from 'lucide-react';
@@ -24,7 +26,8 @@ const CarStatsDashboard: React.FC = () => {
       const now = new Date();
       const sfiExpiring = carSfi.filter(c => {
         if (!c.expirationDate) return false;
-        const exp = new Date(c.expirationDate);
+        const exp = parseLocalDate(c.expirationDate);
+
         const diffDays = (exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
         return diffDays <= 90 && diffDays > 0;
       }).length;
@@ -38,7 +41,8 @@ const CarStatsDashboard: React.FC = () => {
 
       // ET trend (last 10 valid passes, chronological)
       const etTrend = [...validPasses]
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .sort((a, b) => parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime())
+
         .slice(-10)
         .map(p => p.eighth);
 

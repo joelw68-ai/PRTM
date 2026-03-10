@@ -1,4 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
+import { parseLocalDate, formatLocalDate } from '@/lib/utils';
+
+
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { CrewRole, hasPermission } from '@/lib/permissions';
@@ -48,12 +51,13 @@ const SeasonSummary: React.FC<SeasonSummaryProps> = ({ currentRole = 'Crew' }) =
     const years = new Set<number>();
     years.add(currentYear);
     raceEvents.forEach(e => {
-      const y = new Date(e.startDate).getFullYear();
+      const y = parseLocalDate(e.startDate).getFullYear();
       if (y > 2000) years.add(y);
     });
     passLogs.forEach(p => {
-      const y = new Date(p.date).getFullYear();
+      const y = parseLocalDate(p.date).getFullYear();
       if (y > 2000) years.add(y);
+
     });
     return Array.from(years).sort((a, b) => b - a);
   }, [raceEvents, passLogs, currentYear]);
@@ -80,29 +84,33 @@ const SeasonSummary: React.FC<SeasonSummaryProps> = ({ currentRole = 'Crew' }) =
   // Load on mount
   React.useEffect(() => { loadExtraData(); }, [loadExtraData]);
 
-  // Filter data by year
   const yearEvents = useMemo(() =>
-    raceEvents.filter(e => new Date(e.startDate).getFullYear() === selectedYear),
+    raceEvents.filter(e => parseLocalDate(e.startDate).getFullYear() === selectedYear),
     [raceEvents, selectedYear]
   );
 
+
   const yearPasses = useMemo(() =>
-    passLogs.filter(p => new Date(p.date).getFullYear() === selectedYear),
+    passLogs.filter(p => parseLocalDate(p.date).getFullYear() === selectedYear),
+
     [passLogs, selectedYear]
   );
 
   const yearPartsUsage = useMemo(() =>
-    partsUsage.filter(p => new Date(p.usageDate).getFullYear() === selectedYear),
+    partsUsage.filter(p => parseLocalDate(p.usageDate).getFullYear() === selectedYear),
+
     [partsUsage, selectedYear]
   );
 
   const yearLabor = useMemo(() =>
-    laborEntries.filter(l => new Date(l.date).getFullYear() === selectedYear),
+    laborEntries.filter(l => parseLocalDate(l.date).getFullYear() === selectedYear),
+
     [laborEntries, selectedYear]
   );
 
   const yearWorkOrders = useMemo(() =>
-    workOrders.filter(w => w.createdDate && new Date(w.createdDate).getFullYear() === selectedYear),
+    workOrders.filter(w => w.createdDate && parseLocalDate(w.createdDate).getFullYear() === selectedYear),
+
     [workOrders, selectedYear]
   );
 
@@ -116,7 +124,8 @@ const SeasonSummary: React.FC<SeasonSummaryProps> = ({ currentRole = 'Crew' }) =
   const losses = yearEvents.filter(e => e.result && !e.result.toLowerCase().includes('win') && !e.result.toLowerCase().includes('1st') && e.status === 'Completed').length;
 
   // Best ET/MPH progression
-  const sortedPasses = [...yearPasses].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const sortedPasses = [...yearPasses].sort((a, b) => parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime());
+
   const validETs = sortedPasses.filter(p => p.eighth > 0 && !p.aborted);
   const validMPHs = sortedPasses.filter(p => p.mph > 0 && !p.aborted);
   
@@ -155,7 +164,9 @@ const SeasonSummary: React.FC<SeasonSummaryProps> = ({ currentRole = 'Crew' }) =
   // Pass count by month
   const monthlyPasses: Record<string, number> = {};
   yearPasses.forEach(p => {
-    const month = new Date(p.date).toLocaleString('default', { month: 'short' });
+    const month = formatLocalDate(p.date, { month: 'short' }, 'default');
+
+
     monthlyPasses[month] = (monthlyPasses[month] || 0) + 1;
   });
 

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '@/contexts/AppContext';
-import { getLocalDateString } from '@/lib/utils';
+import { getLocalDateString, parseLocalDate } from '@/lib/utils';
+
 
 import { CrewRole } from '@/lib/permissions';
 import {
@@ -62,20 +63,22 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
     const now = new Date();
     switch (timeRange) {
       case 'week':
+
         const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        passes = passes.filter(p => new Date(p.date) >= weekAgo);
+        passes = passes.filter(p => parseLocalDate(p.date) >= weekAgo);
         break;
       case 'month':
         const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        passes = passes.filter(p => new Date(p.date) >= monthAgo);
+        passes = passes.filter(p => parseLocalDate(p.date) >= monthAgo);
         break;
       case 'year':
         const yearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-        passes = passes.filter(p => new Date(p.date) >= yearAgo);
+        passes = passes.filter(p => parseLocalDate(p.date) >= yearAgo);
         break;
     }
 
-    return passes.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return passes.sort((a, b) => parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime());
+
   }, [passLogs, timeRange, selectedEngine]);
 
   // Passes for analytics (excluding aborted)
