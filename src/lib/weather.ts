@@ -227,7 +227,10 @@ export function calculateDewPoint(tempF: number, humidityPct: number): number {
 function calculateSAECorrectionInternal(tempF: number, pressureInHg: number, humidityPct: number) {
   const tempFactor = Math.sqrt((tempF + 460) / 520);
   const pressureFactor = Math.sqrt(29.92 / pressureInHg);
-  const satVaporPressure = 0.000004231 * Math.pow(tempF, 3) - 0.0003864 * Math.pow(tempF, 2) + 0.01857 * tempF + 0.1776;
+  // Use the accurate Buck equation for saturation vapor pressure (same as
+  // calculateVaporPressure and calculateWaterGrains).  The old cubic polynomial
+  // overestimated SVP by ~30-40%, which inflated the humidity correction.
+  const satVaporPressure = accurateSatVaporPressureInHg(tempF);
   const actualVaporPressure = (humidityPct / 100) * satVaporPressure;
   const dryPressure = pressureInHg - actualVaporPressure;
   const humidityFactor = Math.sqrt(29.92 / dryPressure);
@@ -241,6 +244,7 @@ function calculateSAECorrectionInternal(tempF: number, pressureInHg: number, hum
     correctedHP,
   };
 }
+
 
 // Re-export under the public name used by consumers
 export const calculateSAECorrection = calculateSAECorrectionInternal;
@@ -787,19 +791,107 @@ export async function fetchRaceDayForecast(
 
 // ─── Additional racing calculation exports ───────────────────────────────────
 
+// ─── Vapor Pressure (actual, in inHg) ────────────────────────────────────────
+// Now uses the accurate Buck (1981) equation for saturation vapor pressure,
+// consistent with calculateWaterGrains, calculateSAECorrectionInternal, and
+// calculateSTDCorrection.
+//
+// OLD (inaccurate — overestimated SVP by ~30-40% in the 60-100°F range):
+//   SVP = 0.000004231·T³ − 0.0003864·T² + 0.01857·T + 0.1776
+//
+// NEW (accurate to within 0.05% across all racing temperatures):
+//   SVP = Buck equation via accurateSatVaporPressureInHg()
+//
+// This is the value displayed as "Vapor Pressure" in the Pass Log weather
+// section (both the expanded row view and the add/edit modal).
+//
 export function calculateVaporPressure(tempF: number, humidityPct: number): number {
-  const satVaporPressure = 0.000004231 * Math.pow(tempF, 3) - 0.0003864 * Math.pow(tempF, 2) + 0.01857 * tempF + 0.1776;
+  const satVaporPressure = accurateSatVaporPressureInHg(tempF);
   const actualVaporPressure = (humidityPct / 100) * satVaporPressure;
+
+  // Diagnostic logging — verify in browser console against proven weather stations
+  console.log('[calculateVaporPressure] Buck equation:', {
+    tempF,
+    humidityPct,
+    satVP_inHg: Math.round(satVaporPressure * 10000) / 10000,
+    actualVP_inHg: Math.round(actualVaporPressure * 10000) / 10000,
+  });
+
   return Math.round(actualVaporPressure * 1000) / 1000;
 }
 
+
+// ─── Accurate Saturation Vapor Pressure (Buck equation) ──────────────────────
+// The Buck (1981) equation is one of the most accurate empirical fits for
+// saturation vapor pressure over liquid water and is the standard reference
+// in meteorology and drag racing weather calculations.
+//
+// Returns saturation vapor pressure in inches of mercury (inHg).
+export function accurateSatVaporPressureInHg(tempF: number): number {
+  const tempC = (tempF - 32) * 5 / 9;
+  // Buck equation: es (hPa) = 6.1121 × exp((18.678 − T/234.5) × (T/(257.14 + T)))
+  const esHpa = 6.1121 * Math.exp((18.678 - tempC / 234.5) * (tempC / (257.14 + tempC)));
+  // Convert hPa → inHg  (1 inHg = 33.8639 hPa)
+  return esHpa / 33.8639;
+}
+
+// ─── NHRA / Industry Standard Water Grains Calculation ───────────────────────
+//
+// Standard drag racing water grains formula (mixing ratio × 7000):
+//
+//   Saturation Vapor Pressure = Buck equation at current air temperature
+//   Actual Vapor Pressure     = (Humidity% / 100) × Saturation Vapor Pressure
+//   Mixing Ratio (lb/lb)      = 0.62198 × (Actual VP / (Baro − Actual VP))
+//   Water Grains (gr/lb)      = Mixing Ratio × 7000
+//                              = 4354 × (Actual VP / (Baro − Actual VP))
+//
+// This is the same formula used by RaceAir, Altus, Computech, and other
+// proven drag racing weather stations.  The constant 4354 = 0.62198 × 7000,
+// where 0.62198 is the ratio of molecular weights (water / dry air) and
+// 7000 converts pounds to grains.
+//
+// ── What was wrong with the old formula ──
+// The old code used the SAME mixing-ratio structure (4354 × Pv/(Pb−Pv)),
+// but its saturation vapor pressure came from an inaccurate cubic polynomial:
+//   SVP = 0.000004231·T³ − 0.0003864·T² + 0.01857·T + 0.1776
+// That polynomial over-estimates SVP by ~30-40% in the 60–100 °F range
+// (e.g. at 80 °F it returns 1.357 inHg vs the correct 1.033 inHg).
+// Because water grains are directly proportional to vapor pressure, the
+// ~30% SVP error translated directly into ~30% inflated water grains —
+// exactly matching the discrepancy the user observed vs other proven apps.
+//
+// The fix: replace the polynomial with the Buck equation, which is accurate
+// to within 0.05% across the full range of racing temperatures.
+//
 export function calculateWaterGrains(tempF: number, humidityPct: number, pressureInHg: number): number {
-  const vaporPressure = calculateVaporPressure(tempF, humidityPct);
-  const dryPressure = pressureInHg - vaporPressure;
+  // Step 1: Accurate saturation vapor pressure via Buck equation (inHg)
+  const satVP = accurateSatVaporPressureInHg(tempF);
+
+  // Step 2: Actual vapor pressure = (RH / 100) × saturation VP
+  const actualVP = (humidityPct / 100) * satVP;
+
+  // Step 3: Mixing ratio × 7000 = water grains per pound of dry air
+  //         4354 = 0.62198 × 7000
+  const dryPressure = pressureInHg - actualVP;
   if (dryPressure <= 0) return 0;
-  const grains = 4354 * (vaporPressure / dryPressure);
+  const grains = 4354 * (actualVP / dryPressure);
+
+  // Diagnostic logging — remove once verified in production
+  console.log('[calculateWaterGrains] NHRA standard (Buck eq + mixing ratio):', {
+    tempF,
+    humidityPct,
+    pressureInHg,
+    satVP_inHg: Math.round(satVP * 10000) / 10000,
+    actualVP_inHg: Math.round(actualVP * 10000) / 10000,
+    dryPressure_inHg: Math.round(dryPressure * 10000) / 10000,
+    waterGrains: Math.round(grains * 10) / 10,
+    formula: `4354 × (${Math.round(actualVP * 10000) / 10000} / ${Math.round(dryPressure * 100) / 100}) = ${Math.round(grains * 10) / 10} gr/lb`,
+  });
+
   return Math.round(grains * 10) / 10;
 }
+
+
 
 export function calculateWetBulb(tempF: number, humidityPct: number): number {
   const tempC = (tempF - 32) * 5 / 9;

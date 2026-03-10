@@ -52,8 +52,10 @@ import {
   Calendar,
   GitCompare,
   CheckSquare,
-  Square
+  Square,
+  FlaskConical
 } from 'lucide-react';
+
 
 import { PassLogEntry } from '@/data/proModData';
 import {
@@ -64,6 +66,7 @@ import {
 } from "@/components/ui/tooltip";
 import PassComparison from './PassComparison';
 import OfflineSyncBanner from './OfflineSyncBanner';
+import WeatherVerifyPanel from './WeatherVerifyPanel';
 
 
 interface PassLogProps {
@@ -106,6 +109,11 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   const [savingTrack, setSavingTrack] = useState(false);
   const [trackSaveSuccess, setTrackSaveSuccess] = useState<string | null>(null);
   const [isHistoricalFetch, setIsHistoricalFetch] = useState(false);
+
+  // Weather Verify Panel state
+  const [showVerifyPanel, setShowVerifyPanel] = useState(false);
+  const [verifyWeatherData, setVerifyWeatherData] = useState<{temp: number; humidity: number; pressure: number}>({temp: 70, humidity: 50, pressure: 29.92});
+
 
   // Separate city/state fields for the location (combined into formData.location for weather/saving)
   const [trackCity, setTrackCity] = useState('');
@@ -511,7 +519,10 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   };
 
 
-  // Calculate SAE correction factor manually based on weather inputs
+  // Calculate SAE correction factor manually based on weather inputs.
+  // Uses the shared calculateVaporPressure() (Buck equation) for the
+  // humidity correction — consistent with the displayed Vapor Pressure,
+  // Water Grains, and STD Correction values.
   const calculateSAE = () => {
     const temp = formData.weather?.temperature || 70;
     const humidity = formData.weather?.humidity || 50;
@@ -522,9 +533,9 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     const tempFactor = Math.sqrt((temp + 460) / 520);
     const pressureFactor = Math.sqrt(29.92 / pressure);
     
-    // Vapor pressure calculation for humidity correction
-    const satVaporPressure = 0.000004231 * Math.pow(temp, 3) - 0.0003864 * Math.pow(temp, 2) + 0.01857 * temp + 0.1776;
-    const actualVaporPressure = (humidity / 100) * satVaporPressure;
+    // Vapor pressure via the accurate Buck equation (shared function)
+    // — replaces the old inaccurate cubic polynomial that was inline here
+    const actualVaporPressure = calculateVaporPressure(temp, humidity);
     const dryPressure = pressure - actualVaporPressure;
     const humidityFactor = Math.sqrt(29.92 / dryPressure);
     
@@ -544,6 +555,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       correctedHP
     }));
   };
+
 
 
   // Save pass (add new or update existing) — with offline queue fallback
