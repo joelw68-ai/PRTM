@@ -55,8 +55,20 @@ async function callWeatherApi(params: WeatherApiParams, maxRetries: number = 2):
         queryParams.set('alerts', params.alerts || 'no');
       }
 
-      if (params.endpoint === 'history' && params.date) {
+      // Pass `dt` for BOTH history AND forecast endpoints when a date is
+      // provided.  For history it selects the archive day; for forecast it
+      // tells the API which date to start from, ensuring the response
+      // contains the exact calendar day the caller requested rather than
+      // relying on the server's idea of "today" (which could differ near
+      // midnight / across timezones).
+      //
+      // IMPORTANT: `params.date` is always a plain YYYY-MM-DD string that
+      // originated from the user's date-picker or from getLocalDateString().
+      // It is NEVER derived from a Date object via toISOString(), so there
+      // is no UTC off-by-one risk here.
+      if ((params.endpoint === 'history' || params.endpoint === 'forecast') && params.date) {
         queryParams.set('dt', params.date);
+        console.log(`[callWeatherApi] Setting dt=${params.date} for ${params.endpoint} endpoint (pure string, no Date object)`);
       }
 
       const url = `${WEATHER_API_BASE}/${params.endpoint}.json?${queryParams.toString()}`;
@@ -289,20 +301,27 @@ async function fetchCurrentWeather(location: string): Promise<WeatherResult> {
   };
 }
 
-// ─── Fetch today's weather via the forecast endpoint ─────────────────────────
-// Uses forecast.json?days=1 instead of the current endpoint so the API response
-// explicitly contains today's date in its payload.  The current endpoint's
-// `last_updated` timestamp can lag behind midnight and show yesterday's date,
-// causing an off-by-one bug when the caller compares dates.
+// ─── Fetch today's / future weather via the forecast endpoint ────────────────
+// Uses forecast.json with dt=YYYY-MM-DD so the API response explicitly targets
+// the exact calendar day the user selected.  The `date` parameter is a plain
+// YYYY-MM-DD string that comes directly from the date-picker — it is NEVER
+// converted to/from a Date object, so there is zero risk of the UTC off-by-one
+// bug that plagued the old toISOString()-based approach.
 
 async function fetchTodayWeather(location: string, date: string, time?: string): Promise<WeatherResult> {
+  // `date` is the raw YYYY-MM-DD string from the user's date picker.
+  // We pass it directly as `date` so callWeatherApi sets dt=YYYY-MM-DD
+  // on the forecast URL.  No Date object is created at any point.
+  console.log('[fetchTodayWeather] passing date string directly to API:', date, '(type:', typeof date, ')');
   const data = await callWeatherApi({
     endpoint: 'forecast',
     location,
+    date,      // ← passed straight through as dt= query param (pure string)
     days: 1,
     aqi: 'no',
     alerts: 'no',
   });
+
 
   const loc = data.location as Record<string, unknown>;
   const forecast = data.forecast as Record<string, unknown> | undefined;
@@ -479,15 +498,19 @@ export async function fetchWeatherData(
   date?: string,
   time?: string
 ): Promise<WeatherResult> {
+  const todayStr = getLocalDateString();
+  console.log('[fetchWeatherData] called with:', { location, date, time, todayStr, buildTimestamp: '2026-03-10T06:43:00Z' });
+
+
   if (!date) {
     // No date provided at all — use the current endpoint (e.g. auto-fetch on modal open)
+    console.log('[fetchWeatherData] → no date provided, using CURRENT endpoint');
     return fetchCurrentWeather(location);
   }
 
-  const todayStr = getLocalDateString();
-
   if (date < todayStr) {
     // Past date — use the history endpoint
+    console.log('[fetchWeatherData] → date is in the past, using HISTORY endpoint');
     return fetchHistoricalWeather(location, date, time);
   }
 
@@ -495,8 +518,10 @@ export async function fetchWeatherData(
   // so the API response explicitly contains today's date in its payload,
   // eliminating the off-by-one bug from the current endpoint's `last_updated`
   // timestamp which may still show yesterday near midnight.
+  console.log('[fetchWeatherData] → date >= today, using FORECAST endpoint (days=1)');
   return fetchTodayWeather(location, date, time);
 }
+
 
 
 
@@ -663,8 +688,12 @@ export async function fetchRaceDayForecast(
     dataType = 'historical';
   } else if (daysUntil <= 14) {
     const days = Math.max(daysUntil + 1, 1);
-    apiParams = { endpoint: 'forecast', location, days, aqi: 'no', alerts: 'no' };
+    // Pass eventDate as `date` so callWeatherApi sets dt=YYYY-MM-DD on the
+    // forecast URL — the string flows straight from the caller, never through
+    // a Date object, eliminating the UTC off-by-one risk.
+    apiParams = { endpoint: 'forecast', location, date: eventDate, days, aqi: 'no', alerts: 'no' };
     dataType = 'forecast';
+
   } else {
     return unavailable;
   }
