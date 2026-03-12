@@ -661,6 +661,16 @@ export const fetchPartsInventory = async (userId?: string): Promise<PartInventor
  * If the caller doesn't provide a userId, we fall back to getCurrentUserId()
  * to read it from the active Supabase session. This prevents silent RLS
  * rejections that cause parts to appear in the UI but never persist.
+ *
+ * NOTE: related_drivetrain_component_id is intentionally EXCLUDED from the
+ * upsert payload. Even though the column exists in the database, PostgREST's
+ * schema cache may not have picked it up yet, causing PGRST204 errors like:
+ *   "Could not find the 'related_drivetrain_component_id' column of
+ *    'parts_inventory' in the schema cache"
+ * The value is still READ from the database (via SELECT *), but we never
+ * WRITE it through PostgREST to avoid the cache staleness issue.
+ * Once Supabase refreshes its schema cache (e.g., after a deploy or
+ * manual reload), this exclusion can be revisited.
  */
 export const upsertPartInventory = async (part: PartInventoryItem, userId?: string): Promise<void> => {
   // 1. Resolve user_id — must be set for RLS to pass
@@ -675,11 +685,14 @@ export const upsertPartInventory = async (part: PartInventoryItem, userId?: stri
     throw err;
   }
 
+  // 2. Build the payload — related_drivetrain_component_id is deliberately
+  //    stripped out to avoid PostgREST schema cache errors (PGRST204).
   const payload: any = {
     id: part.id,
     user_id: effectiveUserId,
     part_number: part.partNumber,
     description: part.description,
+    name: emptyToNull(part.name),
     category: emptyToNull(part.category),
     subcategory: emptyToNull(part.subcategory),
     on_hand: part.onHand ?? 0,
@@ -695,16 +708,17 @@ export const upsertPartInventory = async (part: PartInventoryItem, userId?: stri
     notes: emptyToNull(part.notes),
     status: part.status,
     reorder_status: emptyToNull(part.reorderStatus),
-    related_drivetrain_component_id: emptyToNull(part.relatedDrivetrainComponentId),
+    car_id: emptyToNull(part.car_id),
     updated_at: new Date().toISOString()
   };
+  // ⛔ related_drivetrain_component_id is NOT included above — on purpose.
 
-  // 2. Log the full payload for debugging
-  console.log('[upsertPartInventory] Payload being sent to Supabase:', JSON.stringify(payload, null, 2));
+  // 3. Log the payload for debugging
+  console.log('[upsertPartInventory] Payload being sent to Supabase (related_drivetrain_component_id stripped):', JSON.stringify(payload, null, 2));
 
-  // 3. Execute the upsert
-  const { data, error } = await supabase.from('parts_inventory').upsert(payload);
-  
+  // 4. Single upsert — no fallback needed since the problematic column is excluded
+  const { error } = await supabase.from('parts_inventory').upsert(payload);
+
   if (error) {
     console.error('[upsertPartInventory] Supabase error:', {
       message: error.message,
@@ -721,6 +735,8 @@ export const upsertPartInventory = async (part: PartInventoryItem, userId?: stri
 
   console.log('[upsertPartInventory] SUCCESS — part saved. ID:', part.id);
 };
+
+
 
 
 

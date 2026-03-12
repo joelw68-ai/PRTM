@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useApp } from '@/contexts/AppContext';
 import { fetchWeatherForWidget, WeatherWidgetData, calculateDewPoint, calculateSAECorrection } from '@/lib/weather';
 import {
   Cloud,
@@ -82,6 +83,126 @@ function requestGPSPosition(timeoutMs: number = 10000): Promise<{ lat: number; l
   });
 }
 
+// ─── Smart Track Location Resolution ─────────────────────────────────────────
+// The homeTrack field stores a track NAME (e.g. "Milan Dragway", "Darana Milan
+// Dragway").  Passing that directly to WeatherAPI.com often geocodes to the
+// WRONG place (e.g. Darana → Darana, Kebbi, Nigeria instead of Milan, MI).
+//
+// This helper resolves the best geocodable string by:
+//   1. Matching the homeTrack name against saved tracks that have city/state/zip
+//   2. Falling back to the user's favorite saved track
+//   3. Stripping common venue words and returning a cleaner location string
+// ─────────────────────────────────────────────────────────────────────────────
+
+function resolveWeatherLocationFromTracks(
+  homeTrackName: string | undefined,
+  savedTracks: Array<{
+    name: string;
+    location?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    isFavorite: boolean;
+  }>
+): string | null {
+  // Step 1: If we have saved tracks, try to find one matching the homeTrack name
+  if (homeTrackName && savedTracks.length > 0) {
+    const htLower = homeTrackName.toLowerCase().trim();
+    const nameMatch = savedTracks.find(t => {
+      const tName = t.name.toLowerCase().trim();
+      // Exact match, or one contains the other
+      return tName === htLower || tName.includes(htLower) || htLower.includes(tName);
+    });
+
+    if (nameMatch) {
+      const loc = extractBestLocation(nameMatch);
+      if (loc) {
+        console.log('[WeatherWidget] Resolved homeTrack via saved track name match:', homeTrackName, '→', loc);
+        return loc;
+      }
+    }
+  }
+
+  // Step 2: Use the favorite saved track (if any) — it's the user's primary track
+  if (savedTracks.length > 0) {
+    const favTrack = savedTracks.find(t => t.isFavorite);
+    if (favTrack) {
+      const loc = extractBestLocation(favTrack);
+      if (loc) {
+        console.log('[WeatherWidget] Resolved location via favorite saved track:', favTrack.name, '→', loc);
+        return loc;
+      }
+    }
+  }
+
+  // Step 3: Strip venue words from the homeTrack name to get a cleaner city name
+  if (homeTrackName) {
+    const cleaned = cleanTrackNameForGeocoding(homeTrackName);
+    if (cleaned && cleaned.length >= 2) {
+      console.log('[WeatherWidget] Cleaned homeTrack name for geocoding:', homeTrackName, '→', cleaned);
+      return cleaned;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract the best geocodable location string from a saved track.
+ * Priority: zip code > city+state > location field
+ * Zip codes are the most reliable for US geocoding (no ambiguity).
+ */
+function extractBestLocation(track: {
+  city?: string;
+  state?: string;
+  zip?: string;
+  location?: string;
+}): string | null {
+  // Zip code is most reliable (e.g. "48160" → Milan, MI, no ambiguity)
+  if (track.zip && track.zip.trim().length >= 5) {
+    return track.zip.trim();
+  }
+  // City + State is very reliable (e.g. "Milan, MI")
+  if (track.city && track.city.trim() && track.state && track.state.trim()) {
+    return `${track.city.trim()}, ${track.state.trim()}`;
+  }
+  // Location field (e.g. "Milan, MI" or "Milan, Michigan")
+  if (track.location && track.location.trim().length >= 3) {
+    return track.location.trim();
+  }
+  return null;
+}
+
+/**
+ * Strip common racing venue words from a track name to extract a geocodable
+ * city/location.  E.g. "Milan Dragway" → "Milan", "South Georgia Motorsports
+ * Park" → "South Georgia".
+ */
+function cleanTrackNameForGeocoding(trackName: string): string {
+  // Common racing venue suffixes/words — sorted longest-first to avoid partial matches
+  const venueWords = [
+    'motorsports park', 'motorsport park', 'motor speedway', 'raceway park',
+    'drag strip', 'dragstrip', 'race park', 'racepark',
+    'international raceway', 'international dragway', 'international speedway',
+    'national dragway', 'national speedway', 'national raceway',
+    'dragway', 'raceway', 'speedway', 'drag way',
+    'motorsports', 'motorsport', 'racing', 'strip', 'dragplex',
+  ];
+
+  let cleaned = trackName;
+  for (const word of venueWords) {
+    // Case-insensitive replacement, word-boundary aware where possible
+    cleaned = cleaned.replace(new RegExp(word, 'gi'), ' ');
+  }
+
+  // Collapse whitespace and trim
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  // Remove leading/trailing non-alphanumeric chars
+  cleaned = cleaned.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '').trim();
+
+  return cleaned;
+}
+
 
 // Get weather icon component based on conditions
 const getWeatherIcon = (conditions: string, isDay: boolean, size: string = 'w-8 h-8') => {
@@ -115,6 +236,7 @@ const getDAQuality = (da: number): { label: string; color: string } => {
 
 const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
   const { profile } = useAuth();
+  const { savedTracks } = useApp();
 
   const [weatherData, setWeatherData] = useState<WeatherWidgetData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -125,12 +247,19 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
   const [locationSource, setLocationSource] = useState<LocationSource>('pending');
   const [gpsCoords, setGpsCoords] = useState<{ lat: number; lon: number } | null>(null);
 
-  // Resolve the best location: homeTrack > GPS > auto:ip
+  // Memoize the resolved home-track location so it only recalculates when
+  // profile.homeTrack or savedTracks actually change.
+  const resolvedHomeTrackLocation = useMemo(() => {
+    if (!profile?.homeTrack && savedTracks.length === 0) return null;
+    return resolveWeatherLocationFromTracks(profile?.homeTrack, savedTracks);
+  }, [profile?.homeTrack, savedTracks]);
+
+  // Resolve the best location: homeTrack (smart) > GPS > auto:ip
   const getWeatherLocation = useCallback((): string => {
-    // Priority 1: User's home track setting
-    if (profile?.homeTrack) {
+    // Priority 1: Smart-resolved home track location (uses saved track city/state/zip)
+    if (resolvedHomeTrackLocation) {
       setLocationSource('home-track');
-      return profile.homeTrack;
+      return resolvedHomeTrackLocation;
     }
     
     // Priority 2: GPS coordinates
@@ -142,12 +271,12 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
     // Priority 3: IP-based fallback
     setLocationSource('ip');
     return 'auto:ip';
-  }, [profile?.homeTrack, gpsCoords]);
+  }, [resolvedHomeTrackLocation, gpsCoords]);
 
   // Request GPS on mount
   useEffect(() => {
-    // If user has a home track, skip GPS entirely
-    if (profile?.homeTrack) {
+    // If user has a resolved home track location, skip GPS entirely
+    if (resolvedHomeTrackLocation) {
       setLocationSource('home-track');
       return;
     }
@@ -174,7 +303,27 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
         console.warn('[WeatherWidget] GPS unavailable, falling back to IP:', err?.message || err);
         setLocationSource('ip');
       });
-  }, [profile?.homeTrack]);
+  }, [resolvedHomeTrackLocation]);
+
+  // When the resolved location changes (e.g. user updates saved track data),
+  // clear the stale weather cache so we don't keep showing wrong-location data.
+  useEffect(() => {
+    if (!resolvedHomeTrackLocation) return;
+    try {
+      const cached = localStorage.getItem(WEATHER_CACHE_KEY);
+      if (cached) {
+        const { location: cachedLoc } = JSON.parse(cached);
+        if (cachedLoc && cachedLoc !== resolvedHomeTrackLocation) {
+          console.log('[WeatherWidget] Location changed from', cachedLoc, 'to', resolvedHomeTrackLocation, '— clearing stale cache');
+          localStorage.removeItem(WEATHER_CACHE_KEY);
+          setWeatherData(null);
+          setLastFetchTime(null);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [resolvedHomeTrackLocation]);
 
 
 
