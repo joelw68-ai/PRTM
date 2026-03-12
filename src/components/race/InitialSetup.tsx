@@ -475,14 +475,31 @@ const InitialSetup: React.FC<InitialSetupProps> = ({ currentRole }) => {
     setSaving(true);
     try {
       const id = editingId || generateId();
-      const payload = {
-        id, part_number: partForm.partNumber, description: partForm.description, category: partForm.category,
-        subcategory: partForm.subcategory, vendor: partForm.vendor, vendor_part_number: partForm.vendorPartNumber,
-        unit_cost: partForm.unitCost, on_hand: partForm.onHand, min_quantity: partForm.minQuantity,
-        total_value: partForm.unitCost * partForm.onHand, location: partForm.location, notes: partForm.notes,
+      // ═══════════════════════════════════════════════════════════════
+      // SAFE COLUMNS ONLY — matches upsertPartInventory in database.ts
+      // PostgREST schema cache rejects: name, car_id, subcategory,
+      // vendor_part_number, reorder_status, related_drivetrain_component_id,
+      // last_ordered, last_used.  We only send the 16 "day-one" columns.
+      // ═══════════════════════════════════════════════════════════════
+      const payload: Record<string, any> = {
+        id,
+        part_number: partForm.partNumber,
+        description: partForm.description,
+        category: partForm.category,
+        on_hand: partForm.onHand,
+        min_quantity: partForm.minQuantity,
+        max_quantity: 5,
+        vendor: partForm.vendor || null,
+        unit_cost: partForm.unitCost,
+        total_value: partForm.unitCost * partForm.onHand,
+        location: partForm.location || null,
+        notes: partForm.notes || null,
         status: partForm.onHand === 0 ? 'Out of Stock' : partForm.onHand <= partForm.minQuantity ? 'Low Stock' : 'In Stock',
-        reorder_status: partForm.onHand === 0 ? 'Critical' : partForm.onHand <= partForm.minQuantity ? 'Reorder' : 'OK'
+        updated_at: new Date().toISOString()
       };
+      // Deliberately EXCLUDED: subcategory, vendor_part_number, reorder_status,
+      // name, car_id, related_drivetrain_component_id, last_ordered, last_used
+
       const { error } = await supabase.from('parts_inventory').upsert(payload);
       if (error) {
         console.error('Part save error:', error);
@@ -499,6 +516,7 @@ const InitialSetup: React.FC<InitialSetupProps> = ({ currentRole }) => {
     }
     setSaving(false);
   };
+
 
   const saveVendor = async () => {
     setSaving(true);

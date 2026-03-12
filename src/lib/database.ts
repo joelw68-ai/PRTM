@@ -680,24 +680,40 @@ export const fetchPartsInventory = async (userId?: string): Promise<PartInventor
 /**
  * upsertPartInventory — Create or update a parts inventory item.
  *
- * RESILIENT COLUMN HANDLING (belt-and-suspenders approach):
+ * ═══════════════════════════════════════════════════════════════════════
+ * POSTREST SCHEMA-CACHE WORKAROUND  (March 2026)
+ * ═══════════════════════════════════════════════════════════════════════
  *
- * 1. `related_drivetrain_component_id` is ALWAYS stripped from the payload
- *    before sending to Supabase. The column exists in the DB but PostgREST's
- *    schema cache refuses to acknowledge it (PGRST204). We still READ it
- *    via SELECT * in toPartInventoryItem(), but never WRITE it.
+ * Several columns exist in the live `parts_inventory` table (verified via
+ * `information_schema.columns`) but PostgREST's schema cache refuses to
+ * acknowledge them, returning PGRST204 / 42703 errors:
  *
- * 2. The entire upsert is wrapped in a try/catch. If the first attempt fails
- *    with ANY unknown-column / schema-cache error, we automatically RETRY
- *    with a minimal "core columns only" payload that contains only the
- *    columns that have existed since the table was first created. This
- *    guarantees parts save even if future migrations add columns that
- *    PostgREST hasn't cached yet.
+ *   EXCLUDED from payload (PostgREST rejects them):
+ *     • name
+ *     • car_id
+ *     • related_drivetrain_component_id
+ *     • subcategory
+ *     • vendor_part_number
+ *     • last_ordered
+ *     • last_used
+ *     • reorder_status
  *
- * RESILIENT USER_ID HANDLING:
- * Always resolves a user_id before sending to the database.
- * If the caller doesn't provide a userId, we fall back to getCurrentUserId()
- * to read it from the active Supabase session.
+ *   INCLUDED — the 16 "day-one" safe columns:
+ *     id, user_id, part_number, description, category, on_hand,
+ *     min_quantity, max_quantity, vendor, unit_cost, total_value,
+ *     location, notes, status, created_at, updated_at
+ *
+ * The READ path (toPartInventoryItem via SELECT *) still maps every
+ * column that comes back from the DB, so the UI can display name,
+ * car_id, etc. if they are present in existing rows.
+ *
+ * BELT-AND-SUSPENDERS:
+ *   The entire upsert is wrapped in a try/catch.  If Attempt 1 (the 16
+ *   safe columns) somehow fails with an unknown-column / schema-cache
+ *   error, we automatically RETRY with a "nuclear minimum" payload of
+ *   only 7 columns that are absolutely guaranteed to exist in any
+ *   version of the table.
+ * ═══════════════════════════════════════════════════════════════════════
  */
 export const upsertPartInventory = async (part: PartInventoryItem, userId?: string): Promise<void> => {
   // ── 1. Resolve user_id — must be set for RLS to pass ──
@@ -712,49 +728,47 @@ export const upsertPartInventory = async (part: PartInventoryItem, userId?: stri
     throw err;
   }
 
-  // ── 2. Build the FULL payload ──
-  // related_drivetrain_component_id is deliberately EXCLUDED.
-  const fullPayload: any = {
-    id: part.id,
-    user_id: effectiveUserId,
-    part_number: part.partNumber,
-    description: part.description,
-    name: emptyToNull(part.name),
-    category: emptyToNull(part.category),
-    subcategory: emptyToNull(part.subcategory),
-    on_hand: part.onHand ?? 0,
-    min_quantity: part.minQuantity ?? 1,
-    max_quantity: part.maxQuantity ?? 5,
-    vendor: emptyToNull(part.vendor),
-    vendor_part_number: emptyToNull(part.vendorPartNumber),
-    unit_cost: part.unitCost ?? 0,
-    total_value: part.totalValue ?? 0,
-    last_ordered: emptyToNull(part.lastOrdered),
-    last_used: emptyToNull(part.lastUsed),
-    location: emptyToNull(part.location),
-    notes: emptyToNull(part.notes),
-    status: part.status,
-    reorder_status: emptyToNull(part.reorderStatus),
-    car_id: emptyToNull(part.car_id),
-    updated_at: new Date().toISOString()
+  // ── 2. Build the SAFE payload — ONLY the 16 day-one columns ──
+  // Columns deliberately EXCLUDED (PostgREST schema cache rejects them):
+  //   name, car_id, related_drivetrain_component_id, subcategory,
+  //   vendor_part_number, last_ordered, last_used, reorder_status
+  const safePayload: Record<string, any> = {
+    id:            part.id,
+    user_id:       effectiveUserId,
+    part_number:   part.partNumber,
+    description:   part.description,
+    category:      emptyToNull(part.category),
+    on_hand:       part.onHand ?? 0,
+    min_quantity:   part.minQuantity ?? 1,
+    max_quantity:   part.maxQuantity ?? 5,
+    vendor:        emptyToNull(part.vendor),
+    unit_cost:     part.unitCost ?? 0,
+    total_value:   part.totalValue ?? 0,
+    location:      emptyToNull(part.location),
+    notes:         emptyToNull(part.notes),
+    status:        part.status || 'In Stock',
+    created_at:    part.id ? undefined : new Date().toISOString(), // only on insert
+    updated_at:    new Date().toISOString()
   };
-  // ⛔ related_drivetrain_component_id is NOT included — on purpose.
 
-  console.log('[upsertPartInventory] Attempt 1 — full payload (related_drivetrain_component_id stripped):',
-    JSON.stringify(fullPayload, null, 2));
+  // Remove undefined keys so Supabase doesn't choke on them
+  Object.keys(safePayload).forEach(k => {
+    if (safePayload[k] === undefined) delete safePayload[k];
+  });
 
-  // ── 3. Attempt 1: Full payload ──
+  console.log('[upsertPartInventory] Attempt 1 — safe 16-column payload:', JSON.stringify(safePayload, null, 2));
+
+  // ── 3. Attempt 1: Safe payload (16 columns) ──
   try {
-    const { error } = await supabase.from('parts_inventory').upsert(fullPayload);
+    const { error } = await supabase.from('parts_inventory').upsert(safePayload);
 
     if (error) {
-      // Check if it's an unknown-column / schema-cache error
       if (isUnknownColumnError(error)) {
         console.warn(
-          '[upsertPartInventory] Attempt 1 failed with unknown-column error — will retry with core columns only.',
+          '[upsertPartInventory] Attempt 1 failed with unknown-column error — will retry with nuclear minimum.',
           { code: error.code, message: error.message, details: error.details }
         );
-        // Fall through to Attempt 2 below
+        // Fall through to Attempt 2
       } else {
         // Not a column error — throw immediately
         console.error('[upsertPartInventory] Attempt 1 failed (non-column error):', error);
@@ -765,47 +779,34 @@ export const upsertPartInventory = async (part: PartInventoryItem, userId?: stri
         throw enrichedError;
       }
     } else {
-      // Success on first attempt
       console.log('[upsertPartInventory] SUCCESS (attempt 1) — part saved. ID:', part.id);
       return;
     }
   } catch (thrown: any) {
-    // If we threw an enriched error above (non-column error), re-throw it
-    if (thrown?.code && thrown.code !== 'PGRST204' && thrown.code !== '42703') {
+    // Re-throw non-column errors
+    if (thrown && !isUnknownColumnError(thrown)) {
       throw thrown;
     }
-    // Otherwise it's a column error that was caught — fall through to retry
-    console.warn('[upsertPartInventory] Caught error in attempt 1, proceeding to retry:', thrown?.message);
+    console.warn('[upsertPartInventory] Caught column error in attempt 1, proceeding to nuclear retry:', thrown?.message);
   }
 
-  // ── 4. Attempt 2: CORE COLUMNS ONLY ──
-  // Only the columns that have existed since the table was first created.
-  // This is the nuclear fallback — guaranteed to work.
-  const corePayload: any = {
-    id: part.id,
-    user_id: effectiveUserId,
+  // ── 4. Attempt 2: NUCLEAR MINIMUM — only 7 absolutely-guaranteed columns ──
+  const nuclearPayload: Record<string, any> = {
+    id:          part.id,
+    user_id:     effectiveUserId,
     part_number: part.partNumber,
     description: part.description,
-    name: emptyToNull(part.name),
-    category: emptyToNull(part.category),
-    on_hand: part.onHand ?? 0,
-    min_quantity: part.minQuantity ?? 1,
-    max_quantity: part.maxQuantity ?? 5,
-    vendor: emptyToNull(part.vendor),
-    unit_cost: part.unitCost ?? 0,
-    total_value: part.totalValue ?? 0,
-    location: emptyToNull(part.location),
-    notes: emptyToNull(part.notes),
-    status: part.status,
-    updated_at: new Date().toISOString()
+    on_hand:     part.onHand ?? 0,
+    status:      part.status || 'In Stock',
+    updated_at:  new Date().toISOString()
   };
 
-  console.log('[upsertPartInventory] Attempt 2 — core-only payload:', JSON.stringify(corePayload, null, 2));
+  console.log('[upsertPartInventory] Attempt 2 — nuclear minimum payload:', JSON.stringify(nuclearPayload, null, 2));
 
-  const { error: retryError } = await supabase.from('parts_inventory').upsert(corePayload);
+  const { error: retryError } = await supabase.from('parts_inventory').upsert(nuclearPayload);
 
   if (retryError) {
-    console.error('[upsertPartInventory] Attempt 2 (core-only) ALSO FAILED:', {
+    console.error('[upsertPartInventory] Attempt 2 (nuclear minimum) ALSO FAILED:', {
       message: retryError.message,
       details: retryError.details,
       hint: retryError.hint,
@@ -818,8 +819,9 @@ export const upsertPartInventory = async (part: PartInventoryItem, userId?: stri
     throw enrichedError;
   }
 
-  console.log('[upsertPartInventory] SUCCESS (attempt 2 — core columns) — part saved. ID:', part.id);
+  console.log('[upsertPartInventory] SUCCESS (attempt 2 — nuclear minimum) — part saved. ID:', part.id);
 };
+
 
 
 
