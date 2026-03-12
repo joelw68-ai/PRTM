@@ -745,16 +745,19 @@ const Dashboard: React.FC<DashboardProps> = ({
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
+                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
                     {[
                       { label: 'Transmissions', cat: 'transmission' },
                       { label: 'Trans Drives', cat: 'transmission_drive' },
                       { label: 'Torque Converters', cat: 'torque_converter' },
-                      { label: '3rd Members', cat: 'third_member' },
-                      { label: 'Ring & Pinions', cat: 'ring_and_pinion' },
+                      { label: '3rd Member & Rear Gear', cat: 'third_member_rear_gear' },
                     ].map(({ label, cat }) => {
-                      const count = carDrivetrainComponents.filter(c => c.category === cat).length;
-                      const installed = carDrivetrainComponents.filter(c => c.category === cat && c.currentlyInstalled).length;
+                      const count = cat === 'third_member_rear_gear'
+                        ? carDrivetrainComponents.filter(c => c.category === 'third_member' || c.category === 'ring_and_pinion').length
+                        : carDrivetrainComponents.filter(c => c.category === cat).length;
+                      const installed = cat === 'third_member_rear_gear'
+                        ? carDrivetrainComponents.filter(c => (c.category === 'third_member' || c.category === 'ring_and_pinion') && c.currentlyInstalled).length
+                        : carDrivetrainComponents.filter(c => c.category === cat && c.currentlyInstalled).length;
                       if (count === 0) return null;
                       return (
                         <div key={cat} className="flex items-center justify-between bg-slate-900/50 rounded-lg px-3 py-2">
@@ -767,6 +770,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                       );
                     })}
                   </div>
+
+
 
                   {carDrivetrainComponents.filter(c => c.currentlyInstalled).length > 0 && (
                     <div className="mb-3">

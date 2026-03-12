@@ -6,6 +6,7 @@ import { useApp } from '@/contexts/AppContext';
 import { CrewRole } from '@/lib/permissions';
 import { auditLog } from '@/lib/auditLog';
 import { VendorRecord } from '@/lib/database';
+import { toast } from 'sonner';
 
 import {
   Package,
@@ -31,7 +32,9 @@ import {
   ArrowUpCircle,
   RefreshCw,
   Eye,
-  FileText
+  FileText,
+  Upload,
+  Shield
 } from 'lucide-react';
 import { PartInventoryItem } from '@/data/partsInventory';
 import {
@@ -46,6 +49,9 @@ import {
 } from '@/data/partsUsageData';
 import LowStockAlertPanel from './LowStockAlertPanel';
 import ReorderListGenerator from './ReorderListGenerator';
+import CSVImportModal from './CSVImportModal';
+import PartsBackupRestore, { savePartsBackup } from './PartsBackupRestore';
+
 
 
 
@@ -90,8 +96,37 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
   const [showUsageHistoryModal, setShowUsageHistoryModal] = useState(false);
   const [selectedPartForHistory, setSelectedPartForHistory] = useState<PartInventoryItem | null>(null);
 
+  // CSV Import & Backup/Restore Modal State
+  const [showCSVImport, setShowCSVImport] = useState(false);
+  const [showBackupRestore, setShowBackupRestore] = useState(false);
+
+
   // Reorder List Generator Modal State
   const [showReorderList, setShowReorderList] = useState(false);
+
+  // Auto-backup parts to localStorage whenever partsInventory changes
+  useEffect(() => {
+    if (partsInventory.length > 0) {
+      savePartsBackup(partsInventory);
+    }
+  }, [partsInventory]);
+
+  // CSV Import handler — batch add parts
+  const handleCSVImport = async (parts: PartInventoryItem[]) => {
+    for (const part of parts) {
+      await addPartInventory(part);
+    }
+    toast.success(`Successfully imported ${parts.length} parts`);
+  };
+
+  // Backup restore handler — re-add missing parts
+  const handleRestoreFromBackup = async (parts: PartInventoryItem[]) => {
+    for (const part of parts) {
+      await addPartInventory(part);
+    }
+    toast.success(`Restored ${parts.length} missing parts from backup`);
+  };
+
 
   // Navigation handler for LowStockAlertPanel (no-op since we're already on Parts page)
   const handleLowStockNavigate = useCallback((section: string) => {
@@ -248,7 +283,6 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
         totalValue: newPart.onHand * newPart.unitCost,
         status: status as PartInventoryItem['status'],
         reorderStatus: reorderStatus as PartInventoryItem['reorderStatus']
-
       };
 
       if (editingPart) {
@@ -262,8 +296,13 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
           editingPart,
           partToSave
         );
+        toast.success(`Part "${partToSave.description}" updated successfully`);
       } else {
-        const id = `PART-${String(partsInventory.length + 1).padStart(4, '0')}`;
+        // Use crypto.randomUUID for unique, collision-free IDs
+        const id = typeof crypto !== 'undefined' && crypto.randomUUID
+          ? `PART-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
+          : `PART-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+        
         await addPartInventory({ ...partToSave, id });
         
         // Log the creation
@@ -274,15 +313,23 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
           undefined,
           { ...partToSave, id }
         );
+        toast.success(`Part "${partToSave.description}" added successfully and saved to database`);
       }
-    } catch (error) {
-      console.error('Error saving part:', error);
-    } finally {
+
+      // Only close modal and reset form on success
       setShowAddModal(false);
       setEditingPart(null);
       setNewPart(defaultPart);
+    } catch (error: any) {
+      console.error('Error saving part:', error);
+      toast.error(
+        `Failed to save part: ${error?.message || 'Unknown error'}. Please try again.`,
+        { duration: 8000 }
+      );
+      // Do NOT close the modal on error — let the user retry
     }
   };
+
 
 
   const handleDeletePart = async (id: string) => {
@@ -521,6 +568,21 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
               </>
             ) : (
               <>
+
+                <button
+                  onClick={() => setShowCSVImport(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors"
+                >
+                  <Upload className="w-4 h-4" />
+                  Import CSV
+                </button>
+                <button
+                  onClick={() => setShowBackupRestore(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <Shield className="w-4 h-4" />
+                  Restore Backup
+                </button>
                 <button
                   onClick={() => setShowReorderList(true)}
                   className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
@@ -557,6 +619,7 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
             )}
           </div>
         </div>
+
 
         {/* Parts Needing Order Alert */}
         {partsNeedingOrder.length > 0 && !quickOrderMode && (
@@ -741,6 +804,17 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                   )}
                   <th 
                     className="text-left px-4 py-3 text-sm font-medium text-slate-400 cursor-pointer hover:text-white"
+                    onClick={() => handleSort('description')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Description
+                      {sortField === 'description' && (
+                        sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+                      )}
+                    </div>
+                  </th>
+                  <th 
+                    className="text-left px-4 py-3 text-sm font-medium text-slate-400 cursor-pointer hover:text-white"
                     onClick={() => handleSort('partNumber')}
                   >
                     <div className="flex items-center gap-1">
@@ -750,7 +824,7 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                       )}
                     </div>
                   </th>
-                  <th className="text-left px-4 py-3 text-sm font-medium text-slate-400">Description</th>
+
                   <th className="text-left px-4 py-3 text-sm font-medium text-slate-400">Category</th>
                   <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">On Hand</th>
                   <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">Min</th>
@@ -788,11 +862,12 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                         </td>
                       )}
                       <td className="px-4 py-3">
-                        <span className="text-orange-400 font-mono text-sm">{part.partNumber}</span>
-                      </td>
-                      <td className="px-4 py-3">
                         <p className="text-white text-sm">{part.description}</p>
                       </td>
+                      <td className="px-4 py-3">
+                        <span className="text-orange-400 font-mono text-sm">{part.partNumber}</span>
+                      </td>
+
                       <td className="px-4 py-3">
                         <span className="text-slate-300 text-sm">{part.category}</span>
                         <span className="text-slate-500 text-xs block">{part.subcategory}</span>
@@ -1608,7 +1683,23 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
         isOpen={showReorderList}
         onClose={() => setShowReorderList(false)}
       />
+
+      {/* CSV Import Modal */}
+      <CSVImportModal
+        isOpen={showCSVImport}
+        onClose={() => setShowCSVImport(false)}
+        onImport={handleCSVImport}
+      />
+
+      {/* Backup/Restore Modal */}
+      <PartsBackupRestore
+        isOpen={showBackupRestore}
+        onClose={() => setShowBackupRestore(false)}
+        currentParts={partsInventory}
+        onRestore={handleRestoreFromBackup}
+      />
     </section>
+
   );
 };
 

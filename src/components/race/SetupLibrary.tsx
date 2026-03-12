@@ -5,9 +5,10 @@ import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils
 import DateInputDark from '@/components/ui/DateInputDark';
 import CarDropdown from '@/components/race/CarDropdown';
 import { useCar } from '@/contexts/CarContext';
+import ChassisSetup from '@/components/race/ChassisSetup';
 
 import { useApp } from '@/contexts/AppContext';
-import { CrewRole } from '@/lib/permissions';
+
 import { ComponentTracker } from '@/data/proModData';
 import { DrivetrainComponent, DrivetrainCategory, DrivetrainSwapLog } from '@/lib/database';
 
@@ -33,8 +34,10 @@ import {
   MessageSquare,
   Package,
   RefreshCw,
-  ExternalLink
+  ExternalLink,
+  SlidersHorizontal
 } from 'lucide-react';
+
 
 interface SetupLibraryProps {
   currentRole?: CrewRole;
@@ -135,7 +138,9 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
 
 
   
-  type ActiveTab = 'engines' | 'heads' | 'superchargers' | 'swap_history' | 'transmission' | 'transmission_drive' | 'torque_converter' | 'third_member' | 'ring_and_pinion';
+  type ActiveTab = 'engines' | 'heads' | 'superchargers' | 'swap_history' | 'transmission' | 'transmission_drive' | 'torque_converter' | 'third_member_rear_gear' | 'chassis_setup';
+
+
   const [activeTab, setActiveTab] = useState<ActiveTab>('engines');
   const [expandedEngine, setExpandedEngine] = useState<string | null>(null);
   const [expandedHead, setExpandedHead] = useState<string | null>(null);
@@ -203,8 +208,15 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
     torque_converter: 'Torque Converter', third_member: '3rd Member', ring_and_pinion: 'Ring and Pinion'
   };
   const getDTByCategory = (cat: DrivetrainCategory) => drivetrainComponents.filter(c => c.category === cat);
+  // Tab categories for individual drivetrain tabs (excludes third_member and ring_and_pinion which are combined)
+  const dtTabCategories: DrivetrainCategory[] = ['transmission', 'transmission_drive', 'torque_converter'];
+  // All drivetrain categories (used for swap modal, labels, etc.)
   const dtCategories: DrivetrainCategory[] = ['transmission', 'transmission_drive', 'torque_converter', 'third_member', 'ring_and_pinion'];
-  const isDTTab = (tab: ActiveTab): tab is DrivetrainCategory => dtCategories.includes(tab as DrivetrainCategory);
+  const isDTTab = (tab: ActiveTab): boolean => dtTabCategories.includes(tab as DrivetrainCategory);
+  // Combined 3rd Member & Rear Gear helpers
+  const getCombinedRearGearComponents = () => drivetrainComponents.filter(c => c.category === 'third_member' || c.category === 'ring_and_pinion');
+  const isCombinedRearGearTab = (tab: ActiveTab): boolean => tab === 'third_member_rear_gear';
+
 
   
   // Modals
@@ -634,14 +646,24 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
             <History className="w-4 h-4" />
             Swap History ({drivetrainSwapLogs.length})
           </button>
-          {dtCategories.map(cat => (
-            <button key={cat} onClick={() => setActiveTab(cat)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${activeTab === cat ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>
+          {dtTabCategories.map(cat => (
+            <button key={cat} onClick={() => setActiveTab(cat as ActiveTab)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${activeTab === cat ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>
               <Wrench className="w-4 h-4" />
               {dtCategoryLabels[cat]} ({getDTByCategory(cat).length})
             </button>
           ))}
-
+          {/* Combined 3rd Member & Rear Gear tab */}
+          <button onClick={() => setActiveTab('third_member_rear_gear')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${activeTab === 'third_member_rear_gear' ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>
+            <Wrench className="w-4 h-4" />
+            3rd Member & Rear Gear ({getCombinedRearGearComponents().length})
+          </button>
+          {/* Chassis Setup tab */}
+          <button onClick={() => setActiveTab('chassis_setup')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${activeTab === 'chassis_setup' ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/25' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>
+            <SlidersHorizontal className="w-4 h-4" />
+            Chassis Setup
+          </button>
         </div>
+
 
         {/* Engines Tab */}
         {activeTab === 'engines' && (
@@ -1422,7 +1444,258 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
             ))}
           </div>
         )}
+
+        {/* Combined 3rd Member & Rear Gear Tab */}
+        {isCombinedRearGearTab(activeTab) && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap justify-end gap-2 mb-4">
+              <button
+                onClick={() => {
+                  setEditingDT(null);
+                  setNewDT({ ...defaultDT, category: 'third_member' });
+                  setShowDTModal(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Add 3rd Member
+              </button>
+              <button
+                onClick={() => {
+                  setEditingDT(null);
+                  setNewDT({ ...defaultDT, category: 'ring_and_pinion' });
+                  setShowDTModal(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Add Ring & Pinion
+              </button>
+            </div>
+
+            {getCombinedRearGearComponents().length === 0 && (
+              <div className="text-center py-12 bg-slate-800/30 rounded-xl border border-slate-700/50">
+                <Wrench className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-400 text-lg">No 3rd members or ring & pinion components added yet</p>
+                <p className="text-slate-500 text-sm mt-1">Click one of the buttons above to add your first component</p>
+              </div>
+            )}
+
+            {getCombinedRearGearComponents().map((comp) => (
+              <div
+                key={comp.id}
+                className={`bg-slate-800/50 rounded-xl border overflow-hidden ${
+                  comp.currentlyInstalled ? 'border-green-500/50' : 'border-slate-700/50'
+                }`}
+              >
+                <div
+                  className="p-4 cursor-pointer hover:bg-slate-700/20"
+                  onClick={() => setExpandedDT(expandedDT === comp.id ? null : comp.id)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
+                        comp.currentlyInstalled ? 'bg-green-500/20' : 'bg-slate-700'
+                      }`}>
+                        <Wrench className={`w-6 h-6 ${comp.currentlyInstalled ? 'text-green-400' : 'text-slate-400'}`} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-lg font-semibold text-white">{comp.name}</h3>
+                          <span className={`px-2 py-0.5 text-xs rounded font-medium ${
+                            comp.category === 'third_member' ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'
+                          }`}>
+                            {comp.category === 'third_member' ? '3rd Member' : 'Ring & Pinion'}
+                          </span>
+                          {comp.currentlyInstalled && (
+                            <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded font-medium">
+                              INSTALLED
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-slate-400">
+                          {comp.make && `${comp.make} `}{comp.model && `${comp.model} | `}S/N: {comp.serialNumber || 'N/A'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                      <div className="text-right hidden md:block">
+                        <p className="text-white font-medium">{comp.totalPasses} total passes</p>
+                        <p className="text-sm text-slate-400">{comp.passesSinceService} since service{comp.hours > 0 ? ` | ${comp.hours} hrs` : ''}</p>
+                      </div>
+
+                      <span className={`px-3 py-1 rounded text-sm font-medium border ${getEngineStatusColor(comp.status)}`}>
+                        {comp.status}
+                      </span>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingDT(comp);
+                            setNewDT({ ...comp });
+                            setShowDTModal(true);
+                          }}
+                          className="p-1.5 bg-blue-500/20 text-blue-400 rounded hover:bg-blue-500/30"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (comp.currentlyInstalled) {
+                              alert(`Cannot delete an installed ${dtCategorySingular[comp.category].toLowerCase()}. Remove it first.`);
+                              return;
+                            }
+                            if (confirm(`Are you sure you want to delete this ${dtCategorySingular[comp.category].toLowerCase()}?`)) {
+                              deleteDrivetrainComponent(comp.id);
+                            }
+                          }}
+                          className="p-1.5 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {expandedDT === comp.id ? (
+                        <ChevronUp className="w-5 h-5 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-5 h-5 text-slate-400" />
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {expandedDT === comp.id && (
+                  <div className="border-t border-slate-700/50 p-4">
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      <div>
+                        <h4 className="font-medium text-white mb-3">{dtCategorySingular[comp.category]} Details</h4>
+                        <div className="space-y-2 text-sm">
+                          {comp.make && (
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Make</span>
+                              <span className="text-white">{comp.make}</span>
+                            </div>
+                          )}
+                          {comp.model && (
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Model</span>
+                              <span className="text-white">{comp.model}</span>
+                            </div>
+                          )}
+                          {comp.serialNumber && (
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Serial Number</span>
+                              <span className="text-white">{comp.serialNumber}</span>
+                            </div>
+                          )}
+                          {comp.builder && (
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Builder</span>
+                              <span className="text-white">{comp.builder}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Install Date</span>
+                            <span className="text-white">{comp.installDate || 'N/A'}</span>
+                          </div>
+                          {comp.dateRemoved && (
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Date Removed</span>
+                              <span className="text-white">{comp.dateRemoved}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <h4 className="font-medium text-white mb-3">Usage</h4>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Total Passes</span>
+                            <span className="text-white">{comp.totalPasses}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Since Service</span>
+                            <span className="text-white">{comp.passesSinceService}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Hours</span>
+                            <span className="text-white">{comp.hours}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Currently Installed</span>
+                            <span className={comp.currentlyInstalled ? 'text-green-400' : 'text-slate-400'}>{comp.currentlyInstalled ? 'Yes' : 'No'}</span>
+                          </div>
+                        </div>
+                      </div>
+                      {comp.notes && (
+                        <div>
+                          <h4 className="font-medium text-white mb-3">Notes</h4>
+                          <p className="text-sm text-slate-400 italic">{comp.notes}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Associated Parts from Inventory */}
+                    {(() => {
+                      const associatedParts = getAssociatedParts(comp.id);
+                      if (associatedParts.length === 0) return null;
+                      return (
+                        <div className="mt-6 border-t border-slate-700/50 pt-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="font-medium text-white flex items-center gap-2">
+                              <Package className="w-4 h-4 text-orange-400" />
+                              Associated Parts ({associatedParts.length})
+                            </h4>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {associatedParts.map(part => (
+                              <div key={part.id} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-slate-200 truncate">{part.description}</p>
+                                  <p className="text-xs text-slate-500">{part.partNumber} | {part.vendor}</p>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                                      part.status === 'In Stock' ? 'bg-green-500/20 text-green-400' :
+                                      part.status === 'Low Stock' ? 'bg-yellow-500/20 text-yellow-400' :
+                                      part.status === 'Out of Stock' ? 'bg-red-500/20 text-red-400' :
+                                      'bg-blue-500/20 text-blue-400'
+                                    }`}>{part.status}</span>
+                                    <span className="text-xs text-slate-400">Qty: {part.onHand}/{part.maxQuantity}</span>
+                                  </div>
+                                </div>
+                                {(part.status === 'Low Stock' || part.status === 'Out of Stock') && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); }}
+                                    className="ml-2 flex items-center gap-1 px-2 py-1 bg-orange-500/20 text-orange-400 rounded text-xs hover:bg-orange-500/30 whitespace-nowrap"
+                                    title="Navigate to Parts Inventory to reorder"
+                                  >
+                                    <ExternalLink className="w-3 h-3" />
+                                    Reorder
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Chassis Setup Tab */}
+        {activeTab === 'chassis_setup' && (
+          <ChassisSetup currentRole={currentRole} />
+        )}
       </div>
+
+
 
       {/* Engine Modal */}
       {showEngineModal && (

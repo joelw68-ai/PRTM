@@ -653,34 +653,75 @@ export const fetchPartsInventory = async (userId?: string): Promise<PartInventor
   return parseRows(data, PartInventoryRowSchema, 'parts_inventory').map(toPartInventoryItem);
 };
 
+/**
+ * upsertPartInventory — Create or update a parts inventory item.
+ *
+ * RESILIENT USER_ID HANDLING:
+ * Always resolves a user_id before sending to the database.
+ * If the caller doesn't provide a userId, we fall back to getCurrentUserId()
+ * to read it from the active Supabase session. This prevents silent RLS
+ * rejections that cause parts to appear in the UI but never persist.
+ */
 export const upsertPartInventory = async (part: PartInventoryItem, userId?: string): Promise<void> => {
+  // 1. Resolve user_id — must be set for RLS to pass
+  const effectiveUserId = userId || await getCurrentUserId();
+
+  if (!effectiveUserId) {
+    console.error('[upsertPartInventory] FATAL: No user_id available. Cannot insert — RLS will reject.');
+    const err: any = new Error('No authenticated user ID available. Cannot save part. Please log in again.');
+    err.code = 'NO_USER_ID';
+    err.details = 'Neither the passed userId nor supabase.auth.getUser() returned a valid user ID.';
+    err.hint = 'Ensure you are logged in. Try refreshing the page or logging out and back in.';
+    throw err;
+  }
+
   const payload: any = {
     id: part.id,
+    user_id: effectiveUserId,
     part_number: part.partNumber,
     description: part.description,
     category: emptyToNull(part.category),
     subcategory: emptyToNull(part.subcategory),
-    on_hand: emptyToNull(part.onHand),
-    min_quantity: emptyToNull(part.minQuantity),
-    max_quantity: emptyToNull(part.maxQuantity),
+    on_hand: part.onHand ?? 0,
+    min_quantity: part.minQuantity ?? 1,
+    max_quantity: part.maxQuantity ?? 5,
     vendor: emptyToNull(part.vendor),
     vendor_part_number: emptyToNull(part.vendorPartNumber),
-    unit_cost: emptyToNull(part.unitCost),
-    total_value: emptyToNull(part.totalValue),
+    unit_cost: part.unitCost ?? 0,
+    total_value: part.totalValue ?? 0,
     last_ordered: emptyToNull(part.lastOrdered),
     last_used: emptyToNull(part.lastUsed),
     location: emptyToNull(part.location),
     notes: emptyToNull(part.notes),
     status: part.status,
     reorder_status: emptyToNull(part.reorderStatus),
-    related_drivetrain_component_id: emptyToNull(part.relatedDrivetrainComponentId)
+    related_drivetrain_component_id: emptyToNull(part.relatedDrivetrainComponentId),
+    updated_at: new Date().toISOString()
   };
+
+  // 2. Log the full payload for debugging
+  console.log('[upsertPartInventory] Payload being sent to Supabase:', JSON.stringify(payload, null, 2));
+
+  // 3. Execute the upsert
+  const { data, error } = await supabase.from('parts_inventory').upsert(payload);
   
-  if (userId) payload.user_id = userId;
-  
-  const { error } = await supabase.from('parts_inventory').upsert(payload);
-  if (error) throw error;
+  if (error) {
+    console.error('[upsertPartInventory] Supabase error:', {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code
+    });
+    const enrichedError: any = new Error(error.message);
+    enrichedError.code = error.code;
+    enrichedError.details = error.details;
+    enrichedError.hint = error.hint;
+    throw enrichedError;
+  }
+
+  console.log('[upsertPartInventory] SUCCESS — part saved. ID:', part.id);
 };
+
 
 
 export const deletePartInventory = async (id: string): Promise<void> => {

@@ -6,6 +6,8 @@ import DateInputDark from '@/components/ui/DateInputDark';
 import { supabase } from '@/lib/supabase';
 import { parseRows } from '@/lib/validatedQuery';
 import { ChassisSetupRowSchema, UserPresetRowSchema } from '@/lib/validators';
+import { useApp } from '@/contexts/AppContext';
+import { useCar } from '@/contexts/CarContext';
 import {
   Settings,
   Plus,
@@ -46,13 +48,23 @@ import {
   Car,
   Zap,
   Wrench,
-  Circle
+  Circle,
+  Link2
 } from 'lucide-react';
 import SetupRecommendationEngine from './SetupRecommendationEngine';
 import StrangeBracketSelector from './StrangeBracketSelector';
 import QuartermaxBracketSelector from './QuartermaxBracketSelector';
 import { fourLinkPresets, getPresetCategories, getAllPresetCategories, FourLinkPreset, PresetCategory, FourLinkSettings as FourLinkSettingsType } from '@/data/fourLinkPresets';
 import { strangeBrackets, getAllSeries, getBracketById, calculateMountHeight, StrangeBracket, BracketMountHole } from '@/data/strangeBrackets';
+
+// Wheelie bar settings interface
+interface WheelieBarSettings {
+  height: number;       // inches from ground
+  angle: number;        // degrees
+  gap: number;          // inches gap to ground
+  preload: number;      // turns of preload
+}
+
 
 
 

@@ -25,6 +25,7 @@ import {
   Settings,
   Navigation
 } from 'lucide-react';
+import { Crosshair } from 'lucide-react';
 
 interface WeatherWidgetProps {
   onNavigate: (section: string) => void;
@@ -33,6 +34,53 @@ interface WeatherWidgetProps {
 const WEATHER_CACHE_KEY = 'promod_weather_cache';
 const WEATHER_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 const WEATHER_STALE_DURATION = 60 * 60 * 1000; // 1 hour — show stale cache on error
+const GPS_COORDS_KEY = 'promod_gps_coords';
+const GPS_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes — GPS coords don't change that fast
+
+type LocationSource = 'gps' | 'ip' | 'home-track' | 'pending';
+
+// Get cached GPS coordinates
+function getCachedGPS(): { lat: number; lon: number } | null {
+  try {
+    const raw = localStorage.getItem(GPS_COORDS_KEY);
+    if (!raw) return null;
+    const { lat, lon, timestamp } = JSON.parse(raw);
+    if (Date.now() - timestamp > GPS_CACHE_DURATION) return null;
+    return { lat, lon };
+  } catch {
+    return null;
+  }
+}
+
+// Cache GPS coordinates
+function cacheGPS(lat: number, lon: number) {
+  try {
+    localStorage.setItem(GPS_COORDS_KEY, JSON.stringify({ lat, lon, timestamp: Date.now() }));
+  } catch {
+    // ignore
+  }
+}
+
+// Request GPS position with a promise wrapper
+function requestGPSPosition(timeoutMs: number = 10000): Promise<{ lat: number; lon: number }> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation not supported'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = Math.round(position.coords.latitude * 10000) / 10000;
+        const lon = Math.round(position.coords.longitude * 10000) / 10000;
+        resolve({ lat, lon });
+      },
+      (err) => {
+        reject(err);
+      },
+      { enableHighAccuracy: false, timeout: timeoutMs, maximumAge: GPS_CACHE_DURATION }
+    );
+  });
+}
 
 
 // Get weather icon component based on conditions
@@ -74,19 +122,60 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
   const [showForecast, setShowForecast] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [trackLocation, setTrackLocation] = useState<string>('');
+  const [locationSource, setLocationSource] = useState<LocationSource>('pending');
+  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lon: number } | null>(null);
 
-  // Determine the best location to use for weather
-  // Primary: IP-based geolocation via WeatherAPI's auto:ip feature
-  // Override: Home track from profile if set
+  // Resolve the best location: homeTrack > GPS > auto:ip
   const getWeatherLocation = useCallback((): string => {
-    // If user has a home track set, use that as an override
+    // Priority 1: User's home track setting
     if (profile?.homeTrack) {
+      setLocationSource('home-track');
       return profile.homeTrack;
     }
     
-    // Default: use IP-based geolocation
+    // Priority 2: GPS coordinates
+    if (gpsCoords) {
+      setLocationSource('gps');
+      return `${gpsCoords.lat},${gpsCoords.lon}`;
+    }
+    
+    // Priority 3: IP-based fallback
+    setLocationSource('ip');
     return 'auto:ip';
+  }, [profile?.homeTrack, gpsCoords]);
+
+  // Request GPS on mount
+  useEffect(() => {
+    // If user has a home track, skip GPS entirely
+    if (profile?.homeTrack) {
+      setLocationSource('home-track');
+      return;
+    }
+
+    // Check cached GPS first
+    const cached = getCachedGPS();
+    if (cached) {
+      console.log('[WeatherWidget] Using cached GPS:', cached);
+      setGpsCoords(cached);
+      setLocationSource('gps');
+      return;
+    }
+
+    // Request fresh GPS
+    setLocationSource('pending');
+    requestGPSPosition(8000)
+      .then(({ lat, lon }) => {
+        console.log('[WeatherWidget] GPS acquired:', lat, lon);
+        cacheGPS(lat, lon);
+        setGpsCoords({ lat, lon });
+        setLocationSource('gps');
+      })
+      .catch((err) => {
+        console.warn('[WeatherWidget] GPS unavailable, falling back to IP:', err?.message || err);
+        setLocationSource('ip');
+      });
   }, [profile?.homeTrack]);
+
 
 
   // Load cached weather data (use stale cache up to 1 hour as fallback)
@@ -295,15 +384,34 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
             </button>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 mt-1">
+        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
           <MapPin className="w-3 h-3 text-slate-400" />
           <span className="text-sm text-slate-400">
             {weatherData.location}{weatherData.region ? `, ${weatherData.region}` : ''}
           </span>
-          {!profile?.homeTrack && (
-            <span className="text-xs text-blue-400/70 flex items-center gap-0.5 ml-1" title="Location detected from your IP address">
+          {/* Location source indicator */}
+          {locationSource === 'gps' && (
+            <span className="text-xs text-green-400/80 flex items-center gap-0.5 ml-1" title="Location from GPS (precise)">
+              <Crosshair className="w-2.5 h-2.5" />
+              GPS
+            </span>
+          )}
+          {locationSource === 'ip' && (
+            <span className="text-xs text-yellow-400/70 flex items-center gap-0.5 ml-1" title="Location from IP address (approximate — allow GPS for better accuracy)">
               <Navigation className="w-2.5 h-2.5" />
-              auto
+              IP
+            </span>
+          )}
+          {locationSource === 'home-track' && (
+            <span className="text-xs text-orange-400/70 flex items-center gap-0.5 ml-1" title="Using your home track setting">
+              <MapPin className="w-2.5 h-2.5" />
+              Home Track
+            </span>
+          )}
+          {locationSource === 'pending' && (
+            <span className="text-xs text-slate-500 flex items-center gap-0.5 ml-1" title="Requesting GPS location...">
+              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+              locating
             </span>
           )}
           {weatherData.localTime && (
@@ -313,7 +421,6 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
             </span>
           )}
         </div>
-
       </div>
 
       {/* Error banner */}
