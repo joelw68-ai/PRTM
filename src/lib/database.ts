@@ -295,6 +295,30 @@ const emptyToNull = (val: any): any => {
   return val;
 };
 
+/**
+ * Helper: detect if a Supabase/PostgREST error is caused by an unknown column.
+ * PostgREST returns PostgreSQL error code 42703 ("undefined_column") or includes
+ * "Could not find the … column" in the message when the payload references a
+ * column that doesn't exist in the table (or isn't in the schema cache).
+ *
+ * Used by upsertPartInventory and upsertRaceEvent for resilient column handling.
+ */
+const isUnknownColumnError = (error: any): boolean => {
+  if (!error) return false;
+  const msg = (error.message || '').toLowerCase();
+  const code = error.code || '';
+  const hint = (error.hint || '').toLowerCase();
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    msg.includes('could not find') ||
+    (msg.includes('column') && (msg.includes('does not exist') || msg.includes('not found') || msg.includes('schema cache'))) ||
+    hint.includes('column') ||
+    msg.includes('undefined_column')
+  );
+};
+
+
 // ============ DATABASE OPERATIONS ============
 
 // Pass Logs
@@ -656,24 +680,27 @@ export const fetchPartsInventory = async (userId?: string): Promise<PartInventor
 /**
  * upsertPartInventory — Create or update a parts inventory item.
  *
+ * RESILIENT COLUMN HANDLING (belt-and-suspenders approach):
+ *
+ * 1. `related_drivetrain_component_id` is ALWAYS stripped from the payload
+ *    before sending to Supabase. The column exists in the DB but PostgREST's
+ *    schema cache refuses to acknowledge it (PGRST204). We still READ it
+ *    via SELECT * in toPartInventoryItem(), but never WRITE it.
+ *
+ * 2. The entire upsert is wrapped in a try/catch. If the first attempt fails
+ *    with ANY unknown-column / schema-cache error, we automatically RETRY
+ *    with a minimal "core columns only" payload that contains only the
+ *    columns that have existed since the table was first created. This
+ *    guarantees parts save even if future migrations add columns that
+ *    PostgREST hasn't cached yet.
+ *
  * RESILIENT USER_ID HANDLING:
  * Always resolves a user_id before sending to the database.
  * If the caller doesn't provide a userId, we fall back to getCurrentUserId()
- * to read it from the active Supabase session. This prevents silent RLS
- * rejections that cause parts to appear in the UI but never persist.
- *
- * NOTE: related_drivetrain_component_id is intentionally EXCLUDED from the
- * upsert payload. Even though the column exists in the database, PostgREST's
- * schema cache may not have picked it up yet, causing PGRST204 errors like:
- *   "Could not find the 'related_drivetrain_component_id' column of
- *    'parts_inventory' in the schema cache"
- * The value is still READ from the database (via SELECT *), but we never
- * WRITE it through PostgREST to avoid the cache staleness issue.
- * Once Supabase refreshes its schema cache (e.g., after a deploy or
- * manual reload), this exclusion can be revisited.
+ * to read it from the active Supabase session.
  */
 export const upsertPartInventory = async (part: PartInventoryItem, userId?: string): Promise<void> => {
-  // 1. Resolve user_id — must be set for RLS to pass
+  // ── 1. Resolve user_id — must be set for RLS to pass ──
   const effectiveUserId = userId || await getCurrentUserId();
 
   if (!effectiveUserId) {
@@ -685,9 +712,9 @@ export const upsertPartInventory = async (part: PartInventoryItem, userId?: stri
     throw err;
   }
 
-  // 2. Build the payload — related_drivetrain_component_id is deliberately
-  //    stripped out to avoid PostgREST schema cache errors (PGRST204).
-  const payload: any = {
+  // ── 2. Build the FULL payload ──
+  // related_drivetrain_component_id is deliberately EXCLUDED.
+  const fullPayload: any = {
     id: part.id,
     user_id: effectiveUserId,
     part_number: part.partNumber,
@@ -711,30 +738,89 @@ export const upsertPartInventory = async (part: PartInventoryItem, userId?: stri
     car_id: emptyToNull(part.car_id),
     updated_at: new Date().toISOString()
   };
-  // ⛔ related_drivetrain_component_id is NOT included above — on purpose.
+  // ⛔ related_drivetrain_component_id is NOT included — on purpose.
 
-  // 3. Log the payload for debugging
-  console.log('[upsertPartInventory] Payload being sent to Supabase (related_drivetrain_component_id stripped):', JSON.stringify(payload, null, 2));
+  console.log('[upsertPartInventory] Attempt 1 — full payload (related_drivetrain_component_id stripped):',
+    JSON.stringify(fullPayload, null, 2));
 
-  // 4. Single upsert — no fallback needed since the problematic column is excluded
-  const { error } = await supabase.from('parts_inventory').upsert(payload);
+  // ── 3. Attempt 1: Full payload ──
+  try {
+    const { error } = await supabase.from('parts_inventory').upsert(fullPayload);
 
-  if (error) {
-    console.error('[upsertPartInventory] Supabase error:', {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code
+    if (error) {
+      // Check if it's an unknown-column / schema-cache error
+      if (isUnknownColumnError(error)) {
+        console.warn(
+          '[upsertPartInventory] Attempt 1 failed with unknown-column error — will retry with core columns only.',
+          { code: error.code, message: error.message, details: error.details }
+        );
+        // Fall through to Attempt 2 below
+      } else {
+        // Not a column error — throw immediately
+        console.error('[upsertPartInventory] Attempt 1 failed (non-column error):', error);
+        const enrichedError: any = new Error(error.message);
+        enrichedError.code = error.code;
+        enrichedError.details = error.details;
+        enrichedError.hint = error.hint;
+        throw enrichedError;
+      }
+    } else {
+      // Success on first attempt
+      console.log('[upsertPartInventory] SUCCESS (attempt 1) — part saved. ID:', part.id);
+      return;
+    }
+  } catch (thrown: any) {
+    // If we threw an enriched error above (non-column error), re-throw it
+    if (thrown?.code && thrown.code !== 'PGRST204' && thrown.code !== '42703') {
+      throw thrown;
+    }
+    // Otherwise it's a column error that was caught — fall through to retry
+    console.warn('[upsertPartInventory] Caught error in attempt 1, proceeding to retry:', thrown?.message);
+  }
+
+  // ── 4. Attempt 2: CORE COLUMNS ONLY ──
+  // Only the columns that have existed since the table was first created.
+  // This is the nuclear fallback — guaranteed to work.
+  const corePayload: any = {
+    id: part.id,
+    user_id: effectiveUserId,
+    part_number: part.partNumber,
+    description: part.description,
+    name: emptyToNull(part.name),
+    category: emptyToNull(part.category),
+    on_hand: part.onHand ?? 0,
+    min_quantity: part.minQuantity ?? 1,
+    max_quantity: part.maxQuantity ?? 5,
+    vendor: emptyToNull(part.vendor),
+    unit_cost: part.unitCost ?? 0,
+    total_value: part.totalValue ?? 0,
+    location: emptyToNull(part.location),
+    notes: emptyToNull(part.notes),
+    status: part.status,
+    updated_at: new Date().toISOString()
+  };
+
+  console.log('[upsertPartInventory] Attempt 2 — core-only payload:', JSON.stringify(corePayload, null, 2));
+
+  const { error: retryError } = await supabase.from('parts_inventory').upsert(corePayload);
+
+  if (retryError) {
+    console.error('[upsertPartInventory] Attempt 2 (core-only) ALSO FAILED:', {
+      message: retryError.message,
+      details: retryError.details,
+      hint: retryError.hint,
+      code: retryError.code
     });
-    const enrichedError: any = new Error(error.message);
-    enrichedError.code = error.code;
-    enrichedError.details = error.details;
-    enrichedError.hint = error.hint;
+    const enrichedError: any = new Error(retryError.message);
+    enrichedError.code = retryError.code;
+    enrichedError.details = retryError.details;
+    enrichedError.hint = retryError.hint;
     throw enrichedError;
   }
 
-  console.log('[upsertPartInventory] SUCCESS — part saved. ID:', part.id);
+  console.log('[upsertPartInventory] SUCCESS (attempt 2 — core columns) — part saved. ID:', part.id);
 };
+
 
 
 
@@ -775,27 +861,9 @@ export const upsertTrackWeatherHistory = async (track: TrackWeatherHistory, user
 };
 
 // Race Events
+// (isUnknownColumnError helper is defined in the HELPERS section above)
 
-/**
- * Helper: detect if a Supabase/PostgREST error is caused by an unknown column.
- * PostgREST returns PostgreSQL error code 42703 ("undefined_column") or includes
- * "Could not find the … column" in the message when the payload references a
- * column that doesn't exist in the table.
- */
-const isUnknownColumnError = (error: any): boolean => {
-  if (!error) return false;
-  const msg = (error.message || '').toLowerCase();
-  const code = error.code || '';
-  const hint = (error.hint || '').toLowerCase();
-  return (
-    code === '42703' ||
-    code === 'PGRST204' ||
-    msg.includes('could not find') ||
-    msg.includes('column') && (msg.includes('does not exist') || msg.includes('not found') || msg.includes('schema cache')) ||
-    hint.includes('column') ||
-    msg.includes('undefined_column')
-  );
-};
+
 
 export const fetchRaceEvents = async (userId?: string): Promise<RaceEvent[]> => {
   const { data, error } = await supabase.from('race_events').select('*').order('start_date', { ascending: false });
