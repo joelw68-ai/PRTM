@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { submitBetaFeedback } from '@/lib/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   MessageSquarePlus, X, Bug, Lightbulb, MessageCircle, 
@@ -12,10 +12,25 @@ interface BetaFeedbackProps {
   currentPage?: string;
 }
 
+/**
+ * BetaFeedback — Floating feedback button + modal.
+ *
+ * COLUMN MAPPING (app field → DB column):
+ *   category    → category       (was already correct)
+ *   title       → title          (NEW — was missing before; maps to "subject" concept)
+ *   description → description    (was already correct; maps to "message" concept)
+ *   severity    → priority       (was incorrectly sent as "severity" / "rating")
+ *   status      → status         (was already correct)
+ *
+ * STRIPPED — these columns do NOT exist in beta_feedback:
+ *   feedback_type, subject, message, rating, severity,
+ *   user_email, user_name, page_context
+ */
 const BetaFeedback: React.FC<BetaFeedbackProps> = ({ currentPage }) => {
   const { user, profile } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [category, setCategory] = useState<FeedbackCategory>('general');
+  const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [severity, setSeverity] = useState(3);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -28,6 +43,18 @@ const BetaFeedback: React.FC<BetaFeedbackProps> = ({ currentPage }) => {
     general: { icon: MessageCircle, label: 'General Feedback', color: 'text-blue-400', bg: 'bg-blue-500/20 border-blue-500/30', description: 'Share your thoughts or experience' }
   };
 
+  // Map the 1-5 star severity to the DB `priority` column values
+  const severityToPriority = (level: number): string => {
+    switch (level) {
+      case 1: return 'Low';
+      case 2: return 'Minor';
+      case 3: return 'Medium';
+      case 4: return 'High';
+      case 5: return 'Critical';
+      default: return 'Medium';
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!description.trim()) return;
@@ -36,20 +63,25 @@ const BetaFeedback: React.FC<BetaFeedbackProps> = ({ currentPage }) => {
     setSubmitStatus('idle');
 
     try {
-      const { error } = await supabase.from('beta_feedback').insert({
-        category,
-        description: description.trim(),
-        severity,
-        user_email: user?.email || null,
-        user_name: profile?.driverName || profile?.teamName || 'Anonymous',
-        page_context: currentPage || 'unknown',
-        status: 'new'
-      });
+      // Build a title if the user left it blank — use category + truncated description
+      const effectiveTitle = title.trim()
+        || `${categoryConfig[category].label}: ${description.trim().slice(0, 60)}${description.trim().length > 60 ? '...' : ''}`;
 
-      if (error) throw error;
+      // Use the centralized submitBetaFeedback from database.ts
+      // This sends ONLY: user_id, category, title, description, status, priority
+      // It does NOT send: feedback_type, subject, message, rating, severity,
+      //                    user_email, user_name, page_context
+      await submitBetaFeedback({
+        category,
+        title: effectiveTitle,
+        description: description.trim(),
+        priority: severityToPriority(severity),
+        status: 'new',
+      }, user?.id);
 
       setSubmitStatus('success');
       setSubmitMessage('Thank you for your feedback! We\'ll review it shortly.');
+      setTitle('');
       setDescription('');
       setSeverity(3);
       
@@ -70,6 +102,7 @@ const BetaFeedback: React.FC<BetaFeedbackProps> = ({ currentPage }) => {
 
   const resetForm = () => {
     setCategory('general');
+    setTitle('');
     setDescription('');
     setSeverity(3);
     setSubmitStatus('idle');
@@ -149,7 +182,27 @@ const BetaFeedback: React.FC<BetaFeedbackProps> = ({ currentPage }) => {
                   <p className="text-xs text-slate-500 mt-2">{categoryConfig[category].description}</p>
                 </div>
 
-                {/* Severity Rating */}
+                {/* Title (maps to DB `title` column — was previously missing) */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                    Title <span className="text-slate-500 font-normal">(optional — auto-generated if blank)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder={
+                      category === 'bug'
+                        ? 'e.g. Parts inventory won\'t save'
+                        : category === 'feature'
+                        ? 'e.g. Add dark mode toggle'
+                        : 'Brief summary of your feedback'
+                    }
+                    className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-colors"
+                  />
+                </div>
+
+                {/* Priority Rating (maps to DB `priority` column — was incorrectly sent as "severity") */}
                 <div>
                   <label className="block text-sm font-medium text-slate-300 mb-2">
                     {category === 'bug' ? 'Severity' : category === 'feature' ? 'Priority' : 'Importance'}
@@ -172,12 +225,12 @@ const BetaFeedback: React.FC<BetaFeedbackProps> = ({ currentPage }) => {
                       </button>
                     ))}
                     <span className="ml-2 text-sm text-slate-400">
-                      {severity === 1 ? 'Low' : severity === 2 ? 'Minor' : severity === 3 ? 'Medium' : severity === 4 ? 'High' : 'Critical'}
+                      {severityToPriority(severity)}
                     </span>
                   </div>
                 </div>
 
-                {/* Description */}
+                {/* Description (maps to DB `description` column — was already correct) */}
                 <div>
                   <label className="block text-sm font-medium text-slate-300 mb-2">
                     {category === 'bug' ? 'Describe the bug' : category === 'feature' ? 'Describe your idea' : 'Your feedback'}
@@ -198,7 +251,7 @@ const BetaFeedback: React.FC<BetaFeedbackProps> = ({ currentPage }) => {
                   />
                 </div>
 
-                {/* Page Context Info */}
+                {/* Page Context Info (display-only — NOT sent to DB) */}
                 <div className="flex items-center gap-2 text-xs text-slate-500">
                   <span>Current page: {currentPage || 'Dashboard'}</span>
                 </div>

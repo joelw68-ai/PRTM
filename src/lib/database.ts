@@ -2061,3 +2061,75 @@ export const deleteFuelLog = async (id: string): Promise<void> => {
   const { error } = await supabase.from('fuel_log_entries').delete().eq('id', id);
   if (error) throw error;
 };
+
+
+// ============ BETA FEEDBACK OPERATIONS ============
+//
+// beta_feedback table columns (verified via information_schema.columns):
+//   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4()
+//   user_id     UUID REFERENCES auth.users(id)
+//   category    TEXT        — 'bug' | 'feature' | 'general'
+//   title       TEXT        — short summary / subject line
+//   description TEXT        — full feedback body
+//   status      TEXT        — 'new', 'reviewed', 'resolved', etc.
+//   priority    TEXT        — 'Low' | 'Minor' | 'Medium' | 'High' | 'Critical'
+//   created_at  TIMESTAMPTZ DEFAULT NOW()
+//
+// COLUMNS THAT DO **NOT** EXIST (stripped from payload):
+//   feedback_type, subject, message, rating, severity,
+//   user_email, user_name, page_context
+
+export interface BetaFeedbackPayload {
+  category: 'bug' | 'feature' | 'general';
+  title: string;
+  description: string;
+  priority: string;
+  status?: string;
+}
+
+/**
+ * submitBetaFeedback — Insert a row into the beta_feedback table.
+ *
+ * ONLY sends columns that actually exist in the table:
+ *   user_id, category, title, description, status, priority
+ *
+ * Does NOT send: feedback_type, subject, message, rating, severity,
+ *                user_email, user_name, page_context
+ */
+export const submitBetaFeedback = async (
+  feedback: BetaFeedbackPayload,
+  userId?: string
+): Promise<void> => {
+  const effectiveUserId = userId || await getCurrentUserId();
+
+  // Build payload with ONLY the columns that exist in beta_feedback
+  const payload: Record<string, any> = {
+    category:    feedback.category,
+    title:       feedback.title,
+    description: feedback.description,
+    status:      feedback.status || 'new',
+    priority:    feedback.priority || 'Medium',
+  };
+
+  if (effectiveUserId) payload.user_id = effectiveUserId;
+
+  console.log('[submitBetaFeedback] Payload:', JSON.stringify(payload, null, 2));
+
+  const { error } = await supabase.from('beta_feedback').insert(payload);
+
+  if (error) {
+    console.error('[submitBetaFeedback] Supabase error:', {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    const enrichedError: any = new Error(error.message);
+    enrichedError.code = error.code;
+    enrichedError.details = error.details;
+    enrichedError.hint = error.hint;
+    throw enrichedError;
+  }
+
+  console.log('[submitBetaFeedback] SUCCESS — feedback submitted.');
+};
