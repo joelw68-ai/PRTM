@@ -2065,16 +2065,26 @@ export const deleteFuelLog = async (id: string): Promise<void> => {
 
 // ============ BETA FEEDBACK OPERATIONS ============
 //
-// beta_feedback table has EXACTLY 9 columns:
-//   id, user_id, category, title, description, status, priority, created_at, updated_at
+// beta_feedback table columns (from sql_master_create_all_tables.sql + user migration):
+//   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4()
+//   user_id     UUID REFERENCES auth.users(id) ON DELETE SET NULL
+//   category    TEXT NOT NULL
+//   title       TEXT
+//   description TEXT NOT NULL
+//   status      TEXT DEFAULT 'new'
+//   priority    TEXT
+//   created_at  TIMESTAMPTZ DEFAULT NOW()
+//   updated_at  TIMESTAMPTZ
 //
-// The code MUST send ONLY these column names. Nothing else.
-// NO feedback_type, NO subject, NO message, NO rating,
-// NO app_version, NO device_info, NO screenshot_url.
+// TOTAL: 9 columns.  The code MUST send ONLY these names.
+// BANNED column names (do NOT exist — never send these):
+//   feedback_type, subject, message, rating,
+//   app_version, device_info, screenshot_url,
+//   severity, user_email, user_name, page_context
 
 /**
- * The complete set of columns in the beta_feedback table.
- * Any key NOT in this set will be stripped before the insert.
+ * Allowlist — the exact 9 column names in the beta_feedback table.
+ * Any key NOT in this set is stripped before the INSERT.
  */
 const BETA_FEEDBACK_ALLOWED_COLUMNS = new Set<string>([
   'id',
@@ -2088,6 +2098,10 @@ const BETA_FEEDBACK_ALLOWED_COLUMNS = new Set<string>([
   'updated_at',
 ]);
 
+/**
+ * Payload accepted by submitBetaFeedback.
+ * Field names match the DB column names exactly.
+ */
 export interface BetaFeedbackPayload {
   category: 'bug' | 'feature' | 'general';
   title: string;
@@ -2102,8 +2116,8 @@ export interface BetaFeedbackPayload {
  * Columns sent: user_id, category, title, description, status, priority, updated_at.
  * Columns handled by DB defaults: id (uuid_generate_v4), created_at (NOW()).
  *
- * A safety-net loop strips any key that is NOT in BETA_FEEDBACK_ALLOWED_COLUMNS
- * so that even if a caller accidentally adds extra fields, they never reach PostgREST.
+ * A safety-net loop strips any key NOT in BETA_FEEDBACK_ALLOWED_COLUMNS
+ * so that even if a caller accidentally passes extra fields they never reach PostgREST.
  */
 export const submitBetaFeedback = async (
   feedback: BetaFeedbackPayload,
@@ -2111,11 +2125,11 @@ export const submitBetaFeedback = async (
 ): Promise<void> => {
   const effectiveUserId = userId || await getCurrentUserId();
 
-  // Build the payload — ONLY columns that exist in the beta_feedback table
+  // Build payload using ONLY the 9 allowed column names
   const payload: Record<string, any> = {
-    category:    feedback.category,
-    title:       feedback.title,
-    description: feedback.description,
+    category:    feedback.category,       // DB column: category  (NOT feedback_type)
+    title:       feedback.title,          // DB column: title     (NOT subject)
+    description: feedback.description,    // DB column: description (NOT message)
     status:      feedback.status || 'new',
     priority:    feedback.priority || 'Medium',
     updated_at:  new Date().toISOString(),
@@ -2128,10 +2142,12 @@ export const submitBetaFeedback = async (
   // Safety net: strip any key that is NOT one of the 9 allowed columns
   for (const key of Object.keys(payload)) {
     if (!BETA_FEEDBACK_ALLOWED_COLUMNS.has(key)) {
-      console.warn(`[submitBetaFeedback] Stripped disallowed key "${key}" — not a beta_feedback column`);
+      console.warn(`[submitBetaFeedback] Stripped disallowed key "${key}" — not in beta_feedback table`);
       delete payload[key];
     }
   }
+
+  console.log('[submitBetaFeedback] Final payload:', JSON.stringify(payload, null, 2));
 
   const { error } = await supabase.from('beta_feedback').insert(payload);
 
@@ -2148,4 +2164,6 @@ export const submitBetaFeedback = async (
     enrichedError.hint = error.hint;
     throw enrichedError;
   }
+
+  console.log('[submitBetaFeedback] SUCCESS — feedback inserted.');
 };
