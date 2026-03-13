@@ -34,7 +34,7 @@ const BetaFeedback: React.FC = () => {
 
     // EmailJS credentials
     const serviceId = 'service_c4b4pie';
-    const templateId = 'gmxv2es';
+    const templateId = 'template_gmxv2es';
     const publicKey = 'n6p-J5dvdN7wk8DeO';
 
     // Template parameters sent to EmailJS
