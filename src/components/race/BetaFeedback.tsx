@@ -1,18 +1,12 @@
 import React, { useState } from 'react';
 import { MessageSquarePlus, X, Send, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
-import emailjs from '@emailjs/browser';
 import { useAuth } from '@/contexts/AuthContext';
 
-// ── EmailJS credentials ──
-const EMAILJS_SERVICE_ID = 'service_c4b4pie';
-const EMAILJS_TEMPLATE_ID = 'gmxv2es';
-const EMAILJS_PUBLIC_KEY = 'n6p-J5dvdN7wk8DeO';
-
 /**
- * BetaFeedback — Simple floating feedback button + modal.
- *
- * One textarea. One submit button. Sends email via EmailJS.
- * No database. No categories. No dropdowns. No ratings.
+ * BetaFeedback — Floating feedback button + modal.
+ * Uses EmailJS to send feedback silently in the background.
+ * NO mailto links. NO database calls. NO email app popups.
+ * Just type → click Submit → green success message.
  */
 const BetaFeedback: React.FC = () => {
   const { user, profile } = useAuth();
@@ -30,7 +24,7 @@ const BetaFeedback: React.FC = () => {
     setSending(true);
     setErrorMsg('');
 
-    // Build template variables
+    // Gather sender info from auth context
     const senderName =
       profile?.driverName ||
       profile?.teamName ||
@@ -38,23 +32,32 @@ const BetaFeedback: React.FC = () => {
       'Anonymous Beta Tester';
     const senderEmail = user?.email || 'no-account@unknown.com';
 
-    try {
-      await emailjs.send(
-        EMAILJS_SERVICE_ID,
-        EMAILJS_TEMPLATE_ID,
-        {
-          message: message.trim(),
-          name: senderName,
-          email: senderEmail,
-        },
-        EMAILJS_PUBLIC_KEY,
-      );
+    // EmailJS credentials
+    const serviceId = 'service_c4b4pie';
+    const templateId = 'gmxv2es';
+    const publicKey = 'n6p-J5dvdN7wk8DeO';
 
-      // Success
+    // Template parameters sent to EmailJS
+    const templateParams = {
+      message: message.trim(),
+      name: senderName,
+      email: senderEmail,
+    };
+
+    try {
+      // Dynamically import @emailjs/browser to send the email
+      const emailjsModule = await import('@emailjs/browser');
+      const emailjs = emailjsModule.default || emailjsModule;
+
+      // Send email silently in the background via EmailJS API
+      const response = await emailjs.send(serviceId, templateId, templateParams, publicKey);
+      console.log('[BetaFeedback] EmailJS response:', response.status, response.text);
+
+      // Show success
       setSent(true);
       setMessage('');
 
-      // Reset after 5 seconds so they can send another
+      // Auto-close after 5 seconds
       setTimeout(() => {
         setSent(false);
         setIsOpen(false);
@@ -62,7 +65,7 @@ const BetaFeedback: React.FC = () => {
     } catch (err: any) {
       console.error('[BetaFeedback] EmailJS send failed:', err);
       setErrorMsg(
-        err?.text || err?.message || 'Failed to send. Please try again.',
+        err?.text || err?.message || 'Failed to send feedback. Please try again.'
       );
     } finally {
       setSending(false);
@@ -82,12 +85,10 @@ const BetaFeedback: React.FC = () => {
         title="Send Beta Feedback"
       >
         <MessageSquarePlus className="w-5 h-5" />
-        <span className="hidden sm:inline text-sm font-medium">
-          Beta Feedback
-        </span>
+        <span className="hidden sm:inline text-sm font-medium">Beta Feedback</span>
       </button>
 
-      {/* Modal */}
+      {/* Modal Overlay */}
       {isOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
           <div className="bg-slate-800 border border-slate-700/50 rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-lg">
@@ -98,12 +99,8 @@ const BetaFeedback: React.FC = () => {
                   <MessageSquarePlus className="w-5 h-5 text-orange-400" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-white">
-                    Beta Feedback
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Tell us what&apos;s on your mind
-                  </p>
+                  <h3 className="text-lg font-bold text-white">Beta Feedback</h3>
+                  <p className="text-xs text-slate-400">Tell us what&apos;s on your mind</p>
                 </div>
               </div>
               <button
@@ -116,20 +113,20 @@ const BetaFeedback: React.FC = () => {
 
             {/* Body */}
             {sent ? (
+              /* ── Success State ── */
               <div className="p-10 text-center">
                 <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
                   <CheckCircle2 className="w-8 h-8 text-green-400" />
                 </div>
                 <h4 className="text-lg font-semibold text-green-400 mb-2">
-                  Feedback Sent!
+                  Feedback sent! Thank you.
                 </h4>
                 <p className="text-slate-400 text-sm">
-                  Your message has been emailed to the team.
-                  <br />
-                  Thanks for helping us improve!
+                  Your message has been emailed to the dev team.
                 </p>
               </div>
             ) : (
+              /* ── Form State ── */
               <form onSubmit={handleSubmit} className="p-6 space-y-5">
                 <div>
                   <label
@@ -171,7 +168,7 @@ const BetaFeedback: React.FC = () => {
                   ) : (
                     <>
                       <Send className="w-5 h-5" />
-                      Send Feedback
+                      Submit
                     </>
                   )}
                 </button>
