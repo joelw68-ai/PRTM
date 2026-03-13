@@ -87,7 +87,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenAuth }) => {
             <div className="mb-5 w-16 h-1 bg-red-600 rounded-full" />
 
             <p className="text-white/90 text-base sm:text-lg lg:text-xl leading-relaxed font-normal">
-              The only app built specifically for professional drag racing teams. No more notepads, spreadsheets, binders or folders scattered between the trailer, the shop, hotel rooms or your home. PRTM is fully customizable and puts your race cars, team members, parts, pass logs, performance analytics, crew checklists finances, pass count driven maintenance, and race day data all in one place — available instantly on any device, anywhere you are.
+              The only app built specifically for professional drag racing teams. No more notepads, spreadsheets, binders or folders scattered between the trailer, the shop, hotel rooms or your home. PRTM is fully customizable and puts your race cars, team members, parts, pass logs, performance analytics, crew checklists, finances, pass count driven maintenance schedules, and race day data all in one place — available instantly on any device, anywhere you are.
             </p>
 
             {/* Demo mode link */}
