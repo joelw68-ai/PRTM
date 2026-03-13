@@ -2065,10 +2065,18 @@ export const deleteFuelLog = async (id: string): Promise<void> => {
 
 // ============ BETA FEEDBACK OPERATIONS ============
 //
-// beta_feedback table columns (9 total):
+// beta_feedback table has EXACTLY 9 columns:
 //   id, user_id, category, title, description, status, priority, created_at, updated_at
+//
+// The code MUST send ONLY these column names. Nothing else.
+// NO feedback_type, NO subject, NO message, NO rating,
+// NO app_version, NO device_info, NO screenshot_url.
 
-const BETA_FEEDBACK_ALLOWED_COLUMNS = new Set([
+/**
+ * The complete set of columns in the beta_feedback table.
+ * Any key NOT in this set will be stripped before the insert.
+ */
+const BETA_FEEDBACK_ALLOWED_COLUMNS = new Set<string>([
   'id',
   'user_id',
   'category',
@@ -2089,10 +2097,13 @@ export interface BetaFeedbackPayload {
 }
 
 /**
- * submitBetaFeedback — Insert a row into the beta_feedback table.
+ * submitBetaFeedback — Insert one row into the beta_feedback table.
  *
- * Sends ONLY these columns: user_id, category, title, description, status, priority, updated_at.
- * Any key not in BETA_FEEDBACK_ALLOWED_COLUMNS is stripped before the insert.
+ * Columns sent: user_id, category, title, description, status, priority, updated_at.
+ * Columns handled by DB defaults: id (uuid_generate_v4), created_at (NOW()).
+ *
+ * A safety-net loop strips any key that is NOT in BETA_FEEDBACK_ALLOWED_COLUMNS
+ * so that even if a caller accidentally adds extra fields, they never reach PostgREST.
  */
 export const submitBetaFeedback = async (
   feedback: BetaFeedbackPayload,
@@ -2100,7 +2111,7 @@ export const submitBetaFeedback = async (
 ): Promise<void> => {
   const effectiveUserId = userId || await getCurrentUserId();
 
-  // Build payload using ONLY the 9 columns that exist in the beta_feedback table
+  // Build the payload — ONLY columns that exist in the beta_feedback table
   const payload: Record<string, any> = {
     category:    feedback.category,
     title:       feedback.title,
@@ -2110,12 +2121,14 @@ export const submitBetaFeedback = async (
     updated_at:  new Date().toISOString(),
   };
 
-  if (effectiveUserId) payload.user_id = effectiveUserId;
+  if (effectiveUserId) {
+    payload.user_id = effectiveUserId;
+  }
 
-  // Safety net — strip any key not in the allowlist
+  // Safety net: strip any key that is NOT one of the 9 allowed columns
   for (const key of Object.keys(payload)) {
     if (!BETA_FEEDBACK_ALLOWED_COLUMNS.has(key)) {
-      console.warn(`[submitBetaFeedback] Stripped disallowed key "${key}" from payload`);
+      console.warn(`[submitBetaFeedback] Stripped disallowed key "${key}" — not a beta_feedback column`);
       delete payload[key];
     }
   }
@@ -2123,7 +2136,7 @@ export const submitBetaFeedback = async (
   const { error } = await supabase.from('beta_feedback').insert(payload);
 
   if (error) {
-    console.error('[submitBetaFeedback] Supabase error:', {
+    console.error('[submitBetaFeedback] Supabase insert error:', {
       message: error.message,
       details: error.details,
       hint: error.hint,
