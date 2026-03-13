@@ -508,7 +508,8 @@ const AppLayoutContent: React.FC = () => {
         className={`fixed ${isDemoMode ? 'bottom-[52px]' : 'bottom-2'} left-2 z-30 select-none pointer-events-none`}
       >
         <span className="text-sm font-mono font-semibold text-orange-400 tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
-          v1.0.4
+          v1.0.5
+
         </span>
       </div>
     </div>
