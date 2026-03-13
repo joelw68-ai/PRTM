@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { MessageSquarePlus, X, Send, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import emailjs from '@emailjs/browser';
 import { useAuth } from '@/contexts/AuthContext';
+
 
 /**
  * BetaFeedback — Floating feedback button + modal.
@@ -34,7 +36,7 @@ const BetaFeedback: React.FC = () => {
 
     // EmailJS credentials
     const serviceId = 'service_c4b4pie';
-    const templateId = 'template_gmxv2es';
+    const templateId = 'template_a9midap';
     const publicKey = 'n6p-J5dvdN7wk8DeO';
 
     // Template parameters sent to EmailJS
@@ -45,13 +47,10 @@ const BetaFeedback: React.FC = () => {
     };
 
     try {
-      // Dynamically import @emailjs/browser to send the email
-      const emailjsModule = await import('@emailjs/browser');
-      const emailjs = emailjsModule.default || emailjsModule;
-
       // Send email silently in the background via EmailJS API
       const response = await emailjs.send(serviceId, templateId, templateParams, publicKey);
       console.log('[BetaFeedback] EmailJS response:', response.status, response.text);
+
 
       // Show success
       setSent(true);
