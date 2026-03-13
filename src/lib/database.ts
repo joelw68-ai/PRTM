@@ -2065,19 +2065,36 @@ export const deleteFuelLog = async (id: string): Promise<void> => {
 
 // ============ BETA FEEDBACK OPERATIONS ============
 //
-// beta_feedback table columns (verified via information_schema.columns):
+// beta_feedback table has EXACTLY these columns (verified via SQL query):
 //   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4()
 //   user_id     UUID REFERENCES auth.users(id)
-//   category    TEXT        — 'bug' | 'feature' | 'general'
-//   title       TEXT        — short summary / subject line
-//   description TEXT        — full feedback body
-//   status      TEXT        — 'new', 'reviewed', 'resolved', etc.
-//   priority    TEXT        — 'Low' | 'Minor' | 'Medium' | 'High' | 'Critical'
+//   category    TEXT
+//   title       TEXT
+//   description TEXT
+//   status      TEXT
+//   priority    TEXT
 //   created_at  TIMESTAMPTZ DEFAULT NOW()
+//   updated_at  TIMESTAMPTZ DEFAULT NOW()
 //
-// COLUMNS THAT DO **NOT** EXIST (stripped from payload):
+// COLUMNS THAT DO **NOT** EXIST — NEVER send these:
 //   feedback_type, subject, message, rating, severity,
 //   user_email, user_name, page_context
+
+/**
+ * Allowlist of column names that actually exist in the beta_feedback table.
+ * Any key NOT in this set will be stripped from the payload before insert.
+ */
+const BETA_FEEDBACK_ALLOWED_COLUMNS = new Set([
+  'id',
+  'user_id',
+  'category',
+  'title',
+  'description',
+  'status',
+  'priority',
+  'created_at',
+  'updated_at',
+]);
 
 export interface BetaFeedbackPayload {
   category: 'bug' | 'feature' | 'general';
@@ -2090,11 +2107,20 @@ export interface BetaFeedbackPayload {
 /**
  * submitBetaFeedback — Insert a row into the beta_feedback table.
  *
- * ONLY sends columns that actually exist in the table:
- *   user_id, category, title, description, status, priority
+ * COLUMN MAPPING (what the app calls it → what the DB column is):
+ *   category    → category      (correct as-is)
+ *   title       → title         (NOT "subject")
+ *   description → description   (NOT "message")
+ *   priority    → priority      (NOT "rating" or "severity")
+ *   status      → status        (correct as-is)
  *
- * Does NOT send: feedback_type, subject, message, rating, severity,
- *                user_email, user_name, page_context
+ * NEVER sends: feedback_type, subject, message, rating, severity,
+ *              user_email, user_name, page_context
+ *
+ * Belt-and-suspenders: After building the payload, every key is checked
+ * against BETA_FEEDBACK_ALLOWED_COLUMNS. Any key not in the allowlist
+ * is deleted before the insert call, so even if someone accidentally
+ * adds a bad field it can never reach PostgREST.
  */
 export const submitBetaFeedback = async (
   feedback: BetaFeedbackPayload,
@@ -2102,19 +2128,39 @@ export const submitBetaFeedback = async (
 ): Promise<void> => {
   const effectiveUserId = userId || await getCurrentUserId();
 
-  // Build payload with ONLY the columns that exist in beta_feedback
+  // ── 1. Build payload using ONLY correct DB column names ──
   const payload: Record<string, any> = {
-    category:    feedback.category,
-    title:       feedback.title,
-    description: feedback.description,
+    category:    feedback.category,       // DB column: category  (NOT feedback_type)
+    title:       feedback.title,          // DB column: title     (NOT subject)
+    description: feedback.description,    // DB column: description (NOT message)
     status:      feedback.status || 'new',
-    priority:    feedback.priority || 'Medium',
+    priority:    feedback.priority || 'Medium',  // DB column: priority (NOT rating/severity)
+    updated_at:  new Date().toISOString(),
   };
 
   if (effectiveUserId) payload.user_id = effectiveUserId;
 
-  console.log('[submitBetaFeedback] Payload:', JSON.stringify(payload, null, 2));
+  // ── 2. SAFETY NET — strip any key not in the allowlist ──
+  const stripped: string[] = [];
+  for (const key of Object.keys(payload)) {
+    if (!BETA_FEEDBACK_ALLOWED_COLUMNS.has(key)) {
+      stripped.push(key);
+      delete payload[key];
+    }
+  }
 
+  if (stripped.length > 0) {
+    console.warn(
+      '[submitBetaFeedback] Stripped disallowed keys from payload:',
+      stripped,
+      '— only these columns are allowed:',
+      [...BETA_FEEDBACK_ALLOWED_COLUMNS]
+    );
+  }
+
+  console.log('[submitBetaFeedback] Final payload (allowlisted):', JSON.stringify(payload, null, 2));
+
+  // ── 3. Insert into beta_feedback ──
   const { error } = await supabase.from('beta_feedback').insert(payload);
 
   if (error) {
@@ -2131,5 +2177,5 @@ export const submitBetaFeedback = async (
     throw enrichedError;
   }
 
-  console.log('[submitBetaFeedback] SUCCESS — feedback submitted.');
+  console.log('[submitBetaFeedback] SUCCESS — feedback inserted with columns:', Object.keys(payload).join(', '));
 };
