@@ -15,17 +15,12 @@ interface BetaFeedbackProps {
 /**
  * BetaFeedback — Floating feedback button + modal.
  *
- * COLUMN MAPPING (app field → DB column):
- *   category    → category       (was already correct)
- *   title       → title          (NEW — was missing before; maps to "subject" concept)
- *   description → description    (was already correct; maps to "message" concept)
- *   severity    → priority       (was incorrectly sent as "severity" / "rating")
- *   status      → status         (was already correct)
+ * Sends ONLY these columns to the beta_feedback table:
+ *   user_id, category, title, description, status, priority
  *
- * STRIPPED — these columns do NOT exist in beta_feedback:
- *   feedback_type, subject, message, rating, severity,
- *   user_email, user_name, page_context
+ * The DB also has id, created_at, updated_at which are handled automatically.
  */
+
 const BetaFeedback: React.FC<BetaFeedbackProps> = ({ currentPage }) => {
   const { user, profile } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
@@ -67,10 +62,8 @@ const BetaFeedback: React.FC<BetaFeedbackProps> = ({ currentPage }) => {
       const effectiveTitle = title.trim()
         || `${categoryConfig[category].label}: ${description.trim().slice(0, 60)}${description.trim().length > 60 ? '...' : ''}`;
 
-      // Use the centralized submitBetaFeedback from database.ts
-      // This sends ONLY: user_id, category, title, description, status, priority
-      // It does NOT send: feedback_type, subject, message, rating, severity,
-      //                    user_email, user_name, page_context
+      // Sends ONLY: user_id, category, title, description, status, priority
+
       await submitBetaFeedback({
         category,
         title: effectiveTitle,
