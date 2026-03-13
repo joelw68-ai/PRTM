@@ -575,10 +575,14 @@ CREATE TABLE IF NOT EXISTS public.beta_feedback (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id     UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   category    TEXT NOT NULL,
+  title       TEXT,
   description TEXT NOT NULL,
   status      TEXT DEFAULT 'new',
-  created_at  TIMESTAMPTZ DEFAULT NOW()
+  priority    TEXT DEFAULT 'Medium',
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
+
 
 ALTER TABLE public.beta_feedback ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN

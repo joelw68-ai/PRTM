@@ -530,7 +530,8 @@ const AppLayoutContent: React.FC = () => {
       <OnboardingWizard onNavigate={handleNavigate} />
       
       {/* Beta Feedback Floating Button */}
-      <BetaFeedback currentPage={activeSection} />
+      <BetaFeedback />
+
       
       {/* Auth Modal */}
       <AuthModal 

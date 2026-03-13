@@ -14,8 +14,8 @@
 -- YOUR DATA IS NEVER DELETED OR MODIFIED (except backfilling
 -- user_profiles.user_id from the id column).
 --
--- WHAT THIS SCRIPT DOES:
---   PART 1: Add missing columns to 15 existing tables (35 columns total)
+--   PART 1: Add missing columns to 16 existing tables (38 columns total)
+
 --   PART 2: Set DEFAULT auth.uid() on all user_id columns
 --   PART 3: Create 10 newer tables that may not exist yet
 --   PART 4: Create all performance indexes
@@ -207,6 +207,22 @@ ALTER TABLE public.todo_items
 
 ALTER TABLE public.todo_items
   ADD COLUMN IF NOT EXISTS archived_by TEXT;
+
+
+-- ============================================================
+-- 16. beta_feedback — add title, priority, updated_at
+-- ============================================================
+-- The live database has 9 columns but the original CREATE TABLE
+-- only had 6 (id, user_id, category, description, status, created_at).
+-- These 3 ALTERs bring older deployments up to date.
+ALTER TABLE public.beta_feedback
+  ADD COLUMN IF NOT EXISTS title TEXT;
+
+ALTER TABLE public.beta_feedback
+  ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'Medium';
+
+ALTER TABLE public.beta_feedback
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 
 -- ############################################################
@@ -758,7 +774,7 @@ CREATE POLICY "Users can delete own media files" ON storage.objects FOR DELETE T
 -- 
 -- SUMMARY OF CHANGES:
 --
--- PART 1 — Added 35 missing columns to 15 existing tables:
+-- PART 1 — Added 38 missing columns to 16 existing tables:
 --   1.  user_profiles:       + user_id
 --   2.  engines:             + displacement, car_id
 --   3.  superchargers:       + car_id
@@ -777,7 +793,9 @@ CREATE POLICY "Users can delete own media files" ON storage.objects FOR DELETE T
 --                              linked_work_order_title, car_id
 --  14.  invoice_line_items:  + auto_created_inventory_id
 --  15.  todo_items:          + is_archived, archived_at, archived_by
+--  16.  beta_feedback:       + title, priority, updated_at
 --
+
 -- PART 2 — Set DEFAULT auth.uid() on 21 tables' user_id columns
 --
 -- PART 3 — Created 10 newer tables (if they didn't exist):
