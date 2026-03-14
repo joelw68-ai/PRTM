@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { getLocalDateString, parseLocalDate } from '@/lib/utils';
 
 import DateInputDark from '@/components/ui/DateInputDark';
@@ -8,6 +8,9 @@ import { useCar } from '@/contexts/CarContext';
 import { useApp } from '@/contexts/AppContext';
 import { CrewRole } from '@/lib/permissions';
 import { MaintenanceItem, SFICertification } from '@/data/proModData';
+import { PartInventoryItem } from '@/data/partsInventory';
+import { toast } from 'sonner';
+import MaintenanceCostReports from './MaintenanceCostReports';
 
 
 import { 
@@ -23,8 +26,45 @@ import {
   Trash2,
   X,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Search,
+  Package,
+  History,
+  BarChart3
 } from 'lucide-react';
+
+
+// ============ MAINTENANCE HISTORY (localStorage) ============
+interface MaintenanceHistoryEntry {
+  id: string;
+  maintenanceItemId: string;
+  component: string;
+  category: string;
+  dateCompleted: string;
+  passNumberCompletedAt: number | null;
+  partsUsed: { partId: string; partNumber: string; description: string; quantity: number; unitCost: number }[];
+  notes: string;
+  timestamp: string;
+}
+
+const MAINTENANCE_HISTORY_KEY = 'raceLogbook_maintenanceHistory';
+
+function loadMaintenanceHistory(): MaintenanceHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(MAINTENANCE_HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveMaintenanceHistory(entries: MaintenanceHistoryEntry[]) {
+  try {
+    localStorage.setItem(MAINTENANCE_HISTORY_KEY, JSON.stringify(entries));
+  } catch (e) {
+    console.warn('Failed to save maintenance history to localStorage:', e);
+  }
+}
+
+// ============ COMPONENT ============
 
 interface MaintenanceTrackerProps {
   onNavigate?: (section: string) => void;
@@ -45,13 +85,16 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     addWorkOrder, 
     workOrders,
     drivetrainComponents,
-    vendors: allVendors
+    vendors: allVendors,
+    partsInventory,
+    updatePartInventory
   } = useApp();
 
 
   const { selectedCarId, getCarLabel } = useCar();
   
-  const [activeTab, setActiveTab] = useState<'maintenance' | 'sfi'>('maintenance');
+  const [activeTab, setActiveTab] = useState<'maintenance' | 'sfi' | 'costReports'>('maintenance');
+
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
   
@@ -60,6 +103,26 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   const [showSFIModal, setShowSFIModal] = useState(false);
   const [editingMaintenance, setEditingMaintenance] = useState<MaintenanceItem | null>(null);
   const [editingSFI, setEditingSFI] = useState<SFICertification | null>(null);
+
+  // Complete Maintenance Modal
+  const [showCompleteModal, setShowCompleteModal] = useState(false);
+  const [completingItem, setCompletingItem] = useState<MaintenanceItem | null>(null);
+  const [completeDateValue, setCompleteDateValue] = useState(getLocalDateString());
+  const [completePassNumber, setCompletePassNumber] = useState<string>('');
+  const [completeNotes, setCompleteNotes] = useState('');
+  const [completePartsUsed, setCompletePartsUsed] = useState<{ partId: string; quantity: number }[]>([]);
+  const [partsSearchTerm, setPartsSearchTerm] = useState('');
+  const [showPartsDropdown, setShowPartsDropdown] = useState(false);
+
+  // Maintenance History
+  const [maintenanceHistory, setMaintenanceHistory] = useState<MaintenanceHistoryEntry[]>([]);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [historyItemId, setHistoryItemId] = useState<string | null>(null);
+
+  // Load history on mount
+  useEffect(() => {
+    setMaintenanceHistory(loadMaintenanceHistory());
+  }, []);
 
   // Drivetrain category labels
   const drivetrainCategoryLabels: Record<string, string> = {
@@ -80,8 +143,6 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
 
   // Filter by selected car AND category
-  // When "All Cars" selected (selectedCarId is null/empty): show ALL records
-  // When specific car selected: show matching car_id + records with no car_id (legacy data)
   const filteredMaintenance = maintenanceItems.filter(item => {
     const carId = item.car_id;
     const matchesCar = isEmptyCarId(selectedCarId) || carId === selectedCarId || isEmptyCarId(carId);
@@ -146,20 +207,201 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   // Active vendors derived from centralized AppContext (no more independent fetching)
   const vendorsList = useMemo(() => allVendors.filter(v => v.isActive), [allVendors]);
 
+  // Filtered parts for the searchable dropdown
+  const filteredPartsForDropdown = useMemo(() => {
+    if (!partsSearchTerm.trim()) return partsInventory.slice(0, 20);
+    const term = partsSearchTerm.toLowerCase();
+    return partsInventory.filter(p =>
+      p.description.toLowerCase().includes(term) ||
+      p.partNumber.toLowerCase().includes(term) ||
+      p.category.toLowerCase().includes(term) ||
+      (p.name && p.name.toLowerCase().includes(term))
+    ).slice(0, 20);
+  }, [partsInventory, partsSearchTerm]);
 
+  // ============ COMPLETE MAINTENANCE HANDLERS ============
 
+  const openCompleteModal = (item: MaintenanceItem) => {
+    setCompletingItem(item);
+    setCompleteDateValue(getLocalDateString());
+    setCompletePassNumber('');
+    setCompleteNotes('');
+    setCompletePartsUsed([]);
+    setPartsSearchTerm('');
+    setShowPartsDropdown(false);
+    setShowCompleteModal(true);
+  };
 
-  const handleServiceComplete = (itemId: string) => {
-    const item = maintenanceItems.find(m => m.id === itemId);
-    if (item) {
-      updateMaintenanceItem(itemId, {
-        lastService: getLocalDateString(),
+  const addPartToCompletion = (part: PartInventoryItem) => {
+    // Don't add if already in list
+    if (completePartsUsed.some(p => p.partId === part.id)) {
+      setPartsSearchTerm('');
+      setShowPartsDropdown(false);
+      return;
+    }
+    setCompletePartsUsed(prev => [...prev, { partId: part.id, quantity: 1 }]);
+    setPartsSearchTerm('');
+    setShowPartsDropdown(false);
+  };
+
+  const updatePartQuantity = (partId: string, quantity: number) => {
+    setCompletePartsUsed(prev => prev.map(p =>
+      p.partId === partId ? { ...p, quantity: Math.max(1, quantity) } : p
+    ));
+  };
+
+  const removePartFromCompletion = (partId: string) => {
+    setCompletePartsUsed(prev => prev.filter(p => p.partId !== partId));
+  };
+
+  const handleConfirmComplete = async () => {
+    if (!completingItem) return;
+
+    try {
+      // 1. Mark maintenance item as completed — reset passes, set status Good
+      await updateMaintenanceItem(completingItem.id, {
+        lastService: completeDateValue,
         currentPasses: 0,
-        nextServicePasses: item.passInterval,
-        status: 'Good'
+        nextServicePasses: completingItem.passInterval,
+        status: 'Good',
+        notes: completeNotes ? `${completingItem.notes ? completingItem.notes + ' | ' : ''}Completed ${completeDateValue}: ${completeNotes}` : completingItem.notes
       });
+
+      // 2. Deduct parts from inventory and track low-stock parts
+      const lowStockParts: { id: string; partNumber: string; description: string; onHand: number; minQuantity: number; vendor: string }[] = [];
+
+      for (const usedPart of completePartsUsed) {
+        const inventoryPart = partsInventory.find(p => p.id === usedPart.partId);
+        if (inventoryPart) {
+          const newOnHand = Math.max(0, inventoryPart.onHand - usedPart.quantity);
+          const status: PartInventoryItem['status'] = newOnHand === 0 ? 'Out of Stock' :
+            newOnHand <= inventoryPart.minQuantity ? 'Low Stock' : 'In Stock';
+          const reorderStatus: PartInventoryItem['reorderStatus'] = newOnHand === 0 ? 'Critical' :
+            newOnHand <= inventoryPart.minQuantity ? 'Reorder' : 'OK';
+
+          await updatePartInventory(inventoryPart.id, {
+            onHand: newOnHand,
+            totalValue: newOnHand * inventoryPart.unitCost,
+            status,
+            reorderStatus,
+            lastUsed: completeDateValue
+          });
+
+          // Check if part dropped below minimum threshold
+          if (newOnHand <= inventoryPart.minQuantity) {
+            lowStockParts.push({
+              id: inventoryPart.id,
+              partNumber: inventoryPart.partNumber,
+              description: inventoryPart.description,
+              onHand: newOnHand,
+              minQuantity: inventoryPart.minQuantity,
+              vendor: inventoryPart.vendor
+            });
+          }
+        }
+      }
+
+      // 3. Log completion in maintenance history (localStorage)
+      const historyEntry: MaintenanceHistoryEntry = {
+        id: `MH-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        maintenanceItemId: completingItem.id,
+        component: completingItem.component,
+        category: completingItem.category,
+        dateCompleted: completeDateValue,
+        passNumberCompletedAt: completePassNumber ? parseInt(completePassNumber) : null,
+        partsUsed: completePartsUsed.map(pu => {
+          const part = partsInventory.find(p => p.id === pu.partId);
+          return {
+            partId: pu.partId,
+            partNumber: part?.partNumber || '',
+            description: part?.description || '',
+            quantity: pu.quantity,
+            unitCost: part?.unitCost || 0
+          };
+        }),
+        notes: completeNotes,
+        timestamp: new Date().toISOString()
+      };
+
+      const updatedHistory = [historyEntry, ...maintenanceHistory];
+      setMaintenanceHistory(updatedHistory);
+      saveMaintenanceHistory(updatedHistory);
+
+      // Close modal and show success
+      setShowCompleteModal(false);
+      setCompletingItem(null);
+
+      const partsCount = completePartsUsed.length;
+      toast.success(`Maintenance completed: ${completingItem.component}`, {
+        description: partsCount > 0
+          ? `${partsCount} part${partsCount > 1 ? 's' : ''} deducted from inventory. Next due in ${completingItem.passInterval} passes.`
+          : `Next due in ${completingItem.passInterval} passes.`,
+        duration: 5000,
+      });
+
+      // 4. Show low-stock toast notifications with "Create Purchase Order" button
+      if (lowStockParts.length > 0) {
+        // Store low-stock part IDs in localStorage for PartsInventory to pick up
+        try {
+          const poRequest = {
+            partIds: lowStockParts.map(p => p.id),
+            timestamp: new Date().toISOString(),
+            source: 'maintenance_completion',
+            maintenanceComponent: completingItem.component
+          };
+          localStorage.setItem('raceLogbook_lowStockPORequest', JSON.stringify(poRequest));
+        } catch (e) {
+          console.warn('Failed to store PO request:', e);
+        }
+
+        // Show individual toast for each low-stock part (max 3, then summary)
+        if (lowStockParts.length <= 3) {
+          lowStockParts.forEach((part, index) => {
+            setTimeout(() => {
+              toast.warning(
+                `Low Stock Alert: ${part.partNumber}`,
+                {
+                  description: `${part.description} — ${part.onHand === 0 ? 'OUT OF STOCK' : `only ${part.onHand} remaining`} (min: ${part.minQuantity})`,
+                  duration: 15000,
+                  action: {
+                    label: 'Create Purchase Order',
+                    onClick: () => {
+                      if (onNavigate) onNavigate('parts');
+                    }
+                  }
+                }
+              );
+            }, (index + 1) * 800); // Stagger toasts
+          });
+        } else {
+          // Summary toast for many parts
+          setTimeout(() => {
+            const outOfStock = lowStockParts.filter(p => p.onHand === 0).length;
+            const lowStock = lowStockParts.length - outOfStock;
+            toast.warning(
+              `${lowStockParts.length} Parts Below Minimum Stock`,
+              {
+                description: `${outOfStock > 0 ? `${outOfStock} out of stock, ` : ''}${lowStock > 0 ? `${lowStock} low stock` : ''} — ${lowStockParts.map(p => p.partNumber).join(', ')}`,
+                duration: 15000,
+                action: {
+                  label: 'Create Purchase Order',
+                  onClick: () => {
+                    if (onNavigate) onNavigate('parts');
+                  }
+                }
+              }
+            );
+          }, 800);
+        }
+      }
+    } catch (error) {
+      console.error('Error completing maintenance:', error);
+      toast.error('Failed to complete maintenance. Please try again.');
     }
   };
+
+
+  // ============ EXISTING HANDLERS ============
 
   const handleCreateWorkOrder = (item: MaintenanceItem) => {
     const newWorkOrder = {
@@ -281,6 +523,11 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     }
   };
 
+  // Get history for a specific maintenance item
+  const getItemHistory = (itemId: string) => {
+    return maintenanceHistory.filter(h => h.maintenanceItemId === itemId);
+  };
+
   return (
     <section className="py-8 px-4">
       <div className="max-w-[1920px] mx-auto">
@@ -321,7 +568,19 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
               </span>
             )}
           </button>
+          <button
+            onClick={() => setActiveTab('costReports')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+              activeTab === 'costReports' 
+                ? 'bg-orange-500 text-white' 
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            Cost Reports
+          </button>
         </div>
+
 
 
 
@@ -427,6 +686,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                     {sortedMaintenance.map((item) => {
                       const remaining = item.nextServicePasses - item.currentPasses;
                       const progress = (item.currentPasses / item.nextServicePasses) * 100;
+                      const itemHistoryCount = getItemHistory(item.id).length;
                       
                       return (
                         <React.Fragment key={item.id}>
@@ -459,11 +719,12 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                             <td className="px-4 py-3 text-center">
                               <div className="flex items-center justify-center gap-2">
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); handleServiceComplete(item.id); }}
-                                  className="p-1.5 bg-green-500/20 text-green-400 rounded hover:bg-green-500/30"
-                                  title="Mark as serviced"
+                                  onClick={(e) => { e.stopPropagation(); openCompleteModal(item); }}
+                                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-green-500/20 text-green-400 rounded hover:bg-green-500/30 text-xs font-medium"
+                                  title="Complete Maintenance"
                                 >
-                                  <CheckCircle className="w-4 h-4" />
+                                  <CheckCircle className="w-3.5 h-3.5" />
+                                  Complete
                                 </button>
                                 <button
                                   onClick={(e) => { 
@@ -484,6 +745,22 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                                 >
                                   <FileText className="w-4 h-4" />
                                 </button>
+                                {itemHistoryCount > 0 && (
+                                  <button
+                                    onClick={(e) => { 
+                                      e.stopPropagation(); 
+                                      setHistoryItemId(item.id);
+                                      setShowHistoryModal(true);
+                                    }}
+                                    className="p-1.5 bg-cyan-500/20 text-cyan-400 rounded hover:bg-cyan-500/30 relative"
+                                    title="View history"
+                                  >
+                                    <History className="w-4 h-4" />
+                                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-cyan-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                                      {itemHistoryCount}
+                                    </span>
+                                  </button>
+                                )}
                                 <button
                                   onClick={(e) => { e.stopPropagation(); handleDeleteMaintenance(item.id); }}
                                   className="p-1.5 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30"
@@ -522,6 +799,37 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                                     <p className="text-white text-sm">{item.notes || 'No notes'}</p>
                                   </div>
                                 </div>
+                                {/* Inline history preview */}
+                                {getItemHistory(item.id).length > 0 && (
+                                  <div className="mt-4 pt-4 border-t border-slate-700/50">
+                                    <p className="text-sm text-slate-400 mb-2 flex items-center gap-2">
+                                      <History className="w-3.5 h-3.5" />
+                                      Recent Completions ({getItemHistory(item.id).length} total)
+                                    </p>
+                                    <div className="space-y-2">
+                                      {getItemHistory(item.id).slice(0, 3).map(h => (
+                                        <div key={h.id} className="flex items-center justify-between text-sm bg-slate-800/50 rounded-lg px-3 py-2">
+                                          <div className="flex items-center gap-3">
+                                            <span className="text-green-400 font-medium">{h.dateCompleted}</span>
+                                            {h.passNumberCompletedAt !== null && (
+                                              <span className="text-slate-400">Pass #{h.passNumberCompletedAt}</span>
+                                            )}
+                                          </div>
+                                          <div className="flex items-center gap-3">
+                                            {h.partsUsed.length > 0 && (
+                                              <span className="text-orange-400 text-xs">
+                                                {h.partsUsed.length} part{h.partsUsed.length > 1 ? 's' : ''} used
+                                              </span>
+                                            )}
+                                            {h.notes && (
+                                              <span className="text-slate-500 text-xs max-w-[200px] truncate">{h.notes}</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                               </td>
                             </tr>
                           )}
@@ -647,7 +955,302 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
             </div>
           </>
         )}
+
+        {activeTab === 'costReports' && (
+          <MaintenanceCostReports />
+        )}
       </div>
+
+
+      {/* ============ COMPLETE MAINTENANCE MODAL ============ */}
+      {showCompleteModal && completingItem && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl max-w-lg w-full p-6 border border-slate-700 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                  <CheckCircle className="w-5 h-5 text-green-400" />
+                  Complete Maintenance
+                </h3>
+                <p className="text-sm text-slate-400 mt-1">{completingItem.component}</p>
+              </div>
+              <button onClick={() => setShowCompleteModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Current status summary */}
+            <div className="bg-slate-900/50 rounded-lg p-3 mb-5 grid grid-cols-3 gap-3 text-sm">
+              <div>
+                <p className="text-slate-500 text-xs">Category</p>
+                <p className="text-white">{completingItem.category}</p>
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs">Current Passes</p>
+                <p className="text-white">{completingItem.currentPasses} / {completingItem.nextServicePasses}</p>
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs">Interval</p>
+                <p className="text-white">{completingItem.passInterval} passes</p>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              {/* Date Completed */}
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Date Completed *</label>
+                <DateInputDark
+                  value={completeDateValue}
+                  onChange={(e) => setCompleteDateValue(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                />
+              </div>
+
+              {/* Pass Number */}
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Pass Number Completed At <span className="text-slate-600">(optional)</span></label>
+                <input
+                  type="number"
+                  value={completePassNumber}
+                  onChange={(e) => setCompletePassNumber(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  placeholder="e.g., 47"
+                />
+              </div>
+
+              {/* Parts Used */}
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">
+                  Parts Used <span className="text-slate-600">(optional — auto-deducts from inventory)</span>
+                </label>
+                
+                {/* Searchable parts dropdown */}
+                <div className="relative">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      value={partsSearchTerm}
+                      onChange={(e) => {
+                        setPartsSearchTerm(e.target.value);
+                        setShowPartsDropdown(true);
+                      }}
+                      onFocus={() => setShowPartsDropdown(true)}
+                      className="w-full pl-10 pr-4 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500"
+                      placeholder="Search parts by name, number, or category..."
+                    />
+                  </div>
+                  
+                  {showPartsDropdown && (
+                    <div className="absolute z-10 w-full mt-1 bg-slate-900 border border-slate-600 rounded-lg shadow-xl max-h-48 overflow-y-auto">
+                      {filteredPartsForDropdown.length === 0 ? (
+                        <div className="px-4 py-3 text-slate-500 text-sm">No parts found</div>
+                      ) : (
+                        filteredPartsForDropdown.map(part => {
+                          const alreadyAdded = completePartsUsed.some(p => p.partId === part.id);
+                          return (
+                            <button
+                              key={part.id}
+                              onClick={() => addPartToCompletion(part)}
+                              disabled={alreadyAdded}
+                              className={`w-full text-left px-4 py-2.5 hover:bg-slate-800 border-b border-slate-800 last:border-0 flex items-center justify-between ${
+                                alreadyAdded ? 'opacity-40 cursor-not-allowed' : ''
+                              }`}
+                            >
+                              <div>
+                                <p className="text-white text-sm">{part.description}</p>
+                                <p className="text-slate-500 text-xs">{part.partNumber} — {part.category}</p>
+                              </div>
+                              <div className="text-right">
+                                <p className={`text-sm font-medium ${
+                                  part.onHand === 0 ? 'text-red-400' :
+                                  part.onHand <= part.minQuantity ? 'text-yellow-400' : 'text-green-400'
+                                }`}>
+                                  {part.onHand} in stock
+                                </p>
+                                {alreadyAdded && <p className="text-xs text-slate-500">Already added</p>}
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Selected parts list */}
+                {completePartsUsed.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {completePartsUsed.map(pu => {
+                      const part = partsInventory.find(p => p.id === pu.partId);
+                      if (!part) return null;
+                      return (
+                        <div key={pu.partId} className="flex items-center gap-3 bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
+                          <Package className="w-4 h-4 text-orange-400 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white text-sm truncate">{part.description}</p>
+                            <p className="text-slate-500 text-xs">{part.partNumber} — {part.onHand} in stock</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <label className="text-slate-400 text-xs">Qty:</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max={part.onHand}
+                              value={pu.quantity}
+                              onChange={(e) => updatePartQuantity(pu.partId, parseInt(e.target.value) || 1)}
+                              className="w-16 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white text-center text-sm"
+                            />
+                          </div>
+                          <button
+                            onClick={() => removePartFromCompletion(pu.partId)}
+                            className="p-1 text-red-400 hover:text-red-300"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Notes <span className="text-slate-600">(optional)</span></label>
+                <textarea
+                  value={completeNotes}
+                  onChange={(e) => setCompleteNotes(e.target.value)}
+                  rows={3}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500"
+                  placeholder="Any notes about this maintenance completion..."
+                />
+              </div>
+            </div>
+
+            {/* Summary */}
+            <div className="mt-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-sm">
+              <p className="text-green-400 font-medium mb-1">On confirm, this will:</p>
+              <ul className="text-green-300/80 space-y-1 ml-4 list-disc">
+                <li>Mark "{completingItem.component}" as completed and reset pass counter</li>
+                <li>Set next service due in {completingItem.passInterval} passes</li>
+                {completePartsUsed.length > 0 && (
+                  <li>Deduct {completePartsUsed.reduce((s, p) => s + p.quantity, 0)} part(s) from inventory</li>
+                )}
+                <li>Log this completion in maintenance history</li>
+              </ul>
+            </div>
+            
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => setShowCompleteModal(false)}
+                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmComplete}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 flex items-center justify-center gap-2"
+              >
+                <CheckCircle className="w-4 h-4" />
+                Confirm Completion
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============ MAINTENANCE HISTORY MODAL ============ */}
+      {showHistoryModal && historyItemId && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl max-w-2xl w-full p-6 border border-slate-700 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                  <History className="w-5 h-5 text-cyan-400" />
+                  Maintenance History
+                </h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  {maintenanceItems.find(m => m.id === historyItemId)?.component || 'Unknown'}
+                </p>
+              </div>
+              <button onClick={() => setShowHistoryModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {getItemHistory(historyItemId).map(entry => (
+                <div key={entry.id} className="bg-slate-900/50 rounded-lg p-4 border border-slate-700/50">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
+                        <CheckCircle className="w-4 h-4 text-green-400" />
+                      </div>
+                      <div>
+                        <p className="text-white font-medium">{entry.dateCompleted}</p>
+                        {entry.passNumberCompletedAt !== null && (
+                          <p className="text-slate-400 text-sm">Pass #{entry.passNumberCompletedAt}</p>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-slate-500 text-xs">
+                      {new Date(entry.timestamp).toLocaleString()}
+                    </p>
+                  </div>
+
+                  {entry.partsUsed.length > 0 && (
+                    <div className="mb-3">
+                      <p className="text-slate-400 text-xs font-medium mb-2">Parts Used:</p>
+                      <div className="space-y-1">
+                        {entry.partsUsed.map((part, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-sm bg-slate-800/50 rounded px-3 py-1.5">
+                            <div className="flex items-center gap-2">
+                              <Package className="w-3 h-3 text-orange-400" />
+                              <span className="text-white">{part.description}</span>
+                              <span className="text-slate-500 text-xs">({part.partNumber})</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-slate-300">x{part.quantity}</span>
+                              <span className="text-green-400 text-xs">${(part.quantity * part.unitCost).toLocaleString()}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="text-right mt-1">
+                        <span className="text-slate-400 text-xs">Total parts cost: </span>
+                        <span className="text-green-400 text-sm font-medium">
+                          ${entry.partsUsed.reduce((s, p) => s + p.quantity * p.unitCost, 0).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {entry.notes && (
+                    <p className="text-slate-400 text-sm italic border-t border-slate-700/50 pt-2">{entry.notes}</p>
+                  )}
+                </div>
+              ))}
+
+              {getItemHistory(historyItemId).length === 0 && (
+                <div className="text-center py-8 text-slate-500">
+                  <History className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>No completion history found</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end mt-6">
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Maintenance Modal */}
       {showMaintenanceModal && (

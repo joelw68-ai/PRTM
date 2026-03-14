@@ -34,7 +34,10 @@ import {
   Eye,
   FileText,
   Upload,
-  Shield
+  Shield,
+  Wrench,
+  TrendingDown,
+  Calendar
 } from 'lucide-react';
 import { PartInventoryItem } from '@/data/partsInventory';
 import {
@@ -52,6 +55,43 @@ import ReorderListGenerator from './ReorderListGenerator';
 import CSVImportModal from './CSVImportModal';
 import PartsBackupRestore, { savePartsBackup } from './PartsBackupRestore';
 
+// ============ MAINTENANCE HISTORY (shared with MaintenanceTracker) ============
+interface MaintenanceHistoryEntry {
+  id: string;
+  maintenanceItemId: string;
+  component: string;
+  category: string;
+  dateCompleted: string;
+  passNumberCompletedAt: number | null;
+  partsUsed: { partId: string; partNumber: string; description: string; quantity: number; unitCost: number }[];
+  notes: string;
+  timestamp: string;
+}
+
+const MAINTENANCE_HISTORY_KEY = 'raceLogbook_maintenanceHistory';
+const LOW_STOCK_PO_REQUEST_KEY = 'raceLogbook_lowStockPORequest';
+
+function loadMaintenanceHistory(): MaintenanceHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(MAINTENANCE_HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+interface RecentlyDepletedPart {
+  partId: string;
+  partNumber: string;
+  description: string;
+  totalQuantityUsed: number;
+  totalCost: number;
+  usageCount: number;
+  lastUsedDate: string;
+  lastUsedComponent: string;
+  currentOnHand: number;
+  minQuantity: number;
+  vendor: string;
+  status: string;
+}
 
 
 
@@ -104,12 +144,116 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
   // Reorder List Generator Modal State
   const [showReorderList, setShowReorderList] = useState(false);
 
+  // Recently Depleted section state
+  const [recentlyDepletedExpanded, setRecentlyDepletedExpanded] = useState(true);
+
+  // ============ RECENTLY DEPLETED PARTS (from maintenance completions) ============
+  const recentlyDepletedParts = useMemo<RecentlyDepletedPart[]>(() => {
+    const history = loadMaintenanceHistory();
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    // Filter entries from the last 7 days that used parts
+    const recentEntries = history.filter(entry => {
+      const entryDate = new Date(entry.timestamp);
+      return entryDate >= sevenDaysAgo && entry.partsUsed.length > 0;
+    });
+
+    if (recentEntries.length === 0) return [];
+
+    // Aggregate parts used across all recent entries
+    const partMap = new Map<string, RecentlyDepletedPart>();
+
+    recentEntries.forEach(entry => {
+      entry.partsUsed.forEach(pu => {
+        const existing = partMap.get(pu.partId);
+        const inventoryPart = partsInventory.find(p => p.id === pu.partId);
+
+        if (existing) {
+          existing.totalQuantityUsed += pu.quantity;
+          existing.totalCost += pu.quantity * pu.unitCost;
+          existing.usageCount += 1;
+          // Update to most recent usage
+          if (entry.timestamp > existing.lastUsedDate) {
+            existing.lastUsedDate = entry.dateCompleted;
+            existing.lastUsedComponent = entry.component;
+          }
+          // Update current stock from live inventory
+          if (inventoryPart) {
+            existing.currentOnHand = inventoryPart.onHand;
+            existing.status = inventoryPart.status;
+          }
+        } else {
+          partMap.set(pu.partId, {
+            partId: pu.partId,
+            partNumber: pu.partNumber || inventoryPart?.partNumber || '',
+            description: pu.description || inventoryPart?.description || '',
+            totalQuantityUsed: pu.quantity,
+            totalCost: pu.quantity * pu.unitCost,
+            usageCount: 1,
+            lastUsedDate: entry.dateCompleted,
+            lastUsedComponent: entry.component,
+            currentOnHand: inventoryPart?.onHand ?? 0,
+            minQuantity: inventoryPart?.minQuantity ?? 0,
+            vendor: inventoryPart?.vendor || '',
+            status: inventoryPart?.status || 'Unknown'
+          });
+        }
+      });
+    });
+
+    // Sort by most recently used, then by lowest stock
+    return Array.from(partMap.values()).sort((a, b) => {
+      // Prioritize out of stock / low stock
+      if (a.currentOnHand === 0 && b.currentOnHand > 0) return -1;
+      if (b.currentOnHand === 0 && a.currentOnHand > 0) return 1;
+      if (a.currentOnHand <= a.minQuantity && b.currentOnHand > b.minQuantity) return -1;
+      if (b.currentOnHand <= b.minQuantity && a.currentOnHand > a.minQuantity) return 1;
+      // Then by total quantity used (most used first)
+      return b.totalQuantityUsed - a.totalQuantityUsed;
+    });
+  }, [partsInventory]); // Re-compute when partsInventory changes
+
+  // ============ PENDING PO REQUEST FROM MAINTENANCE ============
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LOW_STOCK_PO_REQUEST_KEY);
+      if (!raw) return;
+
+      const request = JSON.parse(raw);
+      const requestTime = new Date(request.timestamp);
+      const now = new Date();
+      // Only process requests from the last 5 minutes
+      if (now.getTime() - requestTime.getTime() > 5 * 60 * 1000) {
+        localStorage.removeItem(LOW_STOCK_PO_REQUEST_KEY);
+        return;
+      }
+
+      // Find the parts that need PO
+      const partIds: string[] = request.partIds || [];
+      const lowStockParts = partsInventory.filter(p => partIds.includes(p.id));
+
+      if (lowStockParts.length > 0) {
+        // Auto-open PO modal for these parts
+        openPOModal(lowStockParts);
+        // Clear the request
+        localStorage.removeItem(LOW_STOCK_PO_REQUEST_KEY);
+      }
+    } catch (e) {
+      // Silently ignore
+    }
+    // Only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Auto-backup parts to localStorage whenever partsInventory changes
   useEffect(() => {
     if (partsInventory.length > 0) {
       savePartsBackup(partsInventory);
     }
   }, [partsInventory]);
+
+
 
   // CSV Import handler — batch add parts
   const handleCSVImport = async (parts: PartInventoryItem[]) => {
@@ -534,7 +678,203 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
           onOpenReorderList={() => setShowReorderList(true)}
         />
 
+        {/* ============ RECENTLY DEPLETED SECTION ============ */}
+        {recentlyDepletedParts.length > 0 && (
+          <div className="mb-6 bg-gradient-to-r from-orange-500/5 via-amber-500/5 to-orange-500/5 border border-orange-500/20 rounded-xl overflow-hidden">
+            {/* Header - Collapsible */}
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setRecentlyDepletedExpanded(!recentlyDepletedExpanded)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setRecentlyDepletedExpanded(!recentlyDepletedExpanded); }}
+              className="flex items-center justify-between px-5 py-4 hover:bg-slate-800/30 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-11 h-11 bg-gradient-to-br from-orange-500/30 to-red-500/20 rounded-xl flex items-center justify-center">
+                  <Wrench className="w-6 h-6 text-orange-400" />
+                </div>
+                <div className="text-left">
+                  <h3 className="font-semibold text-white text-lg flex items-center gap-2">
+                    Recently Depleted
+                    <span className="px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded-full text-xs font-bold">
+                      {recentlyDepletedParts.length} part{recentlyDepletedParts.length !== 1 ? 's' : ''}
+                    </span>
+                    {recentlyDepletedParts.some(p => p.currentOnHand === 0) && (
+                      <span className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded-full text-xs font-bold">
+                        {recentlyDepletedParts.filter(p => p.currentOnHand === 0).length} out of stock
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-slate-400 text-sm">
+                    Parts used in maintenance completions over the last 7 days — 
+                    <span className="text-orange-400 font-medium ml-1">
+                      ${recentlyDepletedParts.reduce((s, p) => s + p.totalCost, 0).toLocaleString()} total cost
+                    </span>
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {recentlyDepletedParts.some(p => p.currentOnHand <= p.minQuantity) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const lowParts = recentlyDepletedParts
+                        .filter(p => p.currentOnHand <= p.minQuantity)
+                        .map(p => partsInventory.find(inv => inv.id === p.partId))
+                        .filter(Boolean) as PartInventoryItem[];
+                      if (lowParts.length > 0) openPOModal(lowParts);
+                    }}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-green-600/20 text-green-400 rounded-lg text-sm font-medium hover:bg-green-600/30 transition-colors"
+                  >
+                    <ShoppingCart className="w-3.5 h-3.5" />
+                    Reorder All Low
+                  </button>
+                )}
+                {recentlyDepletedExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+              </div>
+            </div>
+
+            {recentlyDepletedExpanded && (
+              <div className="px-5 pb-5 border-t border-slate-700/30">
+                {/* Summary Stats */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 mb-4">
+                  <div className="bg-slate-800/40 rounded-lg p-3 border border-slate-700/20">
+                    <div className="flex items-center gap-2 mb-1">
+                      <TrendingDown className="w-4 h-4 text-orange-400" />
+                      <span className="text-xs text-slate-400">Total Used</span>
+                    </div>
+                    <p className="text-xl font-bold text-orange-400">
+                      {recentlyDepletedParts.reduce((s, p) => s + p.totalQuantityUsed, 0)}
+                    </p>
+                  </div>
+                  <div className="bg-slate-800/40 rounded-lg p-3 border border-slate-700/20">
+                    <div className="flex items-center gap-2 mb-1">
+                      <DollarSign className="w-4 h-4 text-green-400" />
+                      <span className="text-xs text-slate-400">Parts Cost</span>
+                    </div>
+                    <p className="text-xl font-bold text-green-400">
+                      ${recentlyDepletedParts.reduce((s, p) => s + p.totalCost, 0).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="bg-slate-800/40 rounded-lg p-3 border border-slate-700/20">
+                    <div className="flex items-center gap-2 mb-1">
+                      <AlertTriangle className="w-4 h-4 text-yellow-400" />
+                      <span className="text-xs text-slate-400">Need Reorder</span>
+                    </div>
+                    <p className="text-xl font-bold text-yellow-400">
+                      {recentlyDepletedParts.filter(p => p.currentOnHand <= p.minQuantity).length}
+                    </p>
+                  </div>
+                  <div className="bg-slate-800/40 rounded-lg p-3 border border-slate-700/20">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Calendar className="w-4 h-4 text-cyan-400" />
+                      <span className="text-xs text-slate-400">Maintenance Events</span>
+                    </div>
+                    <p className="text-xl font-bold text-cyan-400">
+                      {recentlyDepletedParts.reduce((s, p) => s + p.usageCount, 0)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Parts List */}
+                <div className="space-y-2">
+                  {recentlyDepletedParts.map(part => {
+                    const isLowStock = part.currentOnHand <= part.minQuantity;
+                    const isOutOfStock = part.currentOnHand === 0;
+                    const inventoryPart = partsInventory.find(p => p.id === part.partId);
+
+                    return (
+                      <div
+                        key={part.partId}
+                        className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
+                          isOutOfStock
+                            ? 'bg-red-500/5 border-red-500/20'
+                            : isLowStock
+                            ? 'bg-yellow-500/5 border-yellow-500/15'
+                            : 'bg-slate-800/30 border-slate-700/20'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                            isOutOfStock ? 'bg-red-400 animate-pulse' :
+                            isLowStock ? 'bg-yellow-400' :
+                            'bg-green-400'
+                          }`} />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-orange-400 font-mono text-sm font-medium">{part.partNumber}</span>
+                              {isOutOfStock && (
+                                <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded text-[10px] font-bold">OUT OF STOCK</span>
+                              )}
+                              {isLowStock && !isOutOfStock && (
+                                <span className="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-[10px] font-bold">LOW STOCK</span>
+                              )}
+                            </div>
+                            <p className="text-white text-sm truncate">{part.description}</p>
+                            <div className="flex items-center gap-3 mt-0.5 text-xs text-slate-500">
+                              <span className="flex items-center gap-1">
+                                <Wrench className="w-3 h-3" />
+                                {part.lastUsedComponent}
+                              </span>
+                              <span>{part.lastUsedDate}</span>
+                              {part.vendor && <span>{part.vendor}</span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-4 flex-shrink-0 ml-4">
+                          {/* Usage stats */}
+                          <div className="text-right hidden md:block">
+                            <p className="text-sm text-slate-300">
+                              <span className="text-orange-400 font-bold">{part.totalQuantityUsed}</span>
+                              <span className="text-slate-500"> used</span>
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {part.usageCount} event{part.usageCount > 1 ? 's' : ''} — ${part.totalCost.toLocaleString()}
+                            </p>
+                          </div>
+
+                          {/* Current stock */}
+                          <div className="text-center min-w-[60px]">
+                            <p className={`text-lg font-bold ${
+                              isOutOfStock ? 'text-red-400' :
+                              isLowStock ? 'text-yellow-400' :
+                              'text-green-400'
+                            }`}>
+                              {part.currentOnHand}
+                            </p>
+                            <p className="text-[10px] text-slate-500">
+                              of {part.minQuantity} min
+                            </p>
+                          </div>
+
+                          {/* Quick reorder button */}
+                          {isLowStock && inventoryPart && (
+                            <button
+                              onClick={() => openPOModal([inventoryPart])}
+                              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                                isOutOfStock
+                                  ? 'bg-red-500 text-white hover:bg-red-600 shadow-lg shadow-red-500/20'
+                                  : 'bg-green-600/20 text-green-400 hover:bg-green-600/30'
+                              }`}
+                              title="Create Purchase Order"
+                            >
+                              <ShoppingCart className="w-3.5 h-3.5" />
+                              {isOutOfStock ? 'Reorder Now' : 'Reorder'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Header */}
+
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
             <h2 className="text-2xl font-bold text-white flex items-center gap-3">
@@ -1146,11 +1486,13 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                     <option value="Electrical">Electrical</option>
                     <option value="Suspension">Suspension</option>
                     <option value="Brakes">Brakes</option>
+                    <option value="Fluids">Fluids</option>
                     <option value="Safety">Safety</option>
                     <option value="Body">Body</option>
                     <option value="Wheels/Tires">Wheels/Tires</option>
                     <option value="Supercharger">Supercharger</option>
                   </select>
+
 
                 </div>
                 <div>
