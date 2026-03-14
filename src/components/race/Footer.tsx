@@ -62,7 +62,8 @@ const Footer: React.FC = () => {
                   </a>
                 </li>
                 <li className="text-slate-500 text-xs mt-4">
-                  Version 1.0.0
+                  Version 1.0.6
+
                 </li>
               </ul>
             </div>
