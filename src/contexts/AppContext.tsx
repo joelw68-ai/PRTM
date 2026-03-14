@@ -6,6 +6,8 @@ import { checkNewlyTriggeredAlerts, loadAlertSettings } from '@/lib/maintenanceA
 
 import {
 
+  ComponentTracker,
+
   PassLogEntry,
   Engine,
   Supercharger,
@@ -33,7 +35,8 @@ import { PartInventoryItem, partsInventory as initialPartsInventory } from '@/da
 import { RaceEvent } from '@/components/race/RaceCalendar';
 import { TeamMember } from '@/components/race/TeamProfile';
 import * as db from '@/lib/database';
-import { SavedTrack, ToDoItem, TeamNote, LaborEntry, MediaItem, DrivetrainComponent, DrivetrainCategory, DrivetrainSwapLog, VendorRecord } from '@/lib/database';
+import { SavedTrack, ToDoItem, TeamNote, LaborEntry, MediaItem, DrivetrainComponent, DrivetrainCategory, DrivetrainSwapLog, VendorRecord, PassHistoryEntry } from '@/lib/database';
+
 
 
 
@@ -625,42 +628,154 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
 
   // Pass Log actions
+  // ============ AUTO-INCREMENT ALL INSTALLED COMPONENTS ON PASS SAVE ============
+  // When a pass is saved from the Pass Log, automatically and silently update
+  // passCount, totalPasses, passesSinceRebuild/Service/Refresh on EVERY currently
+  // installed component for that car — engines, power adders, cylinder heads,
+  // drivetrain — including all sub-components. Then check service intervals and
+  // flag anything due or overdue. The user never has to manually update component
+  // pass counts; saving a pass log entry triggers everything automatically.
   const addPassLog = useCallback(async (pass: PassLogEntry) => {
     const userId = user?.id;
+    const carId = pass.car_id || '';
+    const isEmptyId = (id: any): boolean => !id || id === '';
+    const matchesCar = (item: any) => item.car_id === carId || isEmptyId(item.car_id);
+
+    // Helper: increment sub-component pass counts and auto-flag status
+    const bumpSubComponents = (comps: Record<string, ComponentTracker> | undefined): Record<string, ComponentTracker> | undefined => {
+      if (!comps) return comps;
+      const updated: Record<string, ComponentTracker> = {};
+      for (const [key, comp] of Object.entries(comps)) {
+        const newPassCount = (comp.passCount || 0) + 1;
+        let newStatus: ComponentTracker['status'] = comp.status || 'Good';
+        if (comp.replaceInterval > 0 && newPassCount >= comp.replaceInterval) {
+          newStatus = 'Replace';
+        } else if (comp.serviceInterval > 0 && newPassCount >= comp.serviceInterval) {
+          newStatus = 'Service';
+        } else if (comp.inspectionInterval > 0 && newPassCount >= comp.inspectionInterval) {
+          newStatus = 'Inspect';
+        }
+        updated[key] = { ...comp, passCount: newPassCount, status: newStatus };
+      }
+      return updated;
+    };
 
     // Capture previous maintenance items state BEFORE incrementing (for threshold crossing detection)
     const previousMaintenanceItems = maintenanceItems.map(m => ({ ...m }));
 
+    // 1. Add pass to state
     setPassLogs(prev => [pass, ...prev]);
-    setEngines(prev => prev.map(e => 
-      e.id === pass.engineId 
-        ? { ...e, totalPasses: e.totalPasses + 1, passesSinceRebuild: e.passesSinceRebuild + 1 }
-        : e
-    ));
-    setSuperchargers(prev => prev.map(s => 
-      s.id === pass.superchargerId
-        ? { ...s, totalPasses: s.totalPasses + 1, passesSinceService: s.passesSinceService + 1 }
-        : s
-    ));
 
-    // Compute updated maintenance items
-    const updatedMaintenanceItems = maintenanceItems.map(m => ({
-      ...m,
-      currentPasses: m.currentPasses + 1,
-      status: (m.currentPasses + 1 >= m.nextServicePasses ? 'Due' : 
-              m.currentPasses + 1 >= m.nextServicePasses - (m.passInterval * 0.25) ? 'Due Soon' : 'Good') as MaintenanceItem['status']
+    // 2. Update ALL installed engines for this car (not just the one in the pass form)
+    //    Increment totalPasses, passesSinceRebuild, and bump all sub-component pass counts
+    const enginesToPersist: Engine[] = [];
+    setEngines(prev => prev.map(e => {
+      if (e.currentlyInstalled && matchesCar(e)) {
+        const updated: Engine = {
+          ...e,
+          totalPasses: e.totalPasses + 1,
+          passesSinceRebuild: e.passesSinceRebuild + 1,
+          components: bumpSubComponents(e.components) as any
+        };
+        enginesToPersist.push(updated);
+        return updated;
+      }
+      return e;
     }));
 
+    // 3. Update ALL installed superchargers/power adders for this car
+    const scsToPersist: Supercharger[] = [];
+    setSuperchargers(prev => prev.map(s => {
+      if (s.currentlyInstalled && matchesCar(s)) {
+        const updated: Supercharger = {
+          ...s,
+          totalPasses: s.totalPasses + 1,
+          passesSinceService: s.passesSinceService + 1,
+        };
+        scsToPersist.push(updated);
+        return updated;
+      }
+      return s;
+    }));
+
+    // 4. Update ALL active cylinder heads for this car
+    const headsToPersist: CylinderHead[] = [];
+    setCylinderHeads(prev => prev.map(h => {
+      if (h.status === 'Active' && matchesCar(h)) {
+        const updated: CylinderHead = {
+          ...h,
+          totalPasses: h.totalPasses + 1,
+          passesSinceRefresh: h.passesSinceRefresh + 1,
+          components: bumpSubComponents(h.components) as any
+        };
+        headsToPersist.push(updated);
+        return updated;
+      }
+      return h;
+    }));
+
+    // 5. Update ALL installed drivetrain components for this car
+    const dtToPersist: DrivetrainComponent[] = [];
+    setDrivetrainComponents(prev => prev.map(d => {
+      if (d.currentlyInstalled && matchesCar(d)) {
+        const updated: DrivetrainComponent = {
+          ...d,
+          totalPasses: d.totalPasses + 1,
+          passesSinceService: d.passesSinceService + 1,
+          components: bumpSubComponents(d.components) as any
+        };
+        dtToPersist.push(updated);
+        return updated;
+      }
+      return d;
+    }));
+
+    // 6. Update maintenance items (filter by car_id when present)
+    const updatedMaintenanceItems = maintenanceItems.map(m => {
+      if (!carId || matchesCar(m)) {
+        const newPasses = m.currentPasses + 1;
+        return {
+          ...m,
+          currentPasses: newPasses,
+          status: (newPasses >= m.nextServicePasses ? 'Due' : 
+                  newPasses >= m.nextServicePasses - (m.passInterval * 0.25) ? 'Due Soon' : 'Good') as MaintenanceItem['status']
+        };
+      }
+      return m;
+    });
     setMaintenanceItems(updatedMaintenanceItems);
 
-    // ============ AUTOMATIC MAINTENANCE ALERT NOTIFICATIONS ============
-    // Check if any maintenance items (including drivetrain) just crossed a configured threshold
+    // 7. Count what was updated and collect flagged sub-components for toast
+    const totalUpdated = enginesToPersist.length + scsToPersist.length + headsToPersist.length + dtToPersist.length;
+    let flaggedCount = 0;
+    const collectFlags = (comps: Record<string, ComponentTracker> | undefined) => {
+      if (!comps) return;
+      for (const comp of Object.values(comps)) {
+        if (comp.status === 'Service' || comp.status === 'Replace' || comp.status === 'Inspect') {
+          flaggedCount++;
+        }
+      }
+    };
+    enginesToPersist.forEach(e => collectFlags(e.components));
+    headsToPersist.forEach(h => collectFlags(h.components));
+    dtToPersist.forEach(d => collectFlags(d.components));
+
+    // 8. Show a single summary toast if components were flagged
+    if (totalUpdated > 0 && flaggedCount > 0) {
+      toast.warning(
+        `Pass logged — ${flaggedCount} sub-component${flaggedCount !== 1 ? 's' : ''} now due for service`,
+        { description: `${totalUpdated} installed component${totalUpdated !== 1 ? 's' : ''} updated automatically`, duration: 6000 }
+      );
+    } else if (totalUpdated > 0) {
+      console.log(`[addPassLog] Auto-updated ${totalUpdated} installed components for car ${carId}`);
+    }
+
+    // 9. Automatic maintenance alert notifications (existing logic)
     try {
       const alertSettings = loadAlertSettings();
       if (alertSettings.enabled && alertSettings.showToastNotifications) {
         const newAlerts = checkNewlyTriggeredAlerts(previousMaintenanceItems, updatedMaintenanceItems, alertSettings);
         
-        // Fire toast notifications for each newly triggered alert
         for (const alert of newAlerts) {
           const remaining = alert.remainingPasses;
           
@@ -686,8 +801,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('[AppContext] Error checking maintenance alerts:', err);
     }
     
+    // 10. Persist pass log to database
     await trackSave(() => db.upsertPassLog(pass, userId), 'addPassLog', { type: 'upsertPassLog', data: pass });
-  }, [user?.id, trackSave, maintenanceItems]);
+
+    // 11. Persist all updated components to database silently in background
+    //     These fire-and-forget so the pass save doesn't block on component persistence
+    for (const eng of enginesToPersist) {
+      trackSave(() => db.upsertEngine(eng, userId), 'autoUpdateEngine').catch(() => {});
+    }
+    for (const sc of scsToPersist) {
+      trackSave(() => db.upsertSupercharger(sc, userId), 'autoUpdateSupercharger').catch(() => {});
+    }
+    for (const head of headsToPersist) {
+      trackSave(() => db.upsertCylinderHead(head, userId), 'autoUpdateCylinderHead').catch(() => {});
+    }
+    for (const dt of dtToPersist) {
+      trackSave(() => db.upsertDrivetrainComponent(dt, userId), 'autoUpdateDrivetrain').catch(() => {});
+    }
+    // Also persist updated maintenance items
+    for (const m of updatedMaintenanceItems) {
+      const prev = previousMaintenanceItems.find(p => p.id === m.id);
+      if (prev && prev.currentPasses !== m.currentPasses) {
+        trackSave(() => db.upsertMaintenanceItem(m, userId), 'autoUpdateMaintenance').catch(() => {});
+      }
+    }
+  }, [user?.id, trackSave, maintenanceItems, engines, superchargers, cylinderHeads, drivetrainComponents]);
+
+
 
 
   const updatePassLog = useCallback(async (id: string, pass: Partial<PassLogEntry>) => {

@@ -439,6 +439,26 @@ export const DrivetrainSwapLogRowSchema = z.object({
   notes: ns,
 }).passthrough();
 
+// ─── Pass History ─────────────────────────────────────────────
+
+export const PassHistoryRowSchema = z.object({
+  id: z.string(),
+  user_id: ns,
+  car_id: ns,
+  car_name: ns,
+  pass_count: nullableNumeric,
+  components_updated: nullableNumeric,
+  flagged_count: nullableNumeric,
+  flagged_details: nj,
+  engines_updated: nj,
+  heads_updated: nj,
+  power_adders_updated: nj,
+  drivetrain_updated: nj,
+  notes: ns,
+  created_at: ns,
+}).passthrough();
+
+
 // ─── Vendor Invoices ──────────────────────────────────────────
 
 export const VendorInvoiceRowSchema = z.object({

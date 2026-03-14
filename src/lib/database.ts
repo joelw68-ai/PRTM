@@ -24,7 +24,9 @@ import {
   DrivetrainComponentRowSchema,
   DrivetrainSwapLogRowSchema,
   FuelLogRowSchema,
+  PassHistoryRowSchema,
 } from './validators';
+
 
 import {
   PassLogEntry,
@@ -2182,4 +2184,84 @@ export const submitBetaFeedback = async (
   }
 
   console.log('[submitBetaFeedback] SUCCESS — feedback inserted.');
+
+};
+
+
+// ============ PASS HISTORY OPERATIONS ============
+// Audit trail for "Record Pass" actions in the Setup Library
+
+export interface PassHistoryEntry {
+  id: string;
+  carId: string;
+  carName: string;
+  passCount: number;
+  componentsUpdated: number;
+  flaggedCount: number;
+  flaggedDetails: Array<{ parentName: string; componentName: string; status: string; percentUsed: number }>;
+  enginesUpdated: Array<{ id: string; name: string; newTotal: number; newSinceRebuild: number }>;
+  headsUpdated: Array<{ id: string; name: string; newTotal: number; newSinceRefresh: number }>;
+  powerAddersUpdated: Array<{ id: string; name: string; newTotal: number; newSinceService: number }>;
+  drivetrainUpdated: Array<{ id: string; name: string; category: string; newTotal: number; newSinceService: number }>;
+  notes?: string;
+  createdAt: string;
+}
+
+const toPassHistoryEntry = (row: any): PassHistoryEntry => ({
+  id: row.id,
+  carId: row.car_id || '',
+  carName: row.car_name || '',
+  passCount: parseInt(row.pass_count) || 1,
+  componentsUpdated: parseInt(row.components_updated) || 0,
+  flaggedCount: parseInt(row.flagged_count) || 0,
+  flaggedDetails: row.flagged_details || [],
+  enginesUpdated: row.engines_updated || [],
+  headsUpdated: row.heads_updated || [],
+  powerAddersUpdated: row.power_adders_updated || [],
+  drivetrainUpdated: row.drivetrain_updated || [],
+  notes: row.notes || undefined,
+  createdAt: row.created_at || new Date().toISOString(),
+});
+
+export const fetchPassHistory = async (userId?: string): Promise<PassHistoryEntry[]> => {
+  const { data, error } = await supabase
+    .from('pass_history')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return parseRows(data, PassHistoryRowSchema, 'pass_history').map(toPassHistoryEntry);
+};
+
+export const insertPassHistory = async (entry: PassHistoryEntry, userId?: string): Promise<void> => {
+  const effectiveUserId = userId || await getCurrentUserId();
+
+  const payload: any = {
+    id: entry.id,
+    car_id: emptyToNull(entry.carId),
+    car_name: entry.carName,
+    pass_count: entry.passCount,
+    components_updated: entry.componentsUpdated,
+    flagged_count: entry.flaggedCount,
+    flagged_details: entry.flaggedDetails,
+    engines_updated: entry.enginesUpdated,
+    heads_updated: entry.headsUpdated,
+    power_adders_updated: entry.powerAddersUpdated,
+    drivetrain_updated: entry.drivetrainUpdated,
+    notes: emptyToNull(entry.notes),
+    created_at: entry.createdAt,
+  };
+
+  if (effectiveUserId) payload.user_id = effectiveUserId;
+
+  const { error } = await supabase.from('pass_history').insert(payload);
+  if (error) {
+    console.error('[insertPassHistory] Error:', error);
+    throw error;
+  }
+};
+
+export const deletePassHistory = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('pass_history').delete().eq('id', id);
+  if (error) throw error;
 };

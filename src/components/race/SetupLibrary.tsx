@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils';
+import { toast } from 'sonner';
+
 
 
 import DateInputDark from '@/components/ui/DateInputDark';
@@ -10,8 +12,10 @@ import ChassisSetup from '@/components/race/ChassisSetup';
 import { useApp } from '@/contexts/AppContext';
 
 import { ComponentTracker, PowerAdderType } from '@/data/proModData';
-
+import { PassHistoryEntry } from '@/lib/database';
+import * as db from '@/lib/database';
 import { DrivetrainComponent, DrivetrainCategory, DrivetrainSwapLog } from '@/lib/database';
+
 
 
 
@@ -38,8 +42,17 @@ import {
   ExternalLink,
   SlidersHorizontal,
   Bell,
+  Play,
+  CheckCircle2,
+  RotateCcw,
+  ListChecks,
+  FileText,
+  ChevronRight,
   ShieldAlert
 } from 'lucide-react';
+
+
+
 
 
 
@@ -120,7 +133,8 @@ const getPowerAdderTypeBadgeColor = (type?: PowerAdderType): string => {
 
 const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => {
 
-  const { selectedCarId } = useCar();
+  const { selectedCarId, cars, getCarLabel, activeCars } = useCar();
+
 
   const { 
     engines: allEngines, 
@@ -260,12 +274,13 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   // Component editing
   const [showComponentModal, setShowComponentModal] = useState(false);
   const [editingComponent, setEditingComponent] = useState<{
-    parentType: 'engine' | 'head' | 'supercharger';
+    parentType: 'engine' | 'head' | 'supercharger' | 'drivetrain';
     parentId: string;
     componentKey: string;
     component: ComponentTracker;
     isNew: boolean;
   } | null>(null);
+
 
   // Default component for new components
   const defaultComponent: ComponentTracker = {
@@ -321,6 +336,52 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
     gearDrive: { ...defaultComponent, name: 'Gear Drive', serviceInterval: 100, inspectionInterval: 50, replaceInterval: 250 },
     belt: { ...defaultComponent, name: 'Belt', serviceInterval: 25, inspectionInterval: 10, replaceInterval: 50 }
   };
+
+  // ─── Default Drivetrain Sub-Components by Category ────────────────────────────
+  const defaultDTComponents: Record<DrivetrainCategory, Record<string, ComponentTracker>> = {
+    transmission: {
+      inputShaft: { ...defaultComponent, name: 'Input Shaft', serviceInterval: 150, inspectionInterval: 50, replaceInterval: 300 },
+      outputShaft: { ...defaultComponent, name: 'Output Shaft', serviceInterval: 150, inspectionInterval: 50, replaceInterval: 300 },
+      clutchPacks: { ...defaultComponent, name: 'Clutch Packs', serviceInterval: 50, inspectionInterval: 25, replaceInterval: 100 },
+      bands: { ...defaultComponent, name: 'Bands', serviceInterval: 75, inspectionInterval: 35, replaceInterval: 150 },
+      seals: { ...defaultComponent, name: 'Seals', serviceInterval: 50, inspectionInterval: 25, replaceInterval: 100 },
+      planetaryGears: { ...defaultComponent, name: 'Planetary Gears', serviceInterval: 200, inspectionInterval: 75, replaceInterval: 400 },
+    },
+    torque_converter: {
+      stator: { ...defaultComponent, name: 'Stator', serviceInterval: 100, inspectionInterval: 50, replaceInterval: 250 },
+      impeller: { ...defaultComponent, name: 'Impeller', serviceInterval: 100, inspectionInterval: 50, replaceInterval: 250 },
+      turbine: { ...defaultComponent, name: 'Turbine', serviceInterval: 100, inspectionInterval: 50, replaceInterval: 250 },
+      lockUpClutch: { ...defaultComponent, name: 'Lock-up Clutch', serviceInterval: 75, inspectionInterval: 35, replaceInterval: 150 },
+    },
+    transmission_drive: {
+      driveShaft: { ...defaultComponent, name: 'Drive Shaft', serviceInterval: 150, inspectionInterval: 50, replaceInterval: 300 },
+      uJoints: { ...defaultComponent, name: 'U-Joints', serviceInterval: 50, inspectionInterval: 25, replaceInterval: 100 },
+      yoke: { ...defaultComponent, name: 'Yoke', serviceInterval: 150, inspectionInterval: 50, replaceInterval: 300 },
+    },
+    third_member: {
+      carrierBearings: { ...defaultComponent, name: 'Carrier Bearings', serviceInterval: 100, inspectionInterval: 50, replaceInterval: 200 },
+      spiderGears: { ...defaultComponent, name: 'Spider Gears', serviceInterval: 150, inspectionInterval: 75, replaceInterval: 300 },
+      axleShafts: { ...defaultComponent, name: 'Axle Shafts', serviceInterval: 200, inspectionInterval: 75, replaceInterval: 400 },
+    },
+    ring_and_pinion: {
+      ringGear: { ...defaultComponent, name: 'Ring Gear', serviceInterval: 200, inspectionInterval: 75, replaceInterval: 400 },
+      pinionGear: { ...defaultComponent, name: 'Pinion Gear', serviceInterval: 200, inspectionInterval: 75, replaceInterval: 400 },
+      pinionBearings: { ...defaultComponent, name: 'Pinion Bearings', serviceInterval: 100, inspectionInterval: 50, replaceInterval: 200 },
+      crushSleeve: { ...defaultComponent, name: 'Crush Sleeve', serviceInterval: 75, inspectionInterval: 35, replaceInterval: 150 },
+    },
+  };
+
+  // Helper: get a fresh defaultDT with the correct default sub-components for a given category
+  const getDefaultDTForCategory = (cat: DrivetrainCategory): DrivetrainComponent => ({
+    id: '', category: cat, name: '', make: '', model: '', serialNumber: '', builder: '',
+    installDate: getLocalDateString(), dateRemoved: '', totalPasses: 0,
+    passesSinceService: 0, hours: 0, status: 'Ready', currentlyInstalled: false, notes: '',
+    components: Object.fromEntries(
+      Object.entries(defaultDTComponents[cat]).map(([k, v]) => [k, { ...v }])
+    ),
+  });
+
+
 
   const defaultEngine: Engine = {
     id: '',
@@ -380,6 +441,207 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   const [scAlertBannerDismissed, setScAlertBannerDismissed] = useState(false);
   const [showSCAlertSettings, setShowSCAlertSettings] = useState(false);
   const [scServiceAlertThreshold, setScServiceAlertThreshold] = useState(80);
+  const [dtAlertBannerDismissed, setDtAlertBannerDismissed] = useState(false);
+  const [showDTAlertSettings, setShowDTAlertSettings] = useState(false);
+  const [dtServiceAlertThreshold, setDtServiceAlertThreshold] = useState(80);
+
+  // ─── Record Pass Modal State ────────────────────────────────────────────────
+  const [showRecordPassModal, setShowRecordPassModal] = useState(false);
+  const [recordPassCount, setRecordPassCount] = useState(1);
+  const [recordPassCarId, setRecordPassCarId] = useState<string>(selectedCarId || (activeCars.length === 1 ? activeCars[0].id : ''));
+  const [recordPassLoading, setRecordPassLoading] = useState(false);
+
+  // Keep recordPassCarId in sync with selectedCarId
+  useEffect(() => {
+    if (selectedCarId) setRecordPassCarId(selectedCarId);
+  }, [selectedCarId]);
+
+  // ─── Pass History Log ───────────────────────────────────────────────────────
+  interface PassHistoryEntry {
+    id: string;
+    date: string;
+    time: string;
+    carId: string;
+    carName: string;
+    passCount: number;
+    componentsUpdated: number;
+    flaggedCount: number;
+  }
+
+  const PASS_HISTORY_KEY = 'setupLibrary_passHistory';
+  const [passHistory, setPassHistory] = useState<PassHistoryEntry[]>(() => {
+    try {
+      const stored = localStorage.getItem(PASS_HISTORY_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+  const [showPassHistory, setShowPassHistory] = useState(false);
+
+  const addPassHistoryEntry = (entry: PassHistoryEntry) => {
+    const updated = [entry, ...passHistory].slice(0, 50); // keep last 50
+    setPassHistory(updated);
+    try { localStorage.setItem(PASS_HISTORY_KEY, JSON.stringify(updated)); } catch {}
+  };
+
+  // ─── Bulk Service Reset State ───────────────────────────────────────────────
+  const [showBulkResetModal, setShowBulkResetModal] = useState(false);
+  const [bulkResetSelections, setBulkResetSelections] = useState<Record<string, boolean>>({});
+  const [bulkResetLoading, setBulkResetLoading] = useState(false);
+
+  // ─── Service Reset Confirmation Modal State ─────────────────────────────────
+  const [showServiceResetConfirm, setShowServiceResetConfirm] = useState(false);
+  const [serviceResetTarget, setServiceResetTarget] = useState<{
+    parentType: 'engine' | 'head' | 'supercharger' | 'drivetrain';
+    parentId: string;
+    parentName: string;
+    counterLabel: string;
+    currentCounterValue: number;
+    subComponentCount: number;
+    flaggedCount: number;
+  } | null>(null);
+  const [serviceResetLoading, setServiceResetLoading] = useState(false);
+
+
+
+
+  // ─── Record Pass Handler ────────────────────────────────────────────────────
+  const handleRecordPass = async () => {
+    if (!recordPassCarId || recordPassCount < 1) return;
+    setRecordPassLoading(true);
+
+    const n = recordPassCount;
+    const carId = recordPassCarId;
+    const matchesCar = (item: any) => item.car_id === carId || isEmptyCarId(item.car_id);
+
+    // Helper: increment sub-component pass counts and auto-flag status
+    const bumpSubComponents = (comps: Record<string, ComponentTracker> | undefined): Record<string, ComponentTracker> | undefined => {
+      if (!comps) return comps;
+      const updated: Record<string, ComponentTracker> = {};
+      for (const [key, comp] of Object.entries(comps)) {
+        const newPassCount = comp.passCount + n;
+        let newStatus: ComponentStatus = comp.status;
+        // Auto-flag based on intervals
+        if (comp.replaceInterval > 0 && newPassCount >= comp.replaceInterval) {
+          newStatus = 'Replace';
+        } else if (comp.serviceInterval > 0 && newPassCount >= comp.serviceInterval) {
+          newStatus = 'Service';
+        } else if (comp.inspectionInterval > 0 && newPassCount >= comp.inspectionInterval) {
+          newStatus = 'Inspect';
+        }
+        updated[key] = { ...comp, passCount: newPassCount, status: newStatus };
+      }
+      return updated;
+    };
+
+    let totalUpdated = 0;
+    let flaggedDue: string[] = [];
+
+    // Helper to collect flagged items
+    const collectFlags = (parentName: string, comps: Record<string, ComponentTracker> | undefined) => {
+      if (!comps) return;
+      for (const comp of Object.values(comps)) {
+        if (comp.status === 'Service' || comp.status === 'Replace' || comp.status === 'Inspect') {
+          if (comp.status !== 'Good') {
+            flaggedDue.push(`${parentName} > ${comp.name} [${comp.status}]`);
+          }
+        }
+      }
+    };
+
+    try {
+      // 1. Update installed engines
+      const installedEngines = allEngines.filter((e: any) => e.currentlyInstalled && matchesCar(e));
+      for (const eng of installedEngines) {
+        const updatedComponents = bumpSubComponents(eng.components);
+        await updateEngine(eng.id, {
+          totalPasses: eng.totalPasses + n,
+          passesSinceRebuild: eng.passesSinceRebuild + n,
+          components: updatedComponents,
+        });
+        totalUpdated++;
+        collectFlags(eng.name, updatedComponents);
+      }
+
+      // 2. Update active cylinder heads (status === 'Active')
+      const activeHeads = allCylinderHeads.filter((h: any) => h.status === 'Active' && matchesCar(h));
+      for (const head of activeHeads) {
+        const updatedComponents = bumpSubComponents(head.components);
+        await updateCylinderHead(head.id, {
+          totalPasses: head.totalPasses + n,
+          passesSinceRefresh: head.passesSinceRefresh + n,
+          components: updatedComponents,
+        });
+        totalUpdated++;
+        collectFlags(head.name, updatedComponents);
+      }
+
+      // 3. Update installed power adders
+      const installedSCs = allSuperchargers.filter((s: any) => s.currentlyInstalled && matchesCar(s));
+      for (const sc of installedSCs) {
+        const scTyped = sc as Supercharger;
+        const updatedComponents = bumpSubComponents(scTyped.components);
+        await updateSupercharger(sc.id, {
+          totalPasses: sc.totalPasses + n,
+          passesSinceService: sc.passesSinceService + n,
+          components: updatedComponents,
+        });
+        totalUpdated++;
+        collectFlags(sc.name, updatedComponents);
+      }
+
+      // 4. Update installed drivetrain components
+      const installedDT = allDrivetrainComponents.filter((d: any) => d.currentlyInstalled && matchesCar(d));
+      for (const dt of installedDT) {
+        const updatedComponents = bumpSubComponents(dt.components);
+        await updateDrivetrainComponent(dt.id, {
+          totalPasses: dt.totalPasses + n,
+          passesSinceService: dt.passesSinceService + n,
+          components: updatedComponents,
+        });
+        totalUpdated++;
+        collectFlags(dt.name, updatedComponents);
+      }
+
+      // Un-dismiss alert banners so new alerts show immediately
+      setAlertBannerDismissed(false);
+      setScAlertBannerDismissed(false);
+      setDtAlertBannerDismissed(false);
+
+      // Show results
+      if (flaggedDue.length > 0) {
+        toast.warning(
+          `Recorded ${n} pass${n > 1 ? 'es' : ''} across ${totalUpdated} components. ${flaggedDue.length} sub-component${flaggedDue.length !== 1 ? 's' : ''} now due for service!`,
+          { duration: 8000 }
+        );
+      } else {
+        toast.success(
+          `Recorded ${n} pass${n > 1 ? 'es' : ''} across ${totalUpdated} installed components. All sub-components within service limits.`,
+          { duration: 5000 }
+        );
+      }
+    } catch (err) {
+      console.error('[RecordPass] Error:', err);
+      toast.error('Failed to record passes. Some components may not have been updated.');
+    } finally {
+      // Log to pass history
+      const now = new Date();
+      addPassHistoryEntry({
+        id: `PH-${Date.now()}`,
+        date: getLocalDateString(),
+        time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        carId: carId,
+        carName: getCarLabel(carId),
+        passCount: n,
+        componentsUpdated: totalUpdated,
+        flaggedCount: flaggedDue.length,
+      });
+      setRecordPassLoading(false);
+      setShowRecordPassModal(false);
+      setRecordPassCount(1);
+    }
+  };
+
+
 
 
   interface ServiceAlertItem {
@@ -500,6 +762,58 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   const scAlertedParentIds = useMemo(() => new Set(scServiceAlerts.map(a => a.parentId)), [scServiceAlerts]);
   const scCriticalParentIds = useMemo(() => new Set(scServiceAlerts.filter(a => a.severity === 'critical').map(a => a.parentId)), [scServiceAlerts]);
 
+  // ─── Drivetrain-Specific Service Alert System ───────────────────────────────
+  const dtServiceAlerts = useMemo<ServiceAlertItem[]>(() => {
+    const alerts: ServiceAlertItem[] = [];
+    const threshold = dtServiceAlertThreshold / 100;
+
+    drivetrainComponents.forEach((dt) => {
+      if (!dt.components) return;
+      Object.values(dt.components).forEach((comp: ComponentTracker) => {
+        if (comp.serviceInterval > 0) {
+          const pct = comp.passCount / comp.serviceInterval;
+          if (pct >= threshold) {
+            alerts.push({
+              parentType: 'drivetrain',
+              parentId: dt.id,
+              parentName: dt.name,
+              componentName: comp.name,
+              passCount: comp.passCount,
+              serviceInterval: comp.serviceInterval,
+              percentUsed: Math.round(pct * 100),
+              severity: pct >= 1 ? 'critical' : 'warning'
+            });
+          }
+        }
+      });
+    });
+
+    alerts.sort((a, b) => {
+      if (a.severity === 'critical' && b.severity !== 'critical') return -1;
+      if (b.severity === 'critical' && a.severity !== 'critical') return 1;
+      return b.percentUsed - a.percentUsed;
+    });
+
+    return alerts;
+  }, [drivetrainComponents, dtServiceAlertThreshold]);
+
+  const dtAlertedParentIds = useMemo(() => new Set(dtServiceAlerts.map(a => a.parentId)), [dtServiceAlerts]);
+  const dtCriticalParentIds = useMemo(() => new Set(dtServiceAlerts.filter(a => a.severity === 'critical').map(a => a.parentId)), [dtServiceAlerts]);
+
+  // Filtered drivetrain alerts by active tab category
+  const dtAlertsForActiveTab = useMemo(() => {
+    if (isDTTab(activeTab)) {
+      const cat = activeTab as DrivetrainCategory;
+      const idsInCategory = new Set(getDTByCategory(cat).map(c => c.id));
+      return dtServiceAlerts.filter(a => idsInCategory.has(a.parentId));
+    }
+    if (isCombinedRearGearTab(activeTab)) {
+      const idsInCategory = new Set(getCombinedRearGearComponents().map(c => c.id));
+      return dtServiceAlerts.filter(a => idsInCategory.has(a.parentId));
+    }
+    return [];
+  }, [dtServiceAlerts, activeTab, drivetrainComponents]);
+
 
 
   const getStatusColor = (status: string) => {
@@ -531,7 +845,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
 
   // Component handlers
   const handleEditComponent = (
-    parentType: 'engine' | 'head' | 'supercharger',
+    parentType: 'engine' | 'head' | 'supercharger' | 'drivetrain',
     parentId: string,
     componentKey: string,
     component: ComponentTracker
@@ -548,7 +862,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   };
 
   const handleAddComponent = (
-    parentType: 'engine' | 'head' | 'supercharger',
+    parentType: 'engine' | 'head' | 'supercharger' | 'drivetrain',
     parentId: string
   ) => {
     const newKey = `custom_${Date.now()}`;
@@ -595,6 +909,15 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
         };
         await updateSupercharger(parentId, { components: updatedComponents });
       }
+    } else if (parentType === 'drivetrain') {
+      const dt = drivetrainComponents.find(d => d.id === parentId);
+      if (dt) {
+        const updatedComponents = {
+          ...(dt.components || {}),
+          [componentKey]: newComponent
+        };
+        await updateDrivetrainComponent(parentId, { components: updatedComponents });
+      }
     }
     
     setShowComponentModal(false);
@@ -603,7 +926,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   };
 
   const handleDeleteComponent = async (
-    parentType: 'engine' | 'head' | 'supercharger',
+    parentType: 'engine' | 'head' | 'supercharger' | 'drivetrain',
     parentId: string,
     componentKey: string
   ) => {
@@ -630,8 +953,16 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
         delete updatedComponents[componentKey];
         await updateSupercharger(parentId, { components: updatedComponents });
       }
+    } else if (parentType === 'drivetrain') {
+      const dt = drivetrainComponents.find(d => d.id === parentId);
+      if (dt && dt.components) {
+        const updatedComponents = { ...dt.components };
+        delete updatedComponents[componentKey];
+        await updateDrivetrainComponent(parentId, { components: updatedComponents });
+      }
     }
   };
+
 
   // Engine handlers
   const handleSaveEngine = async () => {
@@ -706,30 +1037,196 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
     }
   };
 
+  // ─── Reset After Service Handler ────────────────────────────────────────────
+  const resetSubComponents = (comps: Record<string, ComponentTracker> | undefined): Record<string, ComponentTracker> | undefined => {
+    if (!comps) return comps;
+    const today = getLocalDateString();
+    const updated: Record<string, ComponentTracker> = {};
+    for (const [key, comp] of Object.entries(comps)) {
+      updated[key] = { ...comp, passCount: 0, status: 'Good' as ComponentStatus, lastService: today, lastInspection: today };
+    }
+    return updated;
+  };
+
+  // ─── Open Service Reset Confirmation Modal ───────────────────────────────────
+  const openServiceResetConfirmation = (parentType: 'engine' | 'head' | 'supercharger' | 'drivetrain', parentId: string) => {
+    let parentName = '';
+    let counterLabel = '';
+    let currentCounterValue = 0;
+    let subComponentCount = 0;
+    let flaggedCount = 0;
+
+    if (parentType === 'engine') {
+      const eng = engines.find(e => e.id === parentId);
+      if (!eng) return;
+      parentName = eng.name;
+      counterLabel = 'passesSinceRebuild';
+      currentCounterValue = eng.passesSinceRebuild;
+      subComponentCount = eng.components ? Object.keys(eng.components).length : 0;
+      flaggedCount = countComponentIssues(eng.components);
+    } else if (parentType === 'head') {
+      const head = cylinderHeads.find(h => h.id === parentId);
+      if (!head) return;
+      parentName = head.name;
+      counterLabel = 'passesSinceRefresh';
+      currentCounterValue = head.passesSinceRefresh;
+      subComponentCount = head.components ? Object.keys(head.components).length : 0;
+      flaggedCount = countComponentIssues(head.components);
+    } else if (parentType === 'supercharger') {
+      const sc = superchargers.find(s => s.id === parentId) as Supercharger | undefined;
+      if (!sc) return;
+      parentName = sc.name;
+      counterLabel = 'passesSinceService';
+      currentCounterValue = sc.passesSinceService;
+      subComponentCount = sc.components ? Object.keys(sc.components).length : 0;
+      flaggedCount = countComponentIssues(sc.components);
+    } else if (parentType === 'drivetrain') {
+      const dt = drivetrainComponents.find(d => d.id === parentId);
+      if (!dt) return;
+      parentName = dt.name;
+      counterLabel = 'passesSinceService';
+      currentCounterValue = dt.passesSinceService;
+      subComponentCount = dt.components ? Object.keys(dt.components).length : 0;
+      flaggedCount = countComponentIssues(dt.components);
+    }
+
+    setServiceResetTarget({ parentType, parentId, parentName, counterLabel, currentCounterValue, subComponentCount, flaggedCount });
+    setShowServiceResetConfirm(true);
+  };
+
+  // ─── Confirm & Execute Service Reset ────────────────────────────────────────
+  const confirmServiceReset = async () => {
+    if (!serviceResetTarget) return;
+    setServiceResetLoading(true);
+    const { parentType, parentId, parentName, subComponentCount } = serviceResetTarget;
+    try {
+      if (parentType === 'engine') {
+        const eng = engines.find(e => e.id === parentId);
+        if (eng) {
+          await updateEngine(parentId, { passesSinceRebuild: 0, components: resetSubComponents(eng.components) });
+        }
+      } else if (parentType === 'head') {
+        const head = cylinderHeads.find(h => h.id === parentId);
+        if (head) {
+          await updateCylinderHead(parentId, { passesSinceRefresh: 0, components: resetSubComponents(head.components) });
+        }
+      } else if (parentType === 'supercharger') {
+        const sc = superchargers.find(s => s.id === parentId) as Supercharger | undefined;
+        if (sc) {
+          await updateSupercharger(parentId, { passesSinceService: 0, components: resetSubComponents(sc.components) });
+        }
+      } else if (parentType === 'drivetrain') {
+        const dt = drivetrainComponents.find(d => d.id === parentId);
+        if (dt) {
+          await updateDrivetrainComponent(parentId, { passesSinceService: 0, components: resetSubComponents(dt.components) });
+        }
+      }
+      // Un-dismiss alert banners so cleared alerts disappear
+      setAlertBannerDismissed(false);
+      setScAlertBannerDismissed(false);
+      setDtAlertBannerDismissed(false);
+      toast.success(`${parentName}: service counters reset to 0. All ${subComponentCount} sub-components marked Good.`, { duration: 5000 });
+    } catch (err) {
+      console.error('[ServiceReset] Error:', err);
+      toast.error('Failed to reset service counters.');
+    } finally {
+      setServiceResetLoading(false);
+      setShowServiceResetConfirm(false);
+      setServiceResetTarget(null);
+    }
+  };
+
+  // Legacy handler (used by "Mark Serviced" inside expanded component grid — uses browser confirm)
+  const handleServiceReset = async (parentType: 'engine' | 'head' | 'supercharger' | 'drivetrain', parentId: string) => {
+    openServiceResetConfirmation(parentType, parentId);
+  };
+
+
+  // ─── Bulk Service Reset Handler ─────────────────────────────────────────────
+  const handleBulkServiceReset = async () => {
+    const selectedIds = Object.entries(bulkResetSelections).filter(([_, v]) => v).map(([k]) => k);
+    if (selectedIds.length === 0) return;
+    setBulkResetLoading(true);
+    let resetCount = 0;
+    try {
+      for (const id of selectedIds) {
+        // Check engines
+        const eng = allEngines.find((e: any) => e.id === id);
+        if (eng) {
+          await updateEngine(id, { passesSinceRebuild: 0, components: resetSubComponents(eng.components) });
+          resetCount++;
+          continue;
+        }
+        // Check heads
+        const head = allCylinderHeads.find((h: any) => h.id === id);
+        if (head) {
+          await updateCylinderHead(id, { passesSinceRefresh: 0, components: resetSubComponents(head.components) });
+          resetCount++;
+          continue;
+        }
+        // Check power adders
+        const sc = allSuperchargers.find((s: any) => s.id === id) as Supercharger | undefined;
+        if (sc) {
+          await updateSupercharger(id, { passesSinceService: 0, components: resetSubComponents(sc.components) });
+          resetCount++;
+          continue;
+        }
+        // Check drivetrain
+        const dt = allDrivetrainComponents.find((d: any) => d.id === id);
+        if (dt) {
+          await updateDrivetrainComponent(id, { passesSinceService: 0, components: resetSubComponents(dt.components) });
+          resetCount++;
+          continue;
+        }
+      }
+      toast.success(`Bulk service reset complete: ${resetCount} component${resetCount !== 1 ? 's' : ''} reset to zero.`);
+      setAlertBannerDismissed(false);
+      setScAlertBannerDismissed(false);
+      setDtAlertBannerDismissed(false);
+    } catch (err) {
+      console.error('[BulkReset] Error:', err);
+      toast.error('Bulk reset encountered errors. Some components may not have been reset.');
+    } finally {
+      setBulkResetLoading(false);
+      setShowBulkResetModal(false);
+      setBulkResetSelections({});
+    }
+  };
+
+
   // Component grid renderer
   const renderComponentGrid = (
     components: Record<string, ComponentTracker> | undefined,
-    parentType: 'engine' | 'head' | 'supercharger',
+    parentType: 'engine' | 'head' | 'supercharger' | 'drivetrain',
     parentId: string
   ) => {
     if (!components) return null;
+
     
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h4 className="font-medium text-white">Components</h4>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleAddComponent(parentType, parentId);
-            }}
-            className="flex items-center gap-1 px-2 py-1 bg-orange-500/20 text-orange-400 rounded text-sm hover:bg-orange-500/30"
-          >
-            <Plus className="w-3 h-3" />
-            Add Component
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); handleServiceReset(parentType, parentId); }}
+              className="flex items-center gap-1 px-2 py-1 bg-cyan-500/20 text-cyan-400 rounded text-sm hover:bg-cyan-500/30"
+              title="Mark Serviced — reset all sub-component pass counts to 0"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Mark Serviced
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); handleAddComponent(parentType, parentId); }}
+              className="flex items-center gap-1 px-2 py-1 bg-orange-500/20 text-orange-400 rounded text-sm hover:bg-orange-500/30"
+            >
+              <Plus className="w-3 h-3" />
+              Add Component
+            </button>
+          </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+
           {Object.entries(components).map(([key, comp]) => (
             <div 
               key={key} 
@@ -785,10 +1282,85 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
             <h2 className="text-2xl font-bold text-white">Main Components</h2>
-            <p className="text-slate-400">Track engines, power adders, cylinder heads, and drivetrain components</p>
+          </div>
 
+          <div className="flex flex-wrap items-center gap-2">
+            {passHistory.length > 0 && (
+              <button
+                onClick={() => setShowPassHistory(!showPassHistory)}
+                className="flex items-center gap-2 px-3 py-2 bg-slate-700 text-slate-300 rounded-lg text-sm hover:bg-slate-600 transition-colors whitespace-nowrap"
+              >
+                <FileText className="w-4 h-4" />
+                Pass Log ({passHistory.length})
+              </button>
+            )}
+            <button
+              onClick={() => {
+                const selections: Record<string, boolean> = {};
+                engines.forEach(e => { selections[e.id] = false; });
+                cylinderHeads.forEach(h => { selections[h.id] = false; });
+                superchargers.forEach(s => { selections[s.id] = false; });
+                drivetrainComponents.forEach(d => { selections[d.id] = false; });
+                setBulkResetSelections(selections);
+                setShowBulkResetModal(true);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-slate-300 rounded-lg font-medium hover:bg-slate-600 transition-colors whitespace-nowrap"
+            >
+              <ListChecks className="w-4 h-4" />
+              Bulk Service Reset
+            </button>
+            <button
+              onClick={() => {
+                setRecordPassCarId(selectedCarId || (activeCars.length === 1 ? activeCars[0].id : ''));
+                setRecordPassCount(1);
+                setShowRecordPassModal(true);
+              }}
+              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-500 hover:to-emerald-500 transition-all shadow-lg shadow-green-600/20 whitespace-nowrap"
+            >
+              <Play className="w-5 h-5" />
+              Record Pass
+            </button>
           </div>
         </div>
+
+        {/* Pass History Log */}
+        {showPassHistory && passHistory.length > 0 && (
+          <div className="mb-6 bg-slate-800/50 rounded-xl border border-slate-700/50 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-white flex items-center gap-2">
+                <FileText className="w-4 h-4 text-green-400" />
+                Pass History Log
+              </h3>
+              <button onClick={() => setShowPassHistory(false)} className="text-slate-500 hover:text-white p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {passHistory.slice(0, 20).map((entry) => (
+                <div key={entry.id} className="flex items-center justify-between p-2.5 bg-slate-900/50 rounded-lg border border-slate-700/30">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
+                      <Play className="w-3.5 h-3.5 text-green-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-white font-medium">
+                        +{entry.passCount} pass{entry.passCount !== 1 ? 'es' : ''} <span className="text-slate-400 font-normal">on</span> {entry.carName}
+                      </p>
+                      <p className="text-xs text-slate-500">{entry.date} at {entry.time} &middot; {entry.componentsUpdated} components updated</p>
+                    </div>
+                  </div>
+                  {entry.flaggedCount > 0 && (
+                    <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 text-xs rounded font-medium whitespace-nowrap">
+                      {entry.flaggedCount} flagged
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+
 
         {/* Service Alert Banner */}
         {serviceAlerts.length > 0 && !alertBannerDismissed && (
@@ -954,7 +1526,17 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                           {engine.status}
                         </span>
                         
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleServiceReset('engine', engine.id);
+                            }}
+                            className="p-1.5 bg-cyan-500/20 text-cyan-400 rounded hover:bg-cyan-500/30"
+                            title="Reset Service Counters — reset passesSinceRebuild to 0 and all sub-component pass counts to 0"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -976,6 +1558,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
+
                         
                         {expandedEngine === engine.id ? (
                           <ChevronUp className="w-5 h-5 text-slate-400" />
@@ -1174,7 +1757,17 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                           {sc.status}
                         </span>
                         
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleServiceReset('supercharger', sc.id);
+                            }}
+                            className="p-1.5 bg-cyan-500/20 text-cyan-400 rounded hover:bg-cyan-500/30"
+                            title="Reset Service Counters — reset passesSinceService to 0 and all sub-component pass counts to 0"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1196,6 +1789,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
+
                         
                         {expandedSC === sc.id ? (
                           <ChevronUp className="w-5 h-5 text-slate-400" />
@@ -1327,7 +1921,17 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                           {head.status}
                         </span>
                         
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleServiceReset('head', head.id);
+                            }}
+                            className="p-1.5 bg-cyan-500/20 text-cyan-400 rounded hover:bg-cyan-500/30"
+                            title="Reset Service Counters — reset passesSinceRefresh to 0 and all sub-component pass counts to 0"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1349,6 +1953,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
+
                         
                         {expandedHead === head.id ? (
                           <ChevronUp className="w-5 h-5 text-slate-400" />
@@ -1535,7 +2140,8 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
               <button
                 onClick={() => {
                   setEditingDT(null);
-                  setNewDT({ ...defaultDT, category: activeTab as DrivetrainCategory });
+                  setNewDT(getDefaultDTForCategory(activeTab as DrivetrainCategory));
+
                   setShowDTModal(true);
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
@@ -1544,6 +2150,60 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                 Add {dtCategorySingular[activeTab as DrivetrainCategory]}
               </button>
             </div>
+
+            {/* Drivetrain Service Alert Banner */}
+            {dtAlertsForActiveTab.length > 0 && !dtAlertBannerDismissed && (
+              <div className={`mb-4 rounded-xl border p-4 ${dtAlertsForActiveTab.some(a => a.severity === 'critical') ? 'bg-red-500/10 border-red-500/40' : 'bg-amber-500/10 border-amber-500/40'}`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3 flex-1">
+                    <div className={`mt-0.5 p-2 rounded-lg ${dtAlertsForActiveTab.some(a => a.severity === 'critical') ? 'bg-red-500/20' : 'bg-amber-500/20'}`}>
+                      <ShieldAlert className={`w-5 h-5 ${dtAlertsForActiveTab.some(a => a.severity === 'critical') ? 'text-red-400' : 'text-amber-400'}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-1">
+                        <h3 className={`font-semibold ${dtAlertsForActiveTab.some(a => a.severity === 'critical') ? 'text-red-400' : 'text-amber-400'}`}>
+                          Drivetrain Alerts: {dtAlertsForActiveTab.length} component{dtAlertsForActiveTab.length !== 1 ? 's' : ''} need attention
+                        </h3>
+                        <span className="text-xs text-slate-500">Threshold: {dtServiceAlertThreshold}%</span>
+                        <button onClick={() => setShowDTAlertSettings(!showDTAlertSettings)} className="text-xs text-slate-400 hover:text-white underline">
+                          {showDTAlertSettings ? 'Hide' : 'Settings'}
+                        </button>
+                      </div>
+                      {showDTAlertSettings && (
+                        <div className="flex items-center gap-3 mb-3 p-2 bg-slate-800/60 rounded-lg">
+                          <label className="text-xs text-slate-400 whitespace-nowrap">Alert Threshold:</label>
+                          <input
+                            type="range"
+                            min={50}
+                            max={100}
+                            value={dtServiceAlertThreshold}
+                            onChange={(e) => setDtServiceAlertThreshold(parseInt(e.target.value))}
+                            className="flex-1 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
+                          />
+                          <span className="text-sm font-bold text-white w-10 text-right">{dtServiceAlertThreshold}%</span>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-32 overflow-y-auto">
+                        {dtAlertsForActiveTab.slice(0, 9).map((alert, idx) => (
+                          <div key={idx} className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${alert.severity === 'critical' ? 'bg-red-500/10 text-red-300' : 'bg-amber-500/10 text-amber-300'}`}>
+                            <AlertTriangle className={`w-3 h-3 flex-shrink-0 ${alert.severity === 'critical' ? 'text-red-400' : 'text-amber-400'}`} />
+                            <span className="truncate">
+                              <span className="font-medium">{alert.parentName}</span> - {alert.componentName} ({alert.percentUsed}%)
+                            </span>
+                          </div>
+                        ))}
+                        {dtAlertsForActiveTab.length > 9 && (
+                          <div className="text-xs text-slate-500 px-2 py-1">+{dtAlertsForActiveTab.length - 9} more...</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <button onClick={() => setDtAlertBannerDismissed(true)} className="text-slate-500 hover:text-white p-1">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {getDTByCategory(activeTab as DrivetrainCategory).length === 0 && (
               <div className="text-center py-12 bg-slate-800/30 rounded-xl border border-slate-700/50">
@@ -1556,11 +2216,14 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
             {getDTByCategory(activeTab as DrivetrainCategory).map((comp) => (
               <div
                 key={comp.id}
-                className={`bg-slate-800/50 rounded-xl border overflow-hidden ${
+                className={`bg-slate-800/50 rounded-xl border overflow-hidden transition-all ${
+                  dtCriticalParentIds.has(comp.id) ? 'border-red-500/70 animate-pulse ring-1 ring-red-500/30' :
+                  dtAlertedParentIds.has(comp.id) ? 'border-amber-500/60 ring-1 ring-amber-500/20' :
                   comp.currentlyInstalled ? 'border-green-500/50' : 'border-slate-700/50'
                 }`}
               >
                 <div
+
                   className="p-4 cursor-pointer hover:bg-slate-700/20"
                   onClick={() => setExpandedDT(expandedDT === comp.id ? null : comp.id)}
                 >
@@ -1596,7 +2259,17 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                         {comp.status}
                       </span>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleServiceReset('drivetrain', comp.id);
+                          }}
+                          className="p-1.5 bg-cyan-500/20 text-cyan-400 rounded hover:bg-cyan-500/30"
+                          title="Reset Service Counters — reset passesSinceService to 0 and all sub-component pass counts to 0"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1624,6 +2297,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
+
 
                       {expandedDT === comp.id ? (
                         <ChevronUp className="w-5 h-5 text-slate-400" />
@@ -1704,6 +2378,12 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                         </div>
                       )}
                     </div>
+
+                    {/* Sub-Components Grid */}
+                    <div className="mt-6 border-t border-slate-700/50 pt-4">
+                      {renderComponentGrid(comp.components, 'drivetrain', comp.id)}
+                    </div>
+
 
                     {/* Associated Parts from Inventory */}
                     {(() => {
@@ -1764,7 +2444,8 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
               <button
                 onClick={() => {
                   setEditingDT(null);
-                  setNewDT({ ...defaultDT, category: 'third_member' });
+                  setNewDT(getDefaultDTForCategory('third_member'));
+
                   setShowDTModal(true);
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
@@ -1775,7 +2456,8 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
               <button
                 onClick={() => {
                   setEditingDT(null);
-                  setNewDT({ ...defaultDT, category: 'ring_and_pinion' });
+                  setNewDT(getDefaultDTForCategory('ring_and_pinion'));
+
                   setShowDTModal(true);
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
@@ -1784,6 +2466,60 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                 Add Ring & Pinion
               </button>
             </div>
+
+            {/* Drivetrain Service Alert Banner (3rd Member & Rear Gear) */}
+            {dtAlertsForActiveTab.length > 0 && !dtAlertBannerDismissed && (
+              <div className={`mb-4 rounded-xl border p-4 ${dtAlertsForActiveTab.some(a => a.severity === 'critical') ? 'bg-red-500/10 border-red-500/40' : 'bg-amber-500/10 border-amber-500/40'}`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3 flex-1">
+                    <div className={`mt-0.5 p-2 rounded-lg ${dtAlertsForActiveTab.some(a => a.severity === 'critical') ? 'bg-red-500/20' : 'bg-amber-500/20'}`}>
+                      <ShieldAlert className={`w-5 h-5 ${dtAlertsForActiveTab.some(a => a.severity === 'critical') ? 'text-red-400' : 'text-amber-400'}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-1">
+                        <h3 className={`font-semibold ${dtAlertsForActiveTab.some(a => a.severity === 'critical') ? 'text-red-400' : 'text-amber-400'}`}>
+                          Drivetrain Alerts: {dtAlertsForActiveTab.length} component{dtAlertsForActiveTab.length !== 1 ? 's' : ''} need attention
+                        </h3>
+                        <span className="text-xs text-slate-500">Threshold: {dtServiceAlertThreshold}%</span>
+                        <button onClick={() => setShowDTAlertSettings(!showDTAlertSettings)} className="text-xs text-slate-400 hover:text-white underline">
+                          {showDTAlertSettings ? 'Hide' : 'Settings'}
+                        </button>
+                      </div>
+                      {showDTAlertSettings && (
+                        <div className="flex items-center gap-3 mb-3 p-2 bg-slate-800/60 rounded-lg">
+                          <label className="text-xs text-slate-400 whitespace-nowrap">Alert Threshold:</label>
+                          <input
+                            type="range"
+                            min={50}
+                            max={100}
+                            value={dtServiceAlertThreshold}
+                            onChange={(e) => setDtServiceAlertThreshold(parseInt(e.target.value))}
+                            className="flex-1 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
+                          />
+                          <span className="text-sm font-bold text-white w-10 text-right">{dtServiceAlertThreshold}%</span>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-32 overflow-y-auto">
+                        {dtAlertsForActiveTab.slice(0, 9).map((alert, idx) => (
+                          <div key={idx} className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${alert.severity === 'critical' ? 'bg-red-500/10 text-red-300' : 'bg-amber-500/10 text-amber-300'}`}>
+                            <AlertTriangle className={`w-3 h-3 flex-shrink-0 ${alert.severity === 'critical' ? 'text-red-400' : 'text-amber-400'}`} />
+                            <span className="truncate">
+                              <span className="font-medium">{alert.parentName}</span> - {alert.componentName} ({alert.percentUsed}%)
+                            </span>
+                          </div>
+                        ))}
+                        {dtAlertsForActiveTab.length > 9 && (
+                          <div className="text-xs text-slate-500 px-2 py-1">+{dtAlertsForActiveTab.length - 9} more...</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <button onClick={() => setDtAlertBannerDismissed(true)} className="text-slate-500 hover:text-white p-1">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {getCombinedRearGearComponents().length === 0 && (
               <div className="text-center py-12 bg-slate-800/30 rounded-xl border border-slate-700/50">
@@ -1796,10 +2532,13 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
             {getCombinedRearGearComponents().map((comp) => (
               <div
                 key={comp.id}
-                className={`bg-slate-800/50 rounded-xl border overflow-hidden ${
+                className={`bg-slate-800/50 rounded-xl border overflow-hidden transition-all ${
+                  dtCriticalParentIds.has(comp.id) ? 'border-red-500/70 animate-pulse ring-1 ring-red-500/30' :
+                  dtAlertedParentIds.has(comp.id) ? 'border-amber-500/60 ring-1 ring-amber-500/20' :
                   comp.currentlyInstalled ? 'border-green-500/50' : 'border-slate-700/50'
                 }`}
               >
+
                 <div
                   className="p-4 cursor-pointer hover:bg-slate-700/20"
                   onClick={() => setExpandedDT(expandedDT === comp.id ? null : comp.id)}
@@ -1841,7 +2580,17 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                         {comp.status}
                       </span>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleServiceReset('drivetrain', comp.id);
+                          }}
+                          className="p-1.5 bg-cyan-500/20 text-cyan-400 rounded hover:bg-cyan-500/30"
+                          title="Reset Service Counters — reset passesSinceService to 0 and all sub-component pass counts to 0"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1869,6 +2618,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
+
 
                       {expandedDT === comp.id ? (
                         <ChevronUp className="w-5 h-5 text-slate-400" />
@@ -1949,6 +2699,12 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                         </div>
                       )}
                     </div>
+
+                    {/* Sub-Components Grid */}
+                    <div className="mt-6 border-t border-slate-700/50 pt-4">
+                      {renderComponentGrid(comp.components, 'drivetrain', comp.id)}
+                    </div>
+
 
                     {/* Associated Parts from Inventory */}
                     {(() => {
@@ -2822,7 +3578,177 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
           </div>
         </div>
       )}
+
+      {/* Record Pass Modal */}
+      {showRecordPassModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl max-w-md w-full p-6 border border-slate-700">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <Play className="w-5 h-5 text-green-400" />
+                Record Pass
+              </h3>
+              <button onClick={() => setShowRecordPassModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <p className="text-sm text-slate-400 mb-5">
+              Instantly update <span className="text-white font-medium">passCount</span>, <span className="text-white font-medium">totalPasses</span>, <span className="text-white font-medium">passesSinceRebuild</span>, <span className="text-white font-medium">passesSinceService</span>, and <span className="text-white font-medium">passesSinceRefresh</span> on ALL currently installed components for the selected car, including every sub-component.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Which Car *</label>
+                <select
+                  value={recordPassCarId}
+                  onChange={(e) => setRecordPassCarId(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Select a car...</option>
+                  {activeCars.map(car => (
+                    <option key={car.id} value={car.id}>{getCarLabel(car.id)}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Number of Passes to Add</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={recordPassCount}
+                  onChange={(e) => setRecordPassCount(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-lg font-bold text-center"
+                />
+                <p className="text-xs text-slate-500 mt-1">Defaults to 1. Increase for multiple back-to-back passes.</p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowRecordPassModal(false)}
+                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRecordPass}
+                disabled={!recordPassCarId || recordPassCount < 1 || recordPassLoading}
+                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-500 hover:to-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
+              >
+                {recordPassLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4" />
+                )}
+                {recordPassLoading ? 'Updating...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Reset Service Counters Confirmation Modal ─────────────────────── */}
+      {showServiceResetConfirm && serviceResetTarget && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl max-w-md w-full p-6 border border-cyan-500/30 shadow-2xl shadow-cyan-500/10">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <RotateCcw className="w-5 h-5 text-cyan-400" />
+                Reset Service Counters
+              </h3>
+              <button onClick={() => { setShowServiceResetConfirm(false); setServiceResetTarget(null); }} className="text-slate-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="mb-5 p-4 bg-slate-900/70 rounded-lg border border-slate-700/50">
+              <p className="text-lg font-semibold text-white mb-1">{serviceResetTarget.parentName}</p>
+              <p className="text-sm text-slate-400">
+                This will mark the component as freshly serviced by resetting all counters to zero.
+              </p>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">What will be reset:</h4>
+              <div className="grid grid-cols-1 gap-2">
+                <div className="flex items-center justify-between p-2.5 bg-slate-900/50 rounded-lg border border-slate-700/30">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-cyan-400" />
+                    <span className="text-sm text-slate-300 font-mono">{serviceResetTarget.counterLabel}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-amber-400">{serviceResetTarget.currentCounterValue}</span>
+                    <ArrowRight className="w-3 h-3 text-slate-500" />
+                    <span className="text-sm font-bold text-green-400">0</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between p-2.5 bg-slate-900/50 rounded-lg border border-slate-700/30">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-cyan-400" />
+                    <span className="text-sm text-slate-300">Sub-component passCount</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-slate-400">{serviceResetTarget.subComponentCount} components</span>
+                    <ArrowRight className="w-3 h-3 text-slate-500" />
+                    <span className="text-sm font-bold text-green-400">all 0</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between p-2.5 bg-slate-900/50 rounded-lg border border-slate-700/30">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-cyan-400" />
+                    <span className="text-sm text-slate-300">Sub-component status</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {serviceResetTarget.flaggedCount > 0 ? (
+                      <span className="text-sm text-amber-400">{serviceResetTarget.flaggedCount} flagged</span>
+                    ) : (
+                      <span className="text-sm text-slate-400">all clear</span>
+                    )}
+                    <ArrowRight className="w-3 h-3 text-slate-500" />
+                    <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded font-medium">all Good</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between p-2.5 bg-slate-900/50 rounded-lg border border-slate-700/30">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-cyan-400" />
+                    <span className="text-sm text-slate-300">lastService / lastInspection</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <ArrowRight className="w-3 h-3 text-slate-500" />
+                    <span className="text-sm font-bold text-green-400">today</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setShowServiceResetConfirm(false); setServiceResetTarget(null); }}
+                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmServiceReset}
+                disabled={serviceResetLoading}
+                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-cyan-600 to-teal-600 text-white rounded-lg font-semibold hover:from-cyan-500 hover:to-teal-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-600/20"
+              >
+                {serviceResetLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <RotateCcw className="w-4 h-4" />
+                )}
+                {serviceResetLoading ? 'Resetting...' : 'Reset Service Counters'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
+
+
 
   );
 };
