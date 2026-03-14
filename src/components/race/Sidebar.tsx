@@ -6,6 +6,7 @@ import { useThemeColor, useAccentStyles } from '@/contexts/ThemeColorContext';
 import { CrewRole, isAdminRole, hasPermission, getRoleColor } from '@/lib/permissions';
 import SaveStatusIndicator from '@/components/race/SaveStatusIndicator';
 import CarSelector from '@/components/race/CarSelector';
+import GlobalSearch from '@/components/race/GlobalSearch';
 
 import {
   Gauge, Car, ClipboardList, Wrench, Shield, FileText, Settings,
@@ -306,7 +307,11 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
+      {/* Global Search */}
+      <GlobalSearch onNavigate={handleNavigate} collapsed={collapsed} />
+
       {/* Navigation Menu */}
+
       <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
         {menuItems.map(item => {
           const Icon = item.icon;

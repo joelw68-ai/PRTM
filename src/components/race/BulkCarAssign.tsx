@@ -23,6 +23,21 @@ import {
   Package,
   Zap,
   Info,
+  Eye,
+  X,
+  Calendar,
+  MapPin,
+  Gauge,
+  Timer,
+  Thermometer,
+  Droplets,
+  Wind,
+  FileText,
+  Tag,
+  Hash,
+  Clock,
+  DollarSign,
+  Activity,
 } from 'lucide-react';
 
 // Helper: check if a car_id is empty/null/undefined
@@ -65,6 +80,430 @@ const SECTIONS: SectionConfig[] = [
   },
 ];
 
+/* ============================================================
+   Preview Detail Field Component
+   ============================================================ */
+const DetailField: React.FC<{
+  label: string;
+  value: string | number | undefined | null;
+  icon?: React.ElementType;
+  color?: string;
+  fullWidth?: boolean;
+}> = ({ label, value, icon: Icon, color = 'text-slate-300', fullWidth = false }) => {
+  if (value === undefined || value === null || value === '') return null;
+  return (
+    <div className={fullWidth ? 'col-span-2 sm:col-span-3' : ''}>
+      <dt className="text-[11px] uppercase tracking-wider text-slate-500 mb-0.5 flex items-center gap-1.5">
+        {Icon && <Icon className="w-3 h-3" />}
+        {label}
+      </dt>
+      <dd className={`text-sm font-medium ${color}`}>{value}</dd>
+    </div>
+  );
+};
+
+/* ============================================================
+   Status Badge Component
+   ============================================================ */
+const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
+  const colors: Record<string, string> = {
+    'Good': 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+    'Due Soon': 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+    'Due': 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+    'Overdue': 'bg-red-500/20 text-red-400 border-red-500/30',
+    'Valid': 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+    'Expiring Soon': 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+    'Expired': 'bg-red-500/20 text-red-400 border-red-500/30',
+    'Win': 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+    'Loss': 'bg-red-500/20 text-red-400 border-red-500/30',
+    'Single': 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+    'Red Light': 'bg-red-500/20 text-red-400 border-red-500/30',
+    'Broke': 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+  };
+  const cls = colors[status] || 'bg-slate-500/20 text-slate-400 border-slate-500/30';
+  return (
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${cls}`}>
+      {status}
+    </span>
+  );
+};
+
+/* ============================================================
+   Pass Log Preview
+   ============================================================ */
+const PassLogPreview: React.FC<{ record: PassLogEntry }> = ({ record }) => (
+  <div className="space-y-5">
+    {/* Header */}
+    <div className="flex items-center justify-between flex-wrap gap-3">
+      <div>
+        <h4 className="text-lg font-bold text-white">{record.track || 'Unknown Track'}</h4>
+        <p className="text-sm text-slate-400">{record.date} {record.time && `at ${record.time}`}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <StatusBadge status={record.result} />
+        <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+          {record.sessionType}
+        </span>
+      </div>
+    </div>
+
+    {/* Performance Data */}
+    <div>
+      <h5 className="text-xs uppercase tracking-wider text-blue-400 font-semibold mb-3 flex items-center gap-1.5">
+        <Gauge className="w-3.5 h-3.5" /> Performance
+      </h5>
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div className="bg-slate-800/60 rounded-lg p-3 text-center border border-slate-700/40">
+          <div className="text-[10px] uppercase text-slate-500 mb-1">60ft</div>
+          <div className="text-lg font-bold text-white">{record.sixtyFoot}s</div>
+        </div>
+        <div className="bg-slate-800/60 rounded-lg p-3 text-center border border-slate-700/40">
+          <div className="text-[10px] uppercase text-slate-500 mb-1">330ft</div>
+          <div className="text-lg font-bold text-white">{record.threeThirty}s</div>
+        </div>
+        <div className="bg-slate-800/60 rounded-lg p-3 text-center border border-slate-700/40">
+          <div className="text-[10px] uppercase text-slate-500 mb-1">1/8 Mile</div>
+          <div className="text-lg font-bold text-emerald-400">{record.eighth}s</div>
+        </div>
+        <div className="bg-slate-800/60 rounded-lg p-3 text-center border border-slate-700/40">
+          <div className="text-[10px] uppercase text-slate-500 mb-1">MPH</div>
+          <div className="text-lg font-bold text-emerald-400">{record.mph}</div>
+        </div>
+        <div className="bg-slate-800/60 rounded-lg p-3 text-center border border-slate-700/40">
+          <div className="text-[10px] uppercase text-slate-500 mb-1">RT</div>
+          <div className="text-lg font-bold text-amber-400">{record.reactionTime}</div>
+        </div>
+      </div>
+    </div>
+
+    {/* Details Grid */}
+    <div>
+      <h5 className="text-xs uppercase tracking-wider text-blue-400 font-semibold mb-3 flex items-center gap-1.5">
+        <FileText className="w-3.5 h-3.5" /> Details
+      </h5>
+      <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+        <DetailField label="Location" value={record.location} icon={MapPin} />
+        <DetailField label="Lane" value={record.lane} />
+        <DetailField label="Round" value={record.round} />
+        <DetailField label="SAE Correction" value={record.saeCorrection} />
+        <DetailField label="Density Altitude" value={record.densityAltitude ? `${record.densityAltitude} ft` : undefined} />
+        <DetailField label="Corrected HP" value={record.correctedHP} />
+        <DetailField label="Crew Chief" value={record.crewChief} />
+        {record.aborted && <DetailField label="Aborted" value="Yes" color="text-red-400" />}
+      </dl>
+    </div>
+
+    {/* Setup */}
+    <div>
+      <h5 className="text-xs uppercase tracking-wider text-blue-400 font-semibold mb-3 flex items-center gap-1.5">
+        <Activity className="w-3.5 h-3.5" /> Car Setup
+      </h5>
+      <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+        <DetailField label="Launch RPM" value={record.launchRPM} />
+        <DetailField label="Boost Setting" value={record.boostSetting} />
+        <DetailField label="Wheelie Bar" value={record.wheelieBarSetting} />
+        <DetailField label="Tire PSI (Front)" value={record.tirePressureFront} />
+        <DetailField label="Tire PSI (RL)" value={record.tirePressureRearLeft} />
+        <DetailField label="Tire PSI (RR)" value={record.tirePressureRearRight} />
+      </dl>
+    </div>
+
+    {/* Weather */}
+    {record.weather && (
+      <div>
+        <h5 className="text-xs uppercase tracking-wider text-blue-400 font-semibold mb-3 flex items-center gap-1.5">
+          <Thermometer className="w-3.5 h-3.5" /> Weather Conditions
+        </h5>
+        <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+          <DetailField label="Temperature" value={`${record.weather.temperature}°F`} icon={Thermometer} />
+          <DetailField label="Humidity" value={`${record.weather.humidity}%`} icon={Droplets} />
+          <DetailField label="Barometric Pressure" value={`${record.weather.pressure} inHg`} />
+          <DetailField label="Wind" value={`${record.weather.windSpeed} mph ${record.weather.windDirection}`} icon={Wind} />
+          <DetailField label="Track Temp" value={`${record.weather.trackTemp}°F`} />
+          <DetailField label="Conditions" value={record.weather.conditions} />
+          {record.weather.dewPoint !== undefined && (
+            <DetailField label="Dew Point" value={`${record.weather.dewPoint}°F`} />
+          )}
+        </dl>
+      </div>
+    )}
+
+    {/* Notes */}
+    {record.notes && (
+      <div>
+        <h5 className="text-xs uppercase tracking-wider text-blue-400 font-semibold mb-2 flex items-center gap-1.5">
+          <FileText className="w-3.5 h-3.5" /> Notes
+        </h5>
+        <p className="text-sm text-slate-300 bg-slate-800/40 rounded-lg p-3 border border-slate-700/30 whitespace-pre-wrap">
+          {record.notes}
+        </p>
+      </div>
+    )}
+  </div>
+);
+
+/* ============================================================
+   Maintenance Preview
+   ============================================================ */
+const MaintenancePreview: React.FC<{ record: MaintenanceItem }> = ({ record }) => {
+  const remaining = record.nextServicePasses - record.currentPasses;
+  const progressPct = record.passInterval > 0
+    ? Math.min(100, Math.max(0, (record.currentPasses / record.nextServicePasses) * 100))
+    : 0;
+
+  const progressColor =
+    record.status === 'Overdue' ? 'bg-red-500' :
+    record.status === 'Due' ? 'bg-orange-500' :
+    record.status === 'Due Soon' ? 'bg-amber-500' :
+    'bg-emerald-500';
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h4 className="text-lg font-bold text-white">{record.component}</h4>
+          <p className="text-sm text-slate-400">{record.category}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusBadge status={record.status} />
+          <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+            record.priority === 'Critical' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+            record.priority === 'High' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' :
+            record.priority === 'Medium' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' :
+            'bg-slate-500/20 text-slate-400 border-slate-500/30'
+          }`}>
+            {record.priority} Priority
+          </span>
+        </div>
+      </div>
+
+      {/* Pass Progress */}
+      <div className="bg-slate-800/60 rounded-lg p-4 border border-slate-700/40">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm text-slate-400">Pass Progress</span>
+          <span className="text-sm font-semibold text-white">
+            {record.currentPasses} / {record.nextServicePasses} passes
+          </span>
+        </div>
+        <div className="w-full bg-slate-700 rounded-full h-3 mb-2">
+          <div
+            className={`${progressColor} h-3 rounded-full transition-all duration-500`}
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-slate-500">
+            {remaining > 0 ? `${remaining} passes remaining` : `${Math.abs(remaining)} passes overdue`}
+          </span>
+          <span className="text-slate-500">
+            Interval: every {record.passInterval} passes
+          </span>
+        </div>
+      </div>
+
+      {/* Details Grid */}
+      <div>
+        <h5 className="text-xs uppercase tracking-wider text-amber-400 font-semibold mb-3 flex items-center gap-1.5">
+          <FileText className="w-3.5 h-3.5" /> Details
+        </h5>
+        <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+          <DetailField label="Category" value={record.category} icon={Tag} />
+          <DetailField label="Pass Interval" value={`${record.passInterval} passes`} icon={Hash} />
+          <DetailField label="Current Passes" value={record.currentPasses} icon={Activity} />
+          <DetailField label="Next Service At" value={`${record.nextServicePasses} passes`} icon={Clock} />
+          <DetailField label="Last Service" value={record.lastService} icon={Calendar} />
+          {record.estimatedCost !== undefined && record.estimatedCost > 0 && (
+            <DetailField label="Estimated Cost" value={`$${record.estimatedCost.toLocaleString()}`} icon={DollarSign} />
+          )}
+        </dl>
+      </div>
+
+      {/* Notes */}
+      {record.notes && (
+        <div>
+          <h5 className="text-xs uppercase tracking-wider text-amber-400 font-semibold mb-2 flex items-center gap-1.5">
+            <FileText className="w-3.5 h-3.5" /> Notes
+          </h5>
+          <p className="text-sm text-slate-300 bg-slate-800/40 rounded-lg p-3 border border-slate-700/30 whitespace-pre-wrap">
+            {record.notes}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ============================================================
+   SFI Certification Preview
+   ============================================================ */
+const SFICertPreview: React.FC<{ record: SFICertification }> = ({ record }) => {
+  const daysColor =
+    record.daysUntilExpiration <= 0 ? 'text-red-400' :
+    record.daysUntilExpiration <= 30 ? 'text-orange-400' :
+    record.daysUntilExpiration <= 60 ? 'text-amber-400' :
+    'text-emerald-400';
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h4 className="text-lg font-bold text-white">{record.item}</h4>
+          <p className="text-sm text-slate-400">SFI Spec {record.sfiSpec}</p>
+        </div>
+        <StatusBadge status={record.status} />
+      </div>
+
+      {/* Expiration Card */}
+      <div className={`rounded-lg p-4 border ${
+        record.daysUntilExpiration <= 0
+          ? 'bg-red-500/10 border-red-500/30'
+          : record.daysUntilExpiration <= 60
+          ? 'bg-amber-500/10 border-amber-500/30'
+          : 'bg-emerald-500/10 border-emerald-500/30'
+      }`}>
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-xs uppercase tracking-wider text-slate-500">Days Until Expiration</span>
+            <p className={`text-3xl font-bold ${daysColor}`}>
+              {record.daysUntilExpiration <= 0
+                ? `${Math.abs(record.daysUntilExpiration)} days expired`
+                : `${record.daysUntilExpiration} days`
+              }
+            </p>
+          </div>
+          <div className="text-right">
+            <span className="text-xs uppercase tracking-wider text-slate-500">Expires</span>
+            <p className="text-sm font-medium text-white">{record.expirationDate}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Details Grid */}
+      <div>
+        <h5 className="text-xs uppercase tracking-wider text-purple-400 font-semibold mb-3 flex items-center gap-1.5">
+          <FileText className="w-3.5 h-3.5" /> Certification Details
+        </h5>
+        <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+          <DetailField label="SFI Specification" value={record.sfiSpec} icon={Shield} />
+          <DetailField label="Certification Date" value={record.certificationDate} icon={Calendar} />
+          <DetailField label="Expiration Date" value={record.expirationDate} icon={Calendar} />
+          <DetailField label="Vendor" value={record.vendor} icon={Tag} />
+          <DetailField label="Serial Number" value={record.serialNumber} icon={Hash} />
+        </dl>
+      </div>
+
+      {/* Notes */}
+      {record.notes && (
+        <div>
+          <h5 className="text-xs uppercase tracking-wider text-purple-400 font-semibold mb-2 flex items-center gap-1.5">
+            <FileText className="w-3.5 h-3.5" /> Notes
+          </h5>
+          <p className="text-sm text-slate-300 bg-slate-800/40 rounded-lg p-3 border border-slate-700/30 whitespace-pre-wrap">
+            {record.notes}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ============================================================
+   Preview Modal
+   ============================================================ */
+const PreviewModal: React.FC<{
+  sectionKey: string;
+  record: PassLogEntry | MaintenanceItem | SFICertification;
+  onClose: () => void;
+  onAssign: (recordId: string, sectionKey: string) => void;
+  targetCarId: string;
+  targetCarLabel: string;
+  isAssigning: boolean;
+}> = ({ sectionKey, record, onClose, onAssign, targetCarId, targetCarLabel, isAssigning }) => {
+  const sectionConfig = SECTIONS.find(s => s.key === sectionKey);
+  const Icon = sectionConfig?.icon || FileText;
+  const sectionColor = sectionConfig?.color || 'text-slate-400';
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-start justify-center p-4 pt-[5vh] overflow-y-auto">
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Modal */}
+      <div className="relative bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl w-full max-w-2xl animate-in fade-in zoom-in-95 duration-200">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50 bg-slate-800/50 rounded-t-2xl">
+          <div className="flex items-center gap-3">
+            <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+              sectionKey === 'passLogs' ? 'bg-blue-500/20' :
+              sectionKey === 'maintenance' ? 'bg-amber-500/20' :
+              'bg-purple-500/20'
+            }`}>
+              <Icon className={`w-5 h-5 ${sectionColor}`} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">Record Preview</h3>
+              <p className="text-xs text-slate-500">{sectionConfig?.label} — Unassigned Record</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-lg hover:bg-slate-700/50 text-slate-400 hover:text-white transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div className="px-6 py-5 max-h-[60vh] overflow-y-auto">
+          {sectionKey === 'passLogs' && <PassLogPreview record={record as PassLogEntry} />}
+          {sectionKey === 'maintenance' && <MaintenancePreview record={record as MaintenanceItem} />}
+          {sectionKey === 'sfiCerts' && <SFICertPreview record={record as SFICertification} />}
+        </div>
+
+        {/* Modal Footer */}
+        <div className="px-6 py-4 border-t border-slate-700/50 bg-slate-800/30 rounded-b-2xl flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-xs text-slate-500">
+            ID: <span className="font-mono text-slate-400">{record.id}</span>
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors rounded-lg hover:bg-slate-700/50"
+            >
+              Close
+            </button>
+            {targetCarId ? (
+              <button
+                onClick={() => onAssign(record.id, sectionKey)}
+                disabled={isAssigning}
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-lg text-sm font-medium hover:from-amber-600 hover:to-orange-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isAssigning ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ArrowRight className="w-4 h-4" />
+                )}
+                Assign to {targetCarLabel}
+              </button>
+            ) : (
+              <span className="text-xs text-amber-400/80 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Select a car above to assign
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+/* ============================================================
+   Main BulkCarAssign Component
+   ============================================================ */
 const BulkCarAssign: React.FC = () => {
   const {
     passLogs,
@@ -86,6 +525,10 @@ const BulkCarAssign: React.FC = () => {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [isAssigning, setIsAssigning] = useState(false);
   const [assignProgress, setAssignProgress] = useState({ current: 0, total: 0 });
+
+  // Preview state
+  const [previewRecord, setPreviewRecord] = useState<PassLogEntry | MaintenanceItem | SFICertification | null>(null);
+  const [previewSection, setPreviewSection] = useState<string>('');
 
   // Get unassigned records for each section
   const unassignedPassLogs = useMemo(
@@ -206,6 +649,56 @@ const BulkCarAssign: React.FC = () => {
 
   // Count total selected across all sections
   const totalSelected = Object.values(selectedIds).reduce((sum, set) => sum + set.size, 0);
+
+  // Open preview modal
+  const openPreview = (sectionKey: string, record: PassLogEntry | MaintenanceItem | SFICertification) => {
+    setPreviewRecord(record);
+    setPreviewSection(sectionKey);
+  };
+
+  // Close preview modal
+  const closePreview = () => {
+    setPreviewRecord(null);
+    setPreviewSection('');
+  };
+
+  // Assign a single record from the preview modal
+  const handleAssignSingle = useCallback(async (recordId: string, sectionKey: string) => {
+    if (!targetCarId) {
+      toast.error('Please select a car to assign records to.');
+      return;
+    }
+
+    setIsAssigning(true);
+    try {
+      switch (sectionKey) {
+        case 'passLogs':
+          await updatePassLog(recordId, { car_id: targetCarId });
+          break;
+        case 'maintenance':
+          await updateMaintenanceItem(recordId, { car_id: targetCarId });
+          break;
+        case 'sfiCerts':
+          await updateSFICertification(recordId, { car_id: targetCarId });
+          break;
+      }
+      const carLabel = getCarLabel(targetCarId);
+      toast.success(`Record assigned to ${carLabel}`);
+      closePreview();
+      // Remove from selection if it was selected
+      setSelectedIds((prev) => {
+        const next = { ...prev };
+        const sectionSet = new Set(prev[sectionKey]);
+        sectionSet.delete(recordId);
+        next[sectionKey] = sectionSet;
+        return next;
+      });
+    } catch (err) {
+      console.error(`[BulkCarAssign] Error assigning record:`, err);
+      toast.error('Failed to assign record. Check console for details.');
+    }
+    setIsAssigning(false);
+  }, [targetCarId, updatePassLog, updateMaintenanceItem, updateSFICertification, getCarLabel]);
 
   // Assign selected records to the target car
   const handleAssignSelected = useCallback(async () => {
@@ -487,7 +980,7 @@ const BulkCarAssign: React.FC = () => {
           <div className="px-6 py-3 bg-blue-500/5 border-b border-slate-700/30 flex items-start gap-2">
             <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
             <p className="text-xs text-blue-300/80">
-              These records were created before multi-car support was added. Use the selector above to assign them all at once, or expand each section below to selectively assign individual records.
+              These records were created before multi-car support was added. Click the <Eye className="w-3 h-3 inline-block mx-0.5 -mt-0.5" /> preview icon on any record to see its full details before assigning. Use the selector above to assign them all at once, or expand each section below to selectively assign individual records.
             </p>
           </div>
 
@@ -592,22 +1085,27 @@ const BulkCarAssign: React.FC = () => {
                     return (
                       <div
                         key={record.id}
-                        className={`px-6 py-3 flex items-start gap-3 border-b border-slate-700/20 hover:bg-slate-700/20 transition-colors cursor-pointer ${
+                        className={`px-6 py-3 flex items-start gap-3 border-b border-slate-700/20 hover:bg-slate-700/20 transition-colors ${
                           isSelected ? 'bg-slate-700/15' : ''
                         }`}
-                        onClick={() => !isAssigning && toggleRecord(section.key, record.id)}
                       >
                         {/* Checkbox */}
-                        <div className="flex-shrink-0 mt-0.5">
+                        <div
+                          className="flex-shrink-0 mt-0.5 cursor-pointer"
+                          onClick={() => !isAssigning && toggleRecord(section.key, record.id)}
+                        >
                           {isSelected ? (
                             <CheckSquare className={`w-4 h-4 ${section.color}`} />
                           ) : (
-                            <Square className="w-4 h-4 text-slate-600" />
+                            <Square className="w-4 h-4 text-slate-600 hover:text-slate-400 transition-colors" />
                           )}
                         </div>
 
-                        {/* Record Info */}
-                        <div className="min-w-0 flex-1">
+                        {/* Record Info — clickable for selection */}
+                        <div
+                          className="min-w-0 flex-1 cursor-pointer"
+                          onClick={() => !isAssigning && toggleRecord(section.key, record.id)}
+                        >
                           <p className="text-sm text-white truncate">
                             {getRecordLabel(section.key, record)}
                           </p>
@@ -616,8 +1114,35 @@ const BulkCarAssign: React.FC = () => {
                           </p>
                         </div>
 
+                        {/* Preview Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openPreview(section.key, record);
+                          }}
+                          className="flex-shrink-0 p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition-all group"
+                          title="Preview record details"
+                        >
+                          <Eye className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                        </button>
+
+                        {/* Quick Assign Button (when car is selected) */}
+                        {targetCarId && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAssignSingle(record.id, section.key);
+                            }}
+                            disabled={isAssigning}
+                            className="flex-shrink-0 p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-amber-500/10 transition-all disabled:opacity-50 group"
+                            title={`Assign to ${getCarLabel(targetCarId)}`}
+                          >
+                            <ArrowRight className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                          </button>
+                        )}
+
                         {/* Row number */}
-                        <span className="text-[10px] text-slate-600 flex-shrink-0">
+                        <span className="text-[10px] text-slate-600 flex-shrink-0 mt-1">
                           #{idx + 1}
                         </span>
                       </div>
@@ -680,6 +1205,19 @@ const BulkCarAssign: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Preview Modal */}
+      {previewRecord && previewSection && (
+        <PreviewModal
+          sectionKey={previewSection}
+          record={previewRecord}
+          onClose={closePreview}
+          onAssign={handleAssignSingle}
+          targetCarId={targetCarId}
+          targetCarLabel={targetCarId ? getCarLabel(targetCarId) : ''}
+          isAssigning={isAssigning}
+        />
+      )}
     </section>
   );
 };

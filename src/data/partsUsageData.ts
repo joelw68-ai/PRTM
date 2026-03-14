@@ -35,6 +35,13 @@ export interface PartUsageRecord {
   laborHours?: number;
   laborCost?: number;
   
+  // Quantity used (for maintenance completions)
+  quantityUsed?: number;
+  
+  // Car association
+  carId?: string;
+  carName?: string;
+  
   // Personnel
   performedBy: string;
   verifiedBy?: string;
@@ -78,35 +85,89 @@ export interface PartLifecycleStats {
   averageConditionOnRemoval: string;
 }
 
-// Sample Parts Usage History (empty for beta)
-export const partsUsageHistory: PartUsageRecord[] = [];
+// ============ LOCALSTORAGE PERSISTENCE ============
 
-// Helper functions
-export const getUsageByPart = (partId: string): PartUsageRecord[] => 
-  partsUsageHistory.filter(u => u.partId === partId);
+export const PARTS_USAGE_HISTORY_KEY = 'raceLogbook_partsUsageHistory';
 
-export const getUsageByWorkOrder = (workOrderId: string): PartUsageRecord[] => 
-  partsUsageHistory.filter(u => u.workOrderId === workOrderId);
+/**
+ * Load parts usage history from localStorage.
+ * Returns an array of PartUsageRecord, or empty array if nothing stored.
+ */
+export function loadPartsUsageHistory(): PartUsageRecord[] {
+  try {
+    const raw = localStorage.getItem(PARTS_USAGE_HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
 
-export const getUsageByEvent = (eventId: string): PartUsageRecord[] => 
-  partsUsageHistory.filter(u => u.raceEventId === eventId);
+/**
+ * Save parts usage history to localStorage.
+ */
+export function savePartsUsageHistory(records: PartUsageRecord[]): void {
+  try {
+    localStorage.setItem(PARTS_USAGE_HISTORY_KEY, JSON.stringify(records));
+    // Also update the module-level array so helper functions pick up changes
+    partsUsageHistory.length = 0;
+    partsUsageHistory.push(...records);
+  } catch (e) {
+    console.warn('Failed to save parts usage history to localStorage:', e);
+  }
+}
 
-export const getUsageByAction = (action: PartUsageAction): PartUsageRecord[] => 
-  partsUsageHistory.filter(u => u.action === action);
+/**
+ * Add a single parts usage record to localStorage.
+ * Returns the updated array.
+ */
+export function addPartsUsageRecord(record: PartUsageRecord): PartUsageRecord[] {
+  const existing = loadPartsUsageHistory();
+  const updated = [record, ...existing];
+  savePartsUsageHistory(updated);
+  return updated;
+}
 
-export const getUsageByDateRange = (startDate: string, endDate: string): PartUsageRecord[] => 
-  partsUsageHistory.filter(u => u.date >= startDate && u.date <= endDate);
+// Initialize the module-level array from localStorage on first import
+// This is a mutable array so helper functions always read current data
+export const partsUsageHistory: PartUsageRecord[] = loadPartsUsageHistory();
+
+// Helper functions — these read from the module-level array which is kept in sync
+export const getUsageByPart = (partId: string): PartUsageRecord[] => {
+  const records = loadPartsUsageHistory();
+  return records.filter(u => u.partId === partId);
+};
+
+export const getUsageByWorkOrder = (workOrderId: string): PartUsageRecord[] => {
+  const records = loadPartsUsageHistory();
+  return records.filter(u => u.workOrderId === workOrderId);
+};
+
+export const getUsageByEvent = (eventId: string): PartUsageRecord[] => {
+  const records = loadPartsUsageHistory();
+  return records.filter(u => u.raceEventId === eventId);
+};
+
+export const getUsageByAction = (action: PartUsageAction): PartUsageRecord[] => {
+  const records = loadPartsUsageHistory();
+  return records.filter(u => u.action === action);
+};
+
+export const getUsageByDateRange = (startDate: string, endDate: string): PartUsageRecord[] => {
+  const records = loadPartsUsageHistory();
+  return records.filter(u => u.date >= startDate && u.date <= endDate);
+};
 
 export const getRecentUsage = (days: number = 30): PartUsageRecord[] => {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - days);
   const cutoffStr = getLocalDateString(cutoffDate);
-
-  return partsUsageHistory.filter(u => u.date >= cutoffStr);
+  const records = loadPartsUsageHistory();
+  return records.filter(u => u.date >= cutoffStr);
 };
 
 export const calculatePartLifecycle = (partNumber: string): PartLifecycleStats | null => {
-  const usageRecords = partsUsageHistory.filter(u => u.partNumber === partNumber);
+  const records = loadPartsUsageHistory();
+  const usageRecords = records.filter(u => u.partNumber === partNumber);
   if (usageRecords.length === 0) return null;
   
   const installs = usageRecords.filter(u => u.action === 'installed' || u.action === 'replaced');
@@ -145,4 +206,3 @@ export const calculatePartLifecycle = (partNumber: string): PartLifecycleStats |
       : 'N/A'
   };
 };
-

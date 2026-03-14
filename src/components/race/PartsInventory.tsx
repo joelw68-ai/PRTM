@@ -45,11 +45,12 @@ import {
   PurchaseOrderItem
 } from '@/data/vendorData';
 import {
-  partsUsageHistory,
+  loadPartsUsageHistory,
   PartUsageRecord,
   getUsageByPart,
   calculatePartLifecycle
 } from '@/data/partsUsageData';
+
 import LowStockAlertPanel from './LowStockAlertPanel';
 import ReorderListGenerator from './ReorderListGenerator';
 import CSVImportModal from './CSVImportModal';
@@ -1830,7 +1831,7 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
         </div>
       )}
 
-      {/* Usage History Modal */}
+      {/* Usage History Modal — reads live from localStorage */}
       {showUsageHistoryModal && selectedPartForHistory && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 rounded-xl max-w-3xl w-full p-6 border border-slate-700 max-h-[90vh] overflow-y-auto">
@@ -1872,7 +1873,7 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
               </div>
             </div>
 
-            {/* Usage History List */}
+            {/* Usage History List — loaded from localStorage */}
             <div className="space-y-3">
               <h4 className="font-medium text-white flex items-center gap-2">
                 <RefreshCw className="w-4 h-4 text-cyan-400" />
@@ -1880,133 +1881,147 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
               </h4>
               
               {(() => {
-                const usageRecords = partsUsageHistory.filter(
+                // Load fresh from localStorage every time the modal renders
+                const allUsageRecords = loadPartsUsageHistory();
+                const usageRecords = allUsageRecords.filter(
                   u => u.partNumber === selectedPartForHistory.partNumber || 
                        u.partId === selectedPartForHistory.id
-                );
+                ).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                 
                 if (usageRecords.length === 0) {
                   return (
                     <div className="text-center py-8 text-slate-500">
                       <History className="w-12 h-12 mx-auto mb-4 opacity-50" />
                       <p>No usage history found for this part</p>
-                      <p className="text-sm mt-2">Usage records will appear here when this part is used in work orders</p>
+                      <p className="text-sm mt-2">Usage records will appear here when this part is used in maintenance completions or work orders</p>
                     </div>
                   );
                 }
                 
-                return usageRecords.map(record => (
-                  <div key={record.id} className="bg-slate-900/50 rounded-lg p-4 border border-slate-700/50">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          {record.action === 'installed' && <ArrowDownCircle className="w-4 h-4 text-green-400" />}
-                          {record.action === 'removed' && <ArrowUpCircle className="w-4 h-4 text-red-400" />}
-                          {record.action === 'replaced' && <RefreshCw className="w-4 h-4 text-yellow-400" />}
-                          {record.action === 'inspected' && <Eye className="w-4 h-4 text-blue-400" />}
-                          {record.action === 'serviced' && <RefreshCw className="w-4 h-4 text-purple-400" />}
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${
-                            record.action === 'installed' ? 'bg-green-500/20 text-green-400' :
-                            record.action === 'removed' ? 'bg-red-500/20 text-red-400' :
-                            record.action === 'replaced' ? 'bg-yellow-500/20 text-yellow-400' :
-                            record.action === 'inspected' ? 'bg-blue-500/20 text-blue-400' :
-                            'bg-purple-500/20 text-purple-400'
-                          }`}>
-                            {record.action}
-                          </span>
-                          <span className="text-slate-400 text-sm">{record.date}</span>
-                          {record.time && <span className="text-slate-500 text-sm">{record.time}</span>}
+                return (
+                  <>
+                    {usageRecords.map(record => (
+                      <div key={record.id} className="bg-slate-900/50 rounded-lg p-4 border border-slate-700/50">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              {record.action === 'installed' && <ArrowDownCircle className="w-4 h-4 text-green-400" />}
+                              {record.action === 'removed' && <ArrowUpCircle className="w-4 h-4 text-red-400" />}
+                              {record.action === 'replaced' && <RefreshCw className="w-4 h-4 text-yellow-400" />}
+                              {record.action === 'inspected' && <Eye className="w-4 h-4 text-blue-400" />}
+                              {record.action === 'serviced' && <RefreshCw className="w-4 h-4 text-purple-400" />}
+                              <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                                record.action === 'installed' ? 'bg-green-500/20 text-green-400' :
+                                record.action === 'removed' ? 'bg-red-500/20 text-red-400' :
+                                record.action === 'replaced' ? 'bg-yellow-500/20 text-yellow-400' :
+                                record.action === 'inspected' ? 'bg-blue-500/20 text-blue-400' :
+                                'bg-purple-500/20 text-purple-400'
+                              }`}>
+                                {record.action}
+                              </span>
+                              <span className="text-slate-400 text-sm">{record.date}</span>
+                              {record.time && <span className="text-slate-500 text-sm">{record.time}</span>}
+                            </div>
+                            
+                            {/* Reason / Notes — prominently displayed */}
+                            {record.notes && (
+                              <p className="text-white font-medium mb-1">{record.notes}</p>
+                            )}
+                            
+                            {/* Key details grid */}
+                            <div className="flex flex-wrap gap-x-6 gap-y-1 mt-2 text-sm">
+                              {/* Quantity Used */}
+                              {record.quantityUsed && record.quantityUsed > 0 && (
+                                <span className="text-slate-400">
+                                  Qty Used: <span className="text-orange-400 font-bold">{record.quantityUsed}</span>
+                                </span>
+                              )}
+                              {/* Car */}
+                              {record.carName && (
+                                <span className="text-slate-400">
+                                  Car: <span className="text-cyan-400">{record.carName}</span>
+                                </span>
+                              )}
+                              {/* Pass Number */}
+                              {record.passesAtAction > 0 && (
+                                <span className="text-slate-400">
+                                  Pass #: <span className="text-white">{record.passesAtAction}</span>
+                                </span>
+                              )}
+                              {/* Installed On / Component */}
+                              {record.installedOn && (
+                                <span className="text-slate-400">
+                                  Component: <span className="text-white">{record.installedOn}</span>
+                                </span>
+                              )}
+                              {record.workOrderId && (
+                                <span className="text-slate-400">
+                                  Work Order: <span className="text-orange-400">{record.workOrderId}</span>
+                                </span>
+                              )}
+                              {record.raceEventName && (
+                                <span className="text-slate-400">
+                                  Event: <span className="text-cyan-400">{record.raceEventName}</span>
+                                </span>
+                              )}
+                              <span className="text-slate-400">
+                                By: <span className="text-white">{record.performedBy}</span>
+                              </span>
+                            </div>
+                          </div>
+                          
+                          <div className="text-right ml-4">
+                            <p className="text-white font-medium">${record.cost.toLocaleString()}</p>
+                            {record.laborCost && record.laborCost > 0 && (
+                              <p className="text-xs text-slate-400">+${record.laborCost.toLocaleString()} labor</p>
+                            )}
+                            {record.conditionOnRemoval && (
+                              <span className={`mt-2 inline-block px-2 py-0.5 rounded text-xs ${
+                                record.conditionOnRemoval === 'Good' ? 'bg-green-500/20 text-green-400' :
+                                record.conditionOnRemoval === 'Worn' ? 'bg-yellow-500/20 text-yellow-400' :
+                                record.conditionOnRemoval === 'Damaged' ? 'bg-orange-500/20 text-orange-400' :
+                                'bg-red-500/20 text-red-400'
+                              }`}>
+                                {record.conditionOnRemoval}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        
-                        <p className="text-white font-medium">{record.installedOn}</p>
-                        {record.location && <p className="text-sm text-slate-400">{record.location}</p>}
-                        
-                        <div className="flex flex-wrap gap-4 mt-2 text-sm">
-                          <span className="text-slate-400">
-                            Passes: <span className="text-white">{record.passesAtAction}</span>
-                          </span>
-                          {record.workOrderId && (
-                            <span className="text-slate-400">
-                              Work Order: <span className="text-orange-400">{record.workOrderId}</span>
-                            </span>
-                          )}
-                          {record.raceEventName && (
-                            <span className="text-slate-400">
-                              Event: <span className="text-cyan-400">{record.raceEventName}</span>
-                            </span>
-                          )}
-                          <span className="text-slate-400">
-                            By: <span className="text-white">{record.performedBy}</span>
-                          </span>
-                        </div>
-                        
-                        {record.notes && (
-                          <p className="text-sm text-slate-400 mt-2 pt-2 border-t border-slate-700/50">
-                            {record.notes}
-                          </p>
-                        )}
                       </div>
-                      
-                      <div className="text-right ml-4">
-                        <p className="text-white font-medium">${record.cost.toLocaleString()}</p>
-                        {record.laborCost && (
-                          <p className="text-xs text-slate-400">+${record.laborCost.toLocaleString()} labor</p>
-                        )}
-                        {record.conditionOnRemoval && (
-                          <span className={`mt-2 inline-block px-2 py-0.5 rounded text-xs ${
-                            record.conditionOnRemoval === 'Good' ? 'bg-green-500/20 text-green-400' :
-                            record.conditionOnRemoval === 'Worn' ? 'bg-yellow-500/20 text-yellow-400' :
-                            record.conditionOnRemoval === 'Damaged' ? 'bg-orange-500/20 text-orange-400' :
-                            'bg-red-500/20 text-red-400'
-                          }`}>
-                            {record.conditionOnRemoval}
-                          </span>
-                        )}
+                    ))}
+
+                    {/* Lifecycle Stats Summary */}
+                    <div className="mt-6 pt-6 border-t border-slate-700">
+                      <h4 className="font-medium text-white mb-4">Lifecycle Summary</h4>
+                      <div className="grid grid-cols-4 gap-4">
+                        <div className="bg-slate-900/50 rounded-lg p-3">
+                          <p className="text-xs text-slate-500 mb-1">Total Records</p>
+                          <p className="text-xl font-bold text-white">{usageRecords.length}</p>
+                        </div>
+                        <div className="bg-slate-900/50 rounded-lg p-3">
+                          <p className="text-xs text-slate-500 mb-1">Total Qty Used</p>
+                          <p className="text-xl font-bold text-orange-400">
+                            {usageRecords.reduce((sum, r) => sum + (r.quantityUsed || 0), 0)}
+                          </p>
+                        </div>
+                        <div className="bg-slate-900/50 rounded-lg p-3">
+                          <p className="text-xs text-slate-500 mb-1">Cars Used On</p>
+                          <p className="text-xl font-bold text-cyan-400">
+                            {new Set(usageRecords.filter(r => r.carName).map(r => r.carName)).size || 0}
+                          </p>
+                        </div>
+                        <div className="bg-slate-900/50 rounded-lg p-3">
+                          <p className="text-xs text-slate-500 mb-1">Total Cost</p>
+                          <p className="text-xl font-bold text-green-400">
+                            ${usageRecords.reduce((sum, r) => sum + r.cost + (r.laborCost || 0), 0).toLocaleString()}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ));
+                  </>
+                );
               })()}
             </div>
-
-            {/* Lifecycle Stats */}
-            {(() => {
-              const usageRecords = partsUsageHistory.filter(
-                u => u.partNumber === selectedPartForHistory.partNumber || 
-                     u.partId === selectedPartForHistory.id
-              );
-              
-              if (usageRecords.length > 0) {
-                const totalCost = usageRecords.reduce((sum, r) => sum + r.cost + (r.laborCost || 0), 0);
-                const installs = usageRecords.filter(r => r.action === 'installed').length;
-                const removals = usageRecords.filter(r => r.action === 'removed').length;
-                
-                return (
-                  <div className="mt-6 pt-6 border-t border-slate-700">
-                    <h4 className="font-medium text-white mb-4">Lifecycle Summary</h4>
-                    <div className="grid grid-cols-4 gap-4">
-                      <div className="bg-slate-900/50 rounded-lg p-3">
-                        <p className="text-xs text-slate-500 mb-1">Total Records</p>
-                        <p className="text-xl font-bold text-white">{usageRecords.length}</p>
-                      </div>
-                      <div className="bg-slate-900/50 rounded-lg p-3">
-                        <p className="text-xs text-slate-500 mb-1">Installs</p>
-                        <p className="text-xl font-bold text-green-400">{installs}</p>
-                      </div>
-                      <div className="bg-slate-900/50 rounded-lg p-3">
-                        <p className="text-xs text-slate-500 mb-1">Removals</p>
-                        <p className="text-xl font-bold text-red-400">{removals}</p>
-                      </div>
-                      <div className="bg-slate-900/50 rounded-lg p-3">
-                        <p className="text-xs text-slate-500 mb-1">Total Cost</p>
-                        <p className="text-xl font-bold text-orange-400">${totalCost.toLocaleString()}</p>
-                      </div>
-                    </div>
-                  </div>
-                );
-              }
-              return null;
-            })()}
 
             <div className="flex justify-end mt-6">
               <button
@@ -2019,6 +2034,7 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
           </div>
         </div>
       )}
+
 
       {/* Reorder List Generator Modal */}
       <ReorderListGenerator

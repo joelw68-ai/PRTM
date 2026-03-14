@@ -67,6 +67,8 @@ import {
 import PassComparison from './PassComparison';
 import OfflineSyncBanner from './OfflineSyncBanner';
 import WeatherVerifyPanel from './WeatherVerifyPanel';
+import PassLogAdvancedSearch from './PassLogAdvancedSearch';
+
 
 
 interface PassLogProps {
@@ -136,6 +138,10 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   // Pass comparison state
   const [selectedPassIds, setSelectedPassIds] = useState<Set<string>>(new Set());
   const [showComparison, setShowComparison] = useState(false);
+
+  // Advanced search state — when active, overrides the basic filtered passes for the table display
+  const [advancedFilteredPasses, setAdvancedFilteredPasses] = useState<PassLogEntry[] | null>(null);
+
 
   const activeEngine = getActiveEngine();
   const activeSupercharger = getActiveSupercharger();
@@ -651,13 +657,18 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
 
   const exportToCSV = () => {
+    exportPassesToCSV(filteredPasses);
+  };
+
+  // Shared CSV export function — used by both the header Export button and the Advanced Search Export button
+  const exportPassesToCSV = (passes: PassLogEntry[]) => {
     const headers = ['Date', 'Time', 'Track', 'Session', 'Lane', 'Result', 'RT', '60ft', '330ft', '1/8 ET', 'MPH', 'Temp', 'Humidity', 'Pressure', 'SAE', 'DA', 'Aborted', 'Notes'];
-    const rows = filteredPasses.map(p => [
+    const rows = passes.map(p => [
       p.date, p.time, p.track, p.sessionType, p.lane, p.result,
       p.reactionTime.toFixed(3), p.sixtyFoot.toFixed(3), p.threeThirty.toFixed(3),
       p.eighth.toFixed(3), p.mph.toFixed(1),
       p.weather.temperature, p.weather.humidity, p.weather.pressure.toFixed(2),
-      p.saeCorrection.toFixed(3), p.densityAltitude, p.aborted ? 'Yes' : 'No', p.notes
+      p.saeCorrection.toFixed(3), p.densityAltitude, p.aborted ? 'Yes' : 'No', `"${(p.notes || '').replace(/"/g, '""')}"`
     ]);
     
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -666,9 +677,14 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     const a = document.createElement('a');
     a.href = url;
     a.download = `pass_log_${getLocalDateString()}.csv`;
-
     a.click();
   };
+
+  // The passes actually displayed in the table: advanced search results take priority over basic filters
+  const displayPasses = advancedFilteredPasses ?? filteredPasses;
+
+  // Check if modal is in edit mode
+
 
   // Check if modal is in edit mode
   const isEditMode = editingPassId !== null;
@@ -795,7 +811,14 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
             </div>
           )}
 
-          {/* Filters */}
+          {/* Advanced Search & Filter Panel */}
+          <PassLogAdvancedSearch
+            passLogs={filteredPasses}
+            onFilteredResults={(results) => setAdvancedFilteredPasses(results)}
+            onExportCSV={(passes) => exportPassesToCSV(passes)}
+          />
+
+          {/* Quick Filters */}
           <div className="flex flex-col md:flex-row gap-4 mb-6">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -821,7 +844,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
             </select>
           </div>
 
-          {/* Pass Log Table */}
+
           <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">

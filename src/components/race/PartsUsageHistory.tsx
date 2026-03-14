@@ -39,7 +39,7 @@ import {
   PartUsageRecord,
   PartUsageAction,
   PartLifecycleStats,
-  partsUsageHistory,
+  loadPartsUsageHistory,
   calculatePartLifecycle,
   getUsageByPart,
   getRecentUsage
@@ -48,6 +48,37 @@ import {
 const PartsUsageHistory: React.FC = () => {
   const { partsInventory, workOrders, raceEvents } = useApp();
   
+  // ============ LIVE DATA FROM LOCALSTORAGE ============
+  const [usageData, setUsageData] = useState<PartUsageRecord[]>([]);
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+
+  // Load usage data from localStorage on mount and when refreshed
+  const refreshData = useCallback(() => {
+    const records = loadPartsUsageHistory();
+    setUsageData(records);
+    setLastRefresh(new Date());
+  }, []);
+
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
+
+  // Also listen for storage events (cross-tab sync) and custom events
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'raceLogbook_partsUsageHistory') {
+        refreshData();
+      }
+    };
+    const handleCustomRefresh = () => refreshData();
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('partsUsageUpdated', handleCustomRefresh);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('partsUsageUpdated', handleCustomRefresh);
+    };
+  }, [refreshData]);
+
   const [activeTab, setActiveTab] = useState<'history' | 'analytics' | 'predictions'>('history');
   const [searchTerm, setSearchTerm] = useState('');
   const [actionFilter, setActionFilter] = useState<string>('all');
@@ -57,15 +88,16 @@ const PartsUsageHistory: React.FC = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedPartForAnalytics, setSelectedPartForAnalytics] = useState<string | null>(null);
   
-  // Get unique components from usage history
+  // Get unique components from usage history — uses live localStorage data
   const uniqueComponents = useMemo(() => {
-    const components = new Set(partsUsageHistory.map(u => u.installedOn));
+    const components = new Set(usageData.map(u => u.installedOn));
     return Array.from(components).sort();
-  }, []);
+  }, [usageData]);
+
   
-  // Filter usage records
+  // Filter usage records — uses live localStorage data
   const filteredRecords = useMemo(() => {
-    let records = [...partsUsageHistory];
+    let records = [...usageData];
     
     // Search filter
     if (searchTerm) {
@@ -118,11 +150,11 @@ const PartsUsageHistory: React.FC = () => {
     records.sort((a, b) => parseLocalDate(b.date).getTime() - parseLocalDate(a.date).getTime());
     return records;
 
-  }, [searchTerm, actionFilter, dateFilter, componentFilter]);
-  
-  // Calculate lifecycle stats for all unique parts
+  }, [usageData, searchTerm, actionFilter, dateFilter, componentFilter]);
+
+  // Calculate lifecycle stats for all unique parts — uses live localStorage data
   const lifecycleStats = useMemo(() => {
-    const uniqueParts = new Set(partsUsageHistory.map(u => u.partNumber));
+    const uniqueParts = new Set(usageData.map(u => u.partNumber));
     const stats: PartLifecycleStats[] = [];
     
     uniqueParts.forEach(partNumber => {
@@ -133,16 +165,16 @@ const PartsUsageHistory: React.FC = () => {
     });
     
     return stats.sort((a, b) => b.totalCostOwnership - a.totalCostOwnership);
-  }, []);
+  }, [usageData]);
   
-  // Summary statistics
+  // Summary statistics — uses live localStorage data
   const summaryStats = useMemo(() => {
-    const totalRecords = partsUsageHistory.length;
-    const totalCost = partsUsageHistory.reduce((sum, r) => sum + r.cost + (r.laborCost || 0), 0);
-    const installs = partsUsageHistory.filter(r => r.action === 'installed').length;
-    const removals = partsUsageHistory.filter(r => r.action === 'removed').length;
-    const replacements = partsUsageHistory.filter(r => r.action === 'replaced').length;
-    const failures = partsUsageHistory.filter(r => r.conditionOnRemoval === 'Failed' || r.conditionOnRemoval === 'Damaged').length;
+    const totalRecords = usageData.length;
+    const totalCost = usageData.reduce((sum, r) => sum + r.cost + (r.laborCost || 0), 0);
+    const installs = usageData.filter(r => r.action === 'installed').length;
+    const removals = usageData.filter(r => r.action === 'removed').length;
+    const replacements = usageData.filter(r => r.action === 'replaced').length;
+    const failures = usageData.filter(r => r.conditionOnRemoval === 'Failed' || r.conditionOnRemoval === 'Damaged').length;
     const recentActivity = getRecentUsage(30).length;
     
     return {
@@ -155,20 +187,18 @@ const PartsUsageHistory: React.FC = () => {
       recentActivity,
       failureRate: removals > 0 ? ((failures / removals) * 100).toFixed(1) : '0'
     };
-  }, []);
+  }, [usageData]);
+
   
-  // Predictions based on lifecycle data
+  // Predictions based on lifecycle data — uses live localStorage data
   const predictions = useMemo(() => {
     return lifecycleStats
       .filter(s => s.averagePassesPerUse > 0 && s.currentlyInstalled)
       .map(s => {
-        const currentPart = partsUsageHistory
-
+        const currentPart = usageData
           .filter(u => u.partNumber === s.partNumber && u.action === 'installed')
           .sort((a, b) => parseLocalDate(b.date).getTime() - parseLocalDate(a.date).getTime())[0];
 
-
-        
         if (!currentPart) return null;
         
         const passesAtInstall = currentPart.passesAtAction;
@@ -189,7 +219,8 @@ const PartsUsageHistory: React.FC = () => {
       })
       .filter(Boolean)
       .sort((a, b) => (b?.percentUsed || 0) - (a?.percentUsed || 0));
-  }, [lifecycleStats]);
+  }, [lifecycleStats, usageData]);
+
   
   const getActionIcon = (action: PartUsageAction) => {
     switch (action) {
@@ -372,10 +403,23 @@ const PartsUsageHistory: React.FC = () => {
               <History className="w-7 h-7 text-orange-500" />
               Parts Usage History
             </h2>
-            <p className="text-slate-400">Track part installations, removals, and lifecycle analytics</p>
+            <div className="flex items-center gap-2">
+              <p className="text-slate-400">Track part installations, removals, and lifecycle analytics</p>
+              <span className="text-xs text-slate-500">
+                Last refreshed: {lastRefresh.toLocaleTimeString()}
+              </span>
+            </div>
           </div>
           
           <div className="flex items-center gap-3">
+            <button
+              onClick={refreshData}
+              className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors"
+              title="Reload usage records from storage"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
             <button
               onClick={exportToCSV}
               className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors"
@@ -400,6 +444,7 @@ const PartsUsageHistory: React.FC = () => {
           </div>
         </div>
         
+
         {/* Summary Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
           <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
@@ -760,10 +805,11 @@ const PartsUsageHistory: React.FC = () => {
               </h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {['Engine', 'Cylinder Heads', 'Supercharger', 'Drivetrain', 'Tires', 'Brakes', 'Electronics', 'Safety'].map(category => {
-                  const categoryRecords = partsUsageHistory.filter(r => 
+                  const categoryRecords = usageData.filter(r => 
                     r.installedOn.toLowerCase().includes(category.toLowerCase()) ||
                     r.partDescription.toLowerCase().includes(category.toLowerCase())
                   );
+
                   const totalCost = categoryRecords.reduce((sum, r) => sum + r.cost + (r.laborCost || 0), 0);
                   const maxCost = 15000; // For bar scaling
                   

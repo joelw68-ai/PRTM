@@ -2,9 +2,14 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { getLocalDateString } from '@/lib/utils';
 import DateInputDark from '@/components/ui/DateInputDark';
 import { useApp } from '@/contexts/AppContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { useCar } from '@/contexts/CarContext';
 import { MaintenanceItem } from '@/data/proModData';
 import { PartInventoryItem } from '@/data/partsInventory';
+import { addPartsUsageRecord, PartUsageRecord } from '@/data/partsUsageData';
+import { insertPartsUsage } from '@/lib/teamMembership';
 import { toast } from 'sonner';
+
 import {
   CheckCircle,
   X,
@@ -73,6 +78,21 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
     updatePartInventory
   } = useApp();
 
+  // Auth & Car context for parts usage history
+  let authUser: any = null;
+  let authIsDemoMode = false;
+  try {
+    const auth = useAuth();
+    authUser = auth.user;
+    authIsDemoMode = auth.isDemoMode;
+  } catch { /* auth context may not be available */ }
+
+  let carGetLabel: (id: string | null) => string = () => 'Unknown Car';
+  try {
+    const carCtx = useCar();
+    carGetLabel = carCtx.getCarLabel;
+  } catch { /* car context may not be available */ }
+
   // Form state
   const [dateCompleted, setDateCompleted] = useState(getLocalDateString());
   const [passNumber, setPassNumber] = useState<string>('');
@@ -102,11 +122,10 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filtered parts for dropdown — pulls directly from parts_inventory via AppContext
+  // Filtered parts for dropdown
   const filteredParts = useMemo(() => {
     const alreadySelectedIds = new Set(selectedParts.map(p => p.partId));
     let results = partsInventory.filter(p => !alreadySelectedIds.has(p.id));
-
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
       results = results.filter(p =>
@@ -117,67 +136,37 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
         p.vendor.toLowerCase().includes(term)
       );
     }
-
     return results.slice(0, 25);
   }, [partsInventory, searchTerm, selectedParts]);
 
-  // Keyboard navigation for dropdown
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!isDropdownOpen) {
-      if (e.key === 'ArrowDown' || e.key === 'Enter') {
-        setIsDropdownOpen(true);
-        setActiveDropdownIdx(0);
-        e.preventDefault();
-      }
+      if (e.key === 'ArrowDown' || e.key === 'Enter') { setIsDropdownOpen(true); setActiveDropdownIdx(0); e.preventDefault(); }
       return;
     }
-
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setActiveDropdownIdx(prev =>
-        prev === null ? 0 : Math.min(prev + 1, filteredParts.length - 1)
-      );
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setActiveDropdownIdx(prev =>
-        prev === null ? 0 : Math.max(prev - 1, 0)
-      );
-    } else if (e.key === 'Enter' && activeDropdownIdx !== null) {
-      e.preventDefault();
-      const part = filteredParts[activeDropdownIdx];
-      if (part) addPart(part);
-    } else if (e.key === 'Escape') {
-      setIsDropdownOpen(false);
-      setActiveDropdownIdx(null);
-    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveDropdownIdx(prev => prev === null ? 0 : Math.min(prev + 1, filteredParts.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveDropdownIdx(prev => prev === null ? 0 : Math.max(prev - 1, 0)); }
+    else if (e.key === 'Enter' && activeDropdownIdx !== null) { e.preventDefault(); const part = filteredParts[activeDropdownIdx]; if (part) addPart(part); }
+    else if (e.key === 'Escape') { setIsDropdownOpen(false); setActiveDropdownIdx(null); }
   }, [isDropdownOpen, activeDropdownIdx, filteredParts]);
 
-  // Add a part to the selected list
   const addPart = (part: PartInventoryItem) => {
     setSelectedParts(prev => [...prev, { partId: part.id, quantity: 1 }]);
-    setSearchTerm('');
-    setIsDropdownOpen(false);
-    setActiveDropdownIdx(null);
+    setSearchTerm(''); setIsDropdownOpen(false); setActiveDropdownIdx(null);
   };
 
-  // Update quantity for a selected part
   const updateQuantity = (partId: string, quantity: number) => {
-    setSelectedParts(prev =>
-      prev.map(p => p.partId === partId ? { ...p, quantity: Math.max(1, quantity) } : p)
-    );
+    setSelectedParts(prev => prev.map(p => p.partId === partId ? { ...p, quantity: Math.max(1, quantity) } : p));
   };
 
-  // Remove a part from the selected list
   const removePart = (partId: string) => {
     setSelectedParts(prev => prev.filter(p => p.partId !== partId));
   };
 
-  // Get part details from inventory
   const getPartDetails = (partId: string): PartInventoryItem | undefined => {
     return partsInventory.find(p => p.id === partId);
   };
 
-  // Calculate total parts cost
   const totalPartsCost = useMemo(() => {
     return selectedParts.reduce((sum, sp) => {
       const part = getPartDetails(sp.partId);
@@ -191,7 +180,7 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
     setIsSubmitting(true);
 
     try {
-      // 1) Mark maintenance item as completed — reset pass counter to 0, set status Good
+      // 1) Mark maintenance item as completed
       await updateMaintenanceItem(item.id, {
         lastService: dateCompleted,
         currentPasses: 0,
@@ -202,12 +191,15 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
           : item.notes
       });
 
-      // 2) Deduct each selected part from parts_inventory on_hand and track low-stock
+      // 2) Deduct each selected part from inventory AND write parts usage history
       const lowStockParts: { id: string; partNumber: string; description: string; onHand: number; minQuantity: number; vendor: string }[] = [];
+      const carName = item.car_id ? carGetLabel(item.car_id) : 'Unassigned';
+      const maintenanceReason = `Maintenance: ${item.component}`;
 
       for (const sp of selectedParts) {
         const inventoryPart = partsInventory.find(p => p.id === sp.partId);
         if (inventoryPart) {
+          const previousOnHand = inventoryPart.onHand;
           const newOnHand = Math.max(0, inventoryPart.onHand - sp.quantity);
           const status: PartInventoryItem['status'] =
             newOnHand === 0 ? 'Out of Stock' :
@@ -216,6 +208,7 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
             newOnHand === 0 ? 'Critical' :
             newOnHand <= inventoryPart.minQuantity ? 'Reorder' : 'OK';
 
+          // 2a) Deduct from inventory
           await updatePartInventory(inventoryPart.id, {
             onHand: newOnHand,
             totalValue: newOnHand * inventoryPart.unitCost,
@@ -223,6 +216,49 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
             reorderStatus,
             lastUsed: dateCompleted
           });
+
+          // 2b) Write to Parts Usage History (localStorage)
+          const usageRecord: PartUsageRecord = {
+            id: `PU-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            partId: inventoryPart.id,
+            partNumber: inventoryPart.partNumber,
+            partDescription: inventoryPart.description,
+            action: 'installed',
+            date: dateCompleted,
+            time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+            installedOn: maintenanceReason,
+            passesAtAction: passNumber ? parseInt(passNumber) : item.currentPasses,
+            quantityUsed: sp.quantity,
+            carId: item.car_id || undefined,
+            carName: carName,
+            cost: inventoryPart.unitCost * sp.quantity,
+            performedBy: authUser?.email || 'System',
+            notes: `${maintenanceReason}${notes ? ' — ' + notes : ''} | Qty: ${sp.quantity} | Car: ${carName}`,
+          };
+          addPartsUsageRecord(usageRecord);
+
+          // 2c) Also write to Supabase parts_usage_log (non-blocking, best-effort)
+          try {
+            await insertPartsUsage({
+              partId: inventoryPart.id,
+              partNumber: inventoryPart.partNumber,
+              partDescription: inventoryPart.description,
+              quantityUsed: sp.quantity,
+              unitCost: inventoryPart.unitCost,
+              totalCost: inventoryPart.unitCost * sp.quantity,
+              usageDate: dateCompleted,
+              usageType: 'maintenance',
+              relatedId: item.id,
+              relatedTitle: maintenanceReason,
+              notes: `${maintenanceReason}${notes ? ' — ' + notes : ''} | Car: ${carName}${passNumber ? ' | Pass #' + passNumber : ''}`,
+              recordedBy: authUser?.email || 'System',
+              previousOnHand: previousOnHand,
+              newOnHand: newOnHand,
+            }, authUser?.id);
+          } catch (dbErr) {
+            // Non-fatal: localStorage record was already saved above
+            console.warn('Failed to write parts usage to Supabase (localStorage record saved):', dbErr);
+          }
 
           if (newOnHand <= inventoryPart.minQuantity) {
             lowStockParts.push({
@@ -258,23 +294,20 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
         notes,
         timestamp: new Date().toISOString()
       };
-
       const existingHistory = loadMaintenanceHistory();
-      const updatedHistory = [historyEntry, ...existingHistory];
-      saveMaintenanceHistory(updatedHistory);
+      saveMaintenanceHistory([historyEntry, ...existingHistory]);
 
-      // 4) Show success toast
+      // 4) Success toast
       const partsCount = selectedParts.length;
       toast.success(`Maintenance completed: ${item.component}`, {
         description: partsCount > 0
-          ? `${partsCount} part${partsCount > 1 ? 's' : ''} deducted from inventory. Pass counter reset. Next due in ${item.passInterval} passes.`
+          ? `${partsCount} part${partsCount > 1 ? 's' : ''} deducted from inventory and logged to usage history. Pass counter reset.`
           : `Pass counter reset to 0. Next due in ${item.passInterval} passes.`,
         duration: 5000,
       });
 
-      // 5) Show low-stock warnings
+      // 5) Low-stock warnings
       if (lowStockParts.length > 0) {
-        // Store for PartsInventory to pick up
         try {
           localStorage.setItem('raceLogbook_lowStockPORequest', JSON.stringify({
             partIds: lowStockParts.map(p => p.id),
@@ -282,9 +315,7 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
             source: 'maintenance_completion',
             maintenanceComponent: item.component
           }));
-        } catch (e) {
-          console.warn('Failed to store PO request:', e);
-        }
+        } catch (e) { console.warn('Failed to store PO request:', e); }
 
         if (lowStockParts.length <= 3) {
           lowStockParts.forEach((part, index) => {
@@ -292,10 +323,7 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
               toast.warning(`Low Stock Alert: ${part.partNumber}`, {
                 description: `${part.description} — ${part.onHand === 0 ? 'OUT OF STOCK' : `only ${part.onHand} remaining`} (min: ${part.minQuantity})`,
                 duration: 15000,
-                action: onNavigate ? {
-                  label: 'Go to Parts',
-                  onClick: () => onNavigate('parts')
-                } : undefined
+                action: onNavigate ? { label: 'Go to Parts', onClick: () => onNavigate('parts') } : undefined
               });
             }, (index + 1) * 800);
           });
@@ -305,16 +333,12 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
             toast.warning(`${lowStockParts.length} Parts Below Minimum Stock`, {
               description: `${outOfStock > 0 ? `${outOfStock} out of stock. ` : ''}${lowStockParts.map(p => p.partNumber).join(', ')}`,
               duration: 15000,
-              action: onNavigate ? {
-                label: 'Go to Parts',
-                onClick: () => onNavigate('parts')
-              } : undefined
+              action: onNavigate ? { label: 'Go to Parts', onClick: () => onNavigate('parts') } : undefined
             });
           }, 800);
         }
       }
 
-      // Close modal and notify parent
       onCompleted();
       onClose();
     } catch (error) {
@@ -324,6 +348,7 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
       setIsSubmitting(false);
     }
   };
+
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
