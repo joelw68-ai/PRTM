@@ -113,8 +113,10 @@ const toSupercharger = (row: any): Supercharger => ({
   status: row.status || 'Ready',
   currentlyInstalled: row.currently_installed || false,
   notes: row.notes || '',
+  powerAdderType: row.power_adder_type || 'Supercharger',
   car_id: row.car_id || ''
 });
+
 
 
 const toCylinderHead = (row: any): CylinderHead => ({
@@ -426,7 +428,7 @@ export const fetchSuperchargers = async (userId?: string): Promise<Supercharger[
 };
 
 export const upsertSupercharger = async (sc: Supercharger, userId?: string): Promise<void> => {
-  const payload: any = {
+  const basePayload: any = {
     id: sc.id,
     name: sc.name,
     serial_number: emptyToNull(sc.serialNumber),
@@ -439,11 +441,25 @@ export const upsertSupercharger = async (sc: Supercharger, userId?: string): Pro
     notes: emptyToNull(sc.notes)
   };
   
-  if (userId) payload.user_id = userId;
+  if (userId) basePayload.user_id = userId;
+
+  // Attempt 1: Include power_adder_type column
+  const fullPayload = { ...basePayload, power_adder_type: emptyToNull(sc.powerAdderType) || 'Supercharger' };
+  const { error: fullError } = await supabase.from('superchargers').upsert(fullPayload);
   
-  const { error } = await supabase.from('superchargers').upsert(payload);
-  if (error) throw error;
+  if (!fullError) return;
+
+  // If the error is about an unknown column, retry without power_adder_type
+  if (isUnknownColumnError(fullError)) {
+    console.warn('[upsertSupercharger] power_adder_type column not found — retrying without it.');
+    const { error: baseError } = await supabase.from('superchargers').upsert(basePayload);
+    if (baseError) throw baseError;
+    return;
+  }
+
+  throw fullError;
 };
+
 
 
 export const deleteSupercharger = async (id: string): Promise<void> => {

@@ -124,6 +124,8 @@ export interface HeadComponents {
   oilingJets: ComponentTracker;
 }
 
+export type PowerAdderType = 'Supercharger' | 'Turbocharger' | 'Nitrous' | 'ProCharger' | 'Twin Turbo' | 'Centrifugal Supercharger' | 'Other';
+
 export interface Supercharger {
   id: string;
   name: string;
@@ -135,6 +137,7 @@ export interface Supercharger {
   status: 'Active' | 'Ready' | 'Service' | 'Retired';
   currentlyInstalled: boolean;
   notes: string;
+  powerAdderType?: PowerAdderType;
   // Multi-car support
   car_id?: string;
 }

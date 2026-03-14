@@ -4,12 +4,23 @@ import { User, Session, AuthError } from '@supabase/supabase-js';
 import { parseRows } from '@/lib/validatedQuery';
 import { TeamMembershipRowSchema } from '@/lib/validators';
 
+export interface DriverLicense {
+  id: string;
+  sanctioningBody: 'NHRA' | 'IHRA';
+  licenseClass: string;
+  licenseNumber: string;
+  expirationDate: string;
+  isPrimary: boolean;
+}
+
 export interface UserProfile {
   id: string;
   teamName: string;
   driverName?: string;
   driverLicenseNumber?: string;
   driverLicenseClass?: string;
+  driverLicenseExpiration?: string;
+  driverLicenses?: DriverLicense[];
   carName?: string;
   carNumber?: string;
   carClass: string;
@@ -27,6 +38,8 @@ export interface UserProfile {
   createdAt: string;
   updatedAt: string;
 }
+
+
 
 export interface SignUpResult {
   error: AuthError | null;
@@ -76,12 +89,15 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // Convert database row to UserProfile
+
 const toUserProfile = (row: any): UserProfile => ({
   id: row.id,
   teamName: row.team_name || 'My Race Team',
   driverName: row.driver_name,
   driverLicenseNumber: row.driver_license_number,
   driverLicenseClass: row.driver_license_class,
+  driverLicenseExpiration: row.driver_license_expiration || undefined,
+  driverLicenses: Array.isArray(row.driver_licenses) ? row.driver_licenses : [],
   carName: row.car_name,
   carNumber: row.car_number,
   carClass: row.car_class || 'Pro Mod',
@@ -100,13 +116,33 @@ const toUserProfile = (row: any): UserProfile => ({
   updatedAt: row.updated_at
 });
 
+
+
 // Demo mode profile
 const DEMO_PROFILE: UserProfile = {
   id: 'demo-user',
   teamName: 'Demo Racing Team',
   driverName: 'Demo Driver',
   driverLicenseNumber: 'DEMO-001',
-  driverLicenseClass: 'Pro Mod',
+  driverLicenseClass: 'NHRA Pro Mod',
+  driverLicenses: [
+    {
+      id: 'demo-lic-1',
+      sanctioningBody: 'NHRA',
+      licenseClass: 'NHRA Pro Mod',
+      licenseNumber: 'NHRA-2026-001',
+      expirationDate: '2026-12-31',
+      isPrimary: true,
+    },
+    {
+      id: 'demo-lic-2',
+      sanctioningBody: 'IHRA',
+      licenseClass: 'IHRA Pro Mod',
+      licenseNumber: 'IHRA-2026-042',
+      expirationDate: '2026-06-15',
+      isPrimary: false,
+    },
+  ],
   carName: 'Demo Machine',
   carNumber: '00',
   carClass: 'Pro Mod',
@@ -122,6 +158,7 @@ const DEMO_PROFILE: UserProfile = {
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString()
 };
+
 
 const DEMO_MODE_KEY = 'promod_demo_mode';
 
@@ -669,6 +706,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         driver_name: updates.driverName ?? null,
         driver_license_number: updates.driverLicenseNumber ?? null,
         driver_license_class: updates.driverLicenseClass ?? null,
+        driver_license_expiration: updates.driverLicenseExpiration || null,
+        driver_licenses: updates.driverLicenses !== undefined ? JSON.stringify(updates.driverLicenses) : undefined,
         car_name: updates.carName ?? null,
         car_number: updates.carNumber ?? null,
         car_class: updates.carClass ?? null,
@@ -685,6 +724,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         notes: updates.notes ?? null,
         updated_at: new Date().toISOString(),
       };
+
+      // Remove undefined keys so they don't overwrite existing data
+      Object.keys(payload).forEach(key => {
+        if (payload[key] === undefined) delete payload[key];
+      });
+
+
 
       // Ensure team_name is never null (DB has NOT NULL or default)
       if (!payload.team_name) payload.team_name = 'My Race Team';

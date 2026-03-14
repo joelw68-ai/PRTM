@@ -9,7 +9,8 @@ import ChassisSetup from '@/components/race/ChassisSetup';
 
 import { useApp } from '@/contexts/AppContext';
 
-import { ComponentTracker } from '@/data/proModData';
+import { ComponentTracker, PowerAdderType } from '@/data/proModData';
+
 import { DrivetrainComponent, DrivetrainCategory, DrivetrainSwapLog } from '@/lib/database';
 
 
@@ -35,8 +36,11 @@ import {
   Package,
   RefreshCw,
   ExternalLink,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Bell,
+  ShieldAlert
 } from 'lucide-react';
+
 
 
 interface SetupLibraryProps {
@@ -93,8 +97,26 @@ interface Supercharger {
   status: 'Active' | 'Ready' | 'Service' | 'Retired';
   currentlyInstalled: boolean;
   notes: string;
+  powerAdderType?: PowerAdderType;
   components?: Record<string, ComponentTracker>;
 }
+
+// Power Adder Type options and color mapping
+const POWER_ADDER_TYPES: PowerAdderType[] = ['Supercharger', 'Turbocharger', 'Nitrous', 'ProCharger', 'Twin Turbo', 'Centrifugal Supercharger', 'Other'];
+
+const getPowerAdderTypeBadgeColor = (type?: PowerAdderType): string => {
+  switch (type) {
+    case 'Supercharger': return 'bg-violet-500/20 text-violet-400 border-violet-500/40';
+    case 'Turbocharger': return 'bg-sky-500/20 text-sky-400 border-sky-500/40';
+    case 'Nitrous': return 'bg-rose-500/20 text-rose-400 border-rose-500/40';
+    case 'ProCharger': return 'bg-amber-500/20 text-amber-400 border-amber-500/40';
+    case 'Twin Turbo': return 'bg-teal-500/20 text-teal-400 border-teal-500/40';
+    case 'Centrifugal Supercharger': return 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40';
+    case 'Other': return 'bg-slate-500/20 text-slate-400 border-slate-500/40';
+    default: return 'bg-slate-500/20 text-slate-400 border-slate-500/40';
+  }
+};
+
 
 const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => {
 
@@ -146,6 +168,14 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   const [expandedHead, setExpandedHead] = useState<string | null>(null);
   const [expandedSC, setExpandedSC] = useState<string | null>(null);
   const [expandedDT, setExpandedDT] = useState<string | null>(null);
+
+  // Power Adder Type filter
+  const [powerAdderTypeFilter, setPowerAdderTypeFilter] = useState<PowerAdderType | 'All'>('All');
+  const filteredSuperchargers = useMemo(() => {
+    if (powerAdderTypeFilter === 'All') return superchargers;
+    return superchargers.filter((sc: any) => (sc.powerAdderType || 'Supercharger') === powerAdderTypeFilter);
+  }, [superchargers, powerAdderTypeFilter]);
+
 
   // Drivetrain Swap Modal state
   const [showSwapModal, setShowSwapModal] = useState(false);
@@ -342,6 +372,92 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   const [newSC, setNewSC] = useState<Supercharger>(defaultSupercharger);
   const [newComponent, setNewComponent] = useState<ComponentTracker>(defaultComponent);
 
+
+  // ─── Service Alert System ───────────────────────────────────────────────────
+  const [serviceAlertThreshold, setServiceAlertThreshold] = useState(80); // percentage
+  const [showAlertSettings, setShowAlertSettings] = useState(false);
+  const [alertBannerDismissed, setAlertBannerDismissed] = useState(false);
+
+  interface ServiceAlertItem {
+    parentType: 'engine' | 'powerAdder' | 'head' | 'drivetrain';
+    parentId: string;
+    parentName: string;
+    componentName: string;
+    passCount: number;
+    serviceInterval: number;
+    percentUsed: number;
+    severity: 'warning' | 'critical'; // warning = threshold reached, critical = exceeded 100%
+  }
+
+  const serviceAlerts = useMemo<ServiceAlertItem[]>(() => {
+    const alerts: ServiceAlertItem[] = [];
+    const threshold = serviceAlertThreshold / 100;
+
+    // Helper to check sub-components
+    const checkComponents = (
+      components: Record<string, ComponentTracker> | undefined,
+      parentType: ServiceAlertItem['parentType'],
+      parentId: string,
+      parentName: string
+    ) => {
+      if (!components) return;
+      Object.values(components).forEach((comp: ComponentTracker) => {
+        if (comp.serviceInterval > 0) {
+          const pct = comp.passCount / comp.serviceInterval;
+          if (pct >= threshold) {
+            alerts.push({
+              parentType,
+              parentId,
+              parentName,
+              componentName: comp.name,
+              passCount: comp.passCount,
+              serviceInterval: comp.serviceInterval,
+              percentUsed: Math.round(pct * 100),
+              severity: pct >= 1 ? 'critical' : 'warning'
+            });
+          }
+        }
+      });
+    };
+
+    // Check engines
+    engines.forEach((eng) => {
+      checkComponents(eng.components, 'engine', eng.id, eng.name);
+    });
+
+    // Check power adders
+    superchargers.forEach((sc) => {
+      const scTyped = sc as Supercharger;
+      checkComponents(scTyped.components, 'powerAdder', sc.id, sc.name);
+    });
+
+    // Check cylinder heads
+    cylinderHeads.forEach((head) => {
+      checkComponents(head.components, 'head', head.id, head.name);
+    });
+
+    // Check drivetrain sub-components
+    drivetrainComponents.forEach((dt) => {
+      if (dt.components) {
+        checkComponents(dt.components, 'drivetrain', dt.id, dt.name);
+      }
+    });
+
+    // Sort: critical first, then by percentUsed descending
+    alerts.sort((a, b) => {
+      if (a.severity === 'critical' && b.severity !== 'critical') return -1;
+      if (b.severity === 'critical' && a.severity !== 'critical') return 1;
+      return b.percentUsed - a.percentUsed;
+    });
+
+    return alerts;
+  }, [engines, superchargers, cylinderHeads, drivetrainComponents, serviceAlertThreshold]);
+
+  // Set of parent IDs that have alerts (for card highlighting)
+  const alertedParentIds = useMemo(() => new Set(serviceAlerts.map(a => a.parentId)), [serviceAlerts]);
+  const criticalParentIds = useMemo(() => new Set(serviceAlerts.filter(a => a.severity === 'critical').map(a => a.parentId)), [serviceAlerts]);
+
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'Good': return 'bg-green-500/20 text-green-400';
@@ -537,10 +653,11 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   const handleDeleteSC = async (id: string) => {
     const sc = superchargers.find(s => s.id === id);
     if (sc?.currentlyInstalled) {
-      alert('Cannot delete an installed supercharger. Swap it out first.');
+      alert('Cannot delete an installed power adder. Swap it out first.');
       return;
     }
-    if (confirm('Are you sure you want to delete this supercharger?')) {
+    if (confirm('Are you sure you want to delete this power adder?')) {
+
       await deleteSupercharger(id);
     }
   };
@@ -624,9 +741,65 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
             <h2 className="text-2xl font-bold text-white">Main Components</h2>
-            <p className="text-slate-400">Track engines, superchargers, cylinder heads, and drivetrain components</p>
+            <p className="text-slate-400">Track engines, power adders, cylinder heads, and drivetrain components</p>
+
           </div>
         </div>
+
+        {/* Service Alert Banner */}
+        {serviceAlerts.length > 0 && !alertBannerDismissed && (
+          <div className={`mb-6 rounded-xl border p-4 ${serviceAlerts.some(a => a.severity === 'critical') ? 'bg-red-500/10 border-red-500/40' : 'bg-amber-500/10 border-amber-500/40'}`}>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3 flex-1">
+                <div className={`mt-0.5 p-2 rounded-lg ${serviceAlerts.some(a => a.severity === 'critical') ? 'bg-red-500/20' : 'bg-amber-500/20'}`}>
+                  <ShieldAlert className={`w-5 h-5 ${serviceAlerts.some(a => a.severity === 'critical') ? 'text-red-400' : 'text-amber-400'}`} />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-1">
+                    <h3 className={`font-semibold ${serviceAlerts.some(a => a.severity === 'critical') ? 'text-red-400' : 'text-amber-400'}`}>
+                      Service Alerts: {serviceAlerts.length} component{serviceAlerts.length !== 1 ? 's' : ''} need attention
+                    </h3>
+                    <span className="text-xs text-slate-500">Threshold: {serviceAlertThreshold}%</span>
+                    <button onClick={() => setShowAlertSettings(!showAlertSettings)} className="text-xs text-slate-400 hover:text-white underline">
+                      {showAlertSettings ? 'Hide' : 'Settings'}
+                    </button>
+                  </div>
+                  {showAlertSettings && (
+                    <div className="flex items-center gap-3 mb-3 p-2 bg-slate-800/60 rounded-lg">
+                      <label className="text-xs text-slate-400 whitespace-nowrap">Alert Threshold:</label>
+                      <input
+                        type="range"
+                        min={50}
+                        max={100}
+                        value={serviceAlertThreshold}
+                        onChange={(e) => setServiceAlertThreshold(parseInt(e.target.value))}
+                        className="flex-1 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
+                      />
+                      <span className="text-sm font-bold text-white w-10 text-right">{serviceAlertThreshold}%</span>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-32 overflow-y-auto">
+                    {serviceAlerts.slice(0, 9).map((alert, idx) => (
+                      <div key={idx} className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${alert.severity === 'critical' ? 'bg-red-500/10 text-red-300' : 'bg-amber-500/10 text-amber-300'}`}>
+                        <AlertTriangle className={`w-3 h-3 flex-shrink-0 ${alert.severity === 'critical' ? 'text-red-400' : 'text-amber-400'}`} />
+                        <span className="truncate">
+                          <span className="font-medium">{alert.parentName}</span> - {alert.componentName} ({alert.percentUsed}%)
+                        </span>
+                      </div>
+                    ))}
+                    {serviceAlerts.length > 9 && (
+                      <div className="text-xs text-slate-500 px-2 py-1">+{serviceAlerts.length - 9} more...</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setAlertBannerDismissed(true)} className="text-slate-500 hover:text-white p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
 
         {/* Tabs - scrollable */}
         <div className="flex gap-2 mb-6 overflow-x-auto pb-2 scrollbar-hide">
@@ -636,7 +809,8 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
           </button>
           <button onClick={() => setActiveTab('superchargers')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${activeTab === 'superchargers' ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>
             <Wind className="w-4 h-4" />
-            Superchargers ({superchargers.length})
+            Power Adders ({superchargers.length})
+
           </button>
           <button onClick={() => setActiveTab('heads')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${activeTab === 'heads' ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>
             <Settings className="w-4 h-4" />
@@ -688,9 +862,12 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
               return (
                 <div 
                   key={engine.id}
-                  className={`bg-slate-800/50 rounded-xl border overflow-hidden ${
+                  className={`bg-slate-800/50 rounded-xl border overflow-hidden transition-all ${
+                    criticalParentIds.has(engine.id) ? 'border-red-500/70 animate-pulse ring-1 ring-red-500/30' :
+                    alertedParentIds.has(engine.id) ? 'border-amber-500/60 ring-1 ring-amber-500/20' :
                     engine.currentlyInstalled ? 'border-green-500/50' : 'border-slate-700/50'
                   }`}
+
                 >
                   <div 
                     className="p-4 cursor-pointer hover:bg-slate-700/20"
@@ -801,33 +978,60 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
           </div>
         )}
 
-        {/* Superchargers Tab */}
+        {/* Power Adders Tab */}
         {activeTab === 'superchargers' && (
           <div className="space-y-4">
-            <div className="flex justify-end mb-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+              {/* Filter by Power Adder Type */}
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => setPowerAdderTypeFilter('All')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${powerAdderTypeFilter === 'All' ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-300'}`}
+                >
+                  All ({superchargers.length})
+                </button>
+                {POWER_ADDER_TYPES.map(type => {
+                  const count = superchargers.filter((s: any) => (s.powerAdderType || 'Supercharger') === type).length;
+                  if (count === 0) return null;
+                  return (
+                    <button
+                      key={type}
+                      onClick={() => setPowerAdderTypeFilter(type)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${powerAdderTypeFilter === type ? 'bg-orange-500 text-white border-orange-500' : `${getPowerAdderTypeBadgeColor(type)} hover:opacity-80`}`}
+                    >
+                      {type} ({count})
+                    </button>
+                  );
+                })}
+              </div>
               <button
                 onClick={() => {
                   setEditingSC(null);
                   setNewSC(defaultSupercharger);
                   setShowSCModal(true);
                 }}
-                className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors whitespace-nowrap"
               >
                 <Plus className="w-4 h-4" />
-                Add Supercharger
+                Add Power Adder
               </button>
             </div>
+
             
-            {superchargers.map((sc) => {
+            {filteredSuperchargers.map((sc) => {
               const scTyped = sc as Supercharger;
               const issueCount = countComponentIssues(scTyped.components);
+              const paType = (sc as any).powerAdderType || 'Supercharger';
               
               return (
                 <div 
                   key={sc.id}
-                  className={`bg-slate-800/50 rounded-xl border overflow-hidden ${
+                  className={`bg-slate-800/50 rounded-xl border overflow-hidden transition-all ${
+                    criticalParentIds.has(sc.id) ? 'border-red-500/70 animate-pulse ring-1 ring-red-500/30' :
+                    alertedParentIds.has(sc.id) ? 'border-amber-500/60 ring-1 ring-amber-500/20' :
                     sc.currentlyInstalled ? 'border-green-500/50' : 'border-slate-700/50'
                   }`}
+
                 >
                   <div 
                     className="p-4 cursor-pointer hover:bg-slate-700/20"
@@ -841,8 +1045,11 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                           <Wind className={`w-6 h-6 ${sc.currentlyInstalled ? 'text-green-400' : 'text-slate-400'}`} />
                         </div>
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <h3 className="text-lg font-semibold text-white">{sc.name}</h3>
+                            <span className={`px-2 py-0.5 text-xs rounded font-medium border ${getPowerAdderTypeBadgeColor(paType)}`}>
+                              {paType}
+                            </span>
                             {sc.currentlyInstalled && (
                               <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded font-medium">
                                 INSTALLED
@@ -906,8 +1113,12 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                     <div className="border-t border-slate-700/50 p-4">
                       <div className="grid md:grid-cols-3 gap-6">
                         <div>
-                          <h4 className="font-medium text-white mb-3">Supercharger Details</h4>
+                          <h4 className="font-medium text-white mb-3">Power Adder Details</h4>
                           <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Type</span>
+                              <span className={`px-2 py-0.5 text-xs rounded font-medium border ${getPowerAdderTypeBadgeColor(paType)}`}>{paType}</span>
+                            </div>
                             <div className="flex justify-between">
                               <span className="text-slate-400">Model</span>
                               <span className="text-white">{sc.model}</span>
@@ -941,6 +1152,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
           </div>
         )}
 
+
         {/* Cylinder Heads Tab */}
         {activeTab === 'heads' && (
           <div className="space-y-4">
@@ -965,9 +1177,12 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
               return (
                 <div 
                   key={head.id}
-                  className={`bg-slate-800/50 rounded-xl border overflow-hidden ${
+                  className={`bg-slate-800/50 rounded-xl border overflow-hidden transition-all ${
+                    criticalParentIds.has(head.id) ? 'border-red-500/70 animate-pulse ring-1 ring-red-500/30' :
+                    alertedParentIds.has(head.id) ? 'border-amber-500/60 ring-1 ring-amber-500/20' :
                     head.status === 'Active' ? 'border-green-500/50' : 'border-slate-700/50'
                   }`}
+
                 >
                   <div 
                     className="p-4 cursor-pointer hover:bg-slate-700/20"
@@ -1826,7 +2041,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
           <div className="bg-slate-800 rounded-xl max-w-lg w-full p-6 border border-slate-700 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-xl font-bold text-white">
-                {editingSC ? 'Edit Supercharger' : 'Add New Supercharger'}
+                {editingSC ? 'Edit Power Adder' : 'Add New Power Adder'}
               </h3>
               <button onClick={() => setShowSCModal(false)} className="text-slate-400 hover:text-white">
                 <X className="w-6 h-6" />
@@ -1843,7 +2058,21 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                   className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   placeholder="e.g., Procharger #4 - Spare"
                 />
+               </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Power Adder Type</label>
+                <select
+                  value={newSC.powerAdderType || 'Supercharger'}
+                  onChange={(e) => setNewSC({...newSC, powerAdderType: e.target.value as PowerAdderType})}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  {POWER_ADDER_TYPES.map(type => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
               </div>
+
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -1936,7 +2165,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                 disabled={!newSC.name}
                 className="flex-1 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {editingSC ? 'Save Changes' : 'Add Supercharger'}
+                {editingSC ? 'Save Changes' : 'Add Power Adder'}
               </button>
             </div>
           </div>

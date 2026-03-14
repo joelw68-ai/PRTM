@@ -2,10 +2,11 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { getLocalDateString } from '@/lib/utils';
 import DateInputDark from '@/components/ui/DateInputDark';
 
-import { useAuth, UserProfile } from '@/contexts/AuthContext';
+import { useAuth, UserProfile, DriverLicense } from '@/contexts/AuthContext';
 import { useApp } from '@/contexts/AppContext';
 import TeamInviteFlow from './TeamInviteFlow';
 import TeamPhotos from './TeamPhotos';
+
 
 import { CrewRole, hasPermission, getRoleColor as getPermissionRoleColor, getRoleDescription } from '@/lib/permissions';
 import {
@@ -20,6 +21,7 @@ import {
   Loader2,
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
   Edit3,
   X,
   Gauge,
@@ -39,8 +41,29 @@ import {
   Lock,
   Info,
   DollarSign,
-  Camera
+  Camera,
+  Clock,
+  Star,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
+
+// Helper: compute license expiration status
+const getLicenseExpirationInfo = (expirationDate: string) => {
+  if (!expirationDate) return { diffDays: 0, isExpired: false, isExpiringSoon: false, formattedDate: '-' };
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const parts = expirationDate.split('-');
+  const exp = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  const diffMs = exp.getTime() - today.getTime();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  const isExpired = diffDays < 0;
+  const isExpiringSoon = !isExpired && diffDays <= 60;
+  const formattedDate = exp.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return { diffDays, isExpired, isExpiringSoon, formattedDate };
+};
+
+
 
 
 
@@ -79,8 +102,14 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
   const [editingMember, setEditingMember] = useState<TeamMember | null>(null);
   const [activeTab, setActiveTab] = useState<'profile' | 'team' | 'photos' | 'invites'>('profile');
 
+  // Multi-license state
+  const [licenses, setLicenses] = useState<DriverLicense[]>([]);
+  const [showAddLicense, setShowAddLicense] = useState(false);
+  const [editingLicenseId, setEditingLicenseId] = useState<string | null>(null);
+  const emptyLicense: Omit<DriverLicense, 'id'> = { sanctioningBody: 'NHRA', licenseClass: '', licenseNumber: '', expirationDate: '', isPrimary: false };
+  const [newLicenseForm, setNewLicenseForm] = useState<Omit<DriverLicense, 'id'>>(emptyLicense);
 
-  
+
   // Permission checks
   const canEditProfile = hasPermission(currentRole, 'settings.edit');
   const canEditTeam = hasPermission(currentRole, 'team.edit');
@@ -92,6 +121,7 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
     driverName: '',
     driverLicenseNumber: '',
     driverLicenseClass: '',
+    driverLicenseExpiration: '',
     carName: '',
     carNumber: '',
     carClass: 'Pro Mod',
@@ -106,6 +136,7 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
     contactPhone: '',
     notes: ''
   });
+
 
   const defaultNewMember: Partial<TeamMember> = {
     name: '',
@@ -134,6 +165,7 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
         driverName: profile.driverName || '',
         driverLicenseNumber: profile.driverLicenseNumber || '',
         driverLicenseClass: profile.driverLicenseClass || '',
+        driverLicenseExpiration: profile.driverLicenseExpiration || '',
         carName: profile.carName || '',
         carNumber: profile.carNumber || '',
         carClass: profile.carClass || 'Pro Mod',
@@ -148,25 +180,76 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
         contactPhone: profile.contactPhone || '',
         notes: profile.notes || ''
       });
+      // Load licenses from profile (with backward compat migration from single-license fields)
+      if (profile.driverLicenses && profile.driverLicenses.length > 0) {
+        setLicenses(profile.driverLicenses);
+      } else if (profile.driverLicenseNumber || profile.driverLicenseClass) {
+        // Migrate legacy single-license to multi-license
+        const body = (profile.driverLicenseClass || '').startsWith('IHRA') ? 'IHRA' : 'NHRA';
+        setLicenses([{
+          id: `legacy-${Date.now()}`,
+          sanctioningBody: body as 'NHRA' | 'IHRA',
+          licenseClass: profile.driverLicenseClass || '',
+          licenseNumber: profile.driverLicenseNumber || '',
+          expirationDate: profile.driverLicenseExpiration || '',
+          isPrimary: true,
+        }]);
+      } else {
+        setLicenses([]);
+      }
     }
   }, [profile, user]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    // CRITICAL FIX: Keep empty strings as empty strings (not undefined)
-    // so they get included in the update payload and clear the field in the DB
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
   const handleNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value === '' ? undefined : parseInt(value, 10)
-    }));
+    setFormData(prev => ({ ...prev, [name]: value === '' ? undefined : parseInt(value, 10) }));
+  };
+
+  // License CRUD handlers
+  const handleAddLicense = () => {
+    if (!newLicenseForm.licenseClass) return;
+    const newLic: DriverLicense = {
+      id: `lic-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      ...newLicenseForm,
+      isPrimary: licenses.length === 0 ? true : newLicenseForm.isPrimary,
+    };
+    // If new license is primary, un-primary all others
+    let updated = newLic.isPrimary ? licenses.map(l => ({ ...l, isPrimary: false })) : [...licenses];
+    updated.push(newLic);
+    setLicenses(updated);
+    setNewLicenseForm(emptyLicense);
+    setShowAddLicense(false);
+  };
+
+  const handleUpdateLicense = () => {
+    if (!editingLicenseId || !newLicenseForm.licenseClass) return;
+    let updated = licenses.map(l => {
+      if (l.id === editingLicenseId) return { ...l, ...newLicenseForm };
+      if (newLicenseForm.isPrimary) return { ...l, isPrimary: false };
+      return l;
+    });
+    setLicenses(updated);
+    setEditingLicenseId(null);
+    setNewLicenseForm(emptyLicense);
+    setShowAddLicense(false);
+  };
+
+  const handleDeleteLicense = (id: string) => {
+    const remaining = licenses.filter(l => l.id !== id);
+    // If deleted was primary, make the first remaining one primary
+    if (remaining.length > 0 && !remaining.some(l => l.isPrimary)) {
+      remaining[0].isPrimary = true;
+    }
+    setLicenses(remaining);
+  };
+
+  const handleSetPrimary = (id: string) => {
+    setLicenses(licenses.map(l => ({ ...l, isPrimary: l.id === id })));
   };
 
   const handleSave = async () => {
@@ -175,28 +258,32 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
     setSaveSuccess(false);
 
     try {
-      console.log('[TeamProfile] Saving profile with formData:', JSON.stringify(formData, null, 2));
-      const { error } = await updateProfile(formData);
+      // Sync primary license back to legacy single-license fields for backward compat
+      const primary = licenses.find(l => l.isPrimary) || licenses[0];
+      const saveData: Partial<UserProfile> = {
+        ...formData,
+        driverLicenseNumber: primary?.licenseNumber || '',
+        driverLicenseClass: primary?.licenseClass || '',
+        driverLicenseExpiration: primary?.expirationDate || '',
+        driverLicenses: licenses,
+      };
+      console.log('[TeamProfile] Saving profile with licenses:', licenses.length);
+      const { error } = await updateProfile(saveData);
 
       if (error) {
-        const errMsg = `Save failed: ${error.message}`;
-        console.error('[TeamProfile]', errMsg);
-        setSaveError(errMsg);
+        setSaveError(`Save failed: ${error.message}`);
       } else {
-        console.log('[TeamProfile] Profile saved successfully!');
         setSaveSuccess(true);
         setIsEditing(false);
+        setShowAddLicense(false);
+        setEditingLicenseId(null);
         setTimeout(() => setSaveSuccess(false), 3000);
       }
     } catch (err: any) {
-      const errMsg = `Unexpected error: ${err?.message || String(err)}`;
-      console.error('[TeamProfile]', errMsg);
-      setSaveError(errMsg);
+      setSaveError(`Unexpected error: ${err?.message || String(err)}`);
     }
-
     setIsSaving(false);
   };
-
 
   const handleCancel = () => {
     if (profile) {
@@ -205,6 +292,7 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
         driverName: profile.driverName || '',
         driverLicenseNumber: profile.driverLicenseNumber || '',
         driverLicenseClass: profile.driverLicenseClass || '',
+        driverLicenseExpiration: profile.driverLicenseExpiration || '',
         carName: profile.carName || '',
         carNumber: profile.carNumber || '',
         carClass: profile.carClass || 'Pro Mod',
@@ -219,9 +307,15 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
         contactPhone: profile.contactPhone || '',
         notes: profile.notes || ''
       });
+      // Reset licenses from profile
+      setLicenses(profile.driverLicenses || []);
     }
     setIsEditing(false);
+    setShowAddLicense(false);
+    setEditingLicenseId(null);
   };
+
+
 
   const handleSaveMember = async () => {
     if (!newMember.name) return;
@@ -290,8 +384,70 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
     );
   }
 
-  const licenseClasses = ['NHRA Pro Mod', 'PDRA Pro Mod', 'NMCA Pro Mod', 'Top Sportsman', 'Top Dragster', 'Super Street', 'Other'];
-  const carClasses = ['Pro Mod', 'Pro Nitrous', 'Pro Boost', 'Outlaw Pro Mod', 'X275', 'Radial vs World', 'No Prep', 'Other'];
+  const nhraLicenseClasses = [
+    'NHRA Top Fuel',
+    'NHRA Funny Car',
+    'NHRA Pro Stock',
+    'NHRA Pro Stock Motorcycle',
+    'NHRA Top Alcohol Dragster',
+    'NHRA Top Alcohol Funny Car',
+    'NHRA Pro Mod',
+    'NHRA Mountain Motor Pro Stock',
+    'NHRA Nostalgia Top Fuel',
+    'NHRA Nostalgia Funny Car',
+    'NHRA Top Fuel Harley',
+    'NHRA Pro Fuel Harley',
+    'NHRA Advanced ET',
+    'NHRA Heads Up Pro Mod',
+    'NHRA Competition Eliminator',
+    'NHRA Top Dragster',
+    'NHRA Top Sportsman',
+    'NHRA Factory Stock Showdown',
+    'NHRA Super Stock',
+    'NHRA Super Comp',
+    'NHRA Super Gas',
+    'NHRA Super Street',
+    'NHRA Snowmobile',
+    'NHRA ET Bracket',
+    'NHRA ET Bracket Motorcycle'
+  ];
+
+  const ihraLicenseClasses = [
+    'IHRA Top Fuel',
+    'IHRA Nitro Funny Car',
+    'IHRA Pro Stock',
+    'IHRA Pro Mod',
+    'IHRA Top Alcohol Dragster',
+    'IHRA Top Alcohol Funny Car',
+    'IHRA Pro Stock Motorcycle',
+    'IHRA Mountain Motor Pro Stock',
+    'IHRA Top Sportsman',
+    'IHRA Top Dragster',
+    'IHRA Quick Rod',
+    'IHRA Super Rod',
+    'IHRA Stock Eliminator',
+    'IHRA Super Stock',
+    'IHRA Hot Rod',
+    'IHRA Super Gas',
+    'IHRA Super Comp',
+    'IHRA Junior Dragster',
+    'IHRA ET Bracket',
+    'IHRA ET Bracket Motorcycle',
+    'IHRA Trophy',
+    'IHRA Outlaw Fuel Altered',
+    'IHRA Nitro Harley'
+  ];
+
+
+  const carClasses = [
+    'Pro Mod', 'Pro Nitrous', 'Pro Boost', 'Outlaw Pro Mod', 'X275',
+    'Radial vs World', 'No Prep', 'Top Sportsman', 'Top Dragster',
+    'Super Street', 'Limited Drag Radial',
+    'Outlaw 10.5', 'Pro Street 10.5', 'Small Tire 28 x 10.5', 'Ultra Street',
+    'Outlaw 632', 'Nitro Funny Car', 'Top Alcohol Funny Car',
+    'Top Fuel Dragster', 'Top Alcohol Dragster', 'Factory Stock', 'Other'
+  ];
+
   const engineTypes = ['Supercharged Hemi', 'Twin Turbo', 'ProCharger', 'Nitrous', 'Roots Blown', 'Screw Blown', 'Other'];
   const fuelTypes = ['Methanol', 'E85', 'Race Gas', 'VP Racing Fuel', 'Other'];
   const memberRoles: TeamMember['role'][] = ['Owner', 'Driver', 'Crew Chief', 'Crew', 'Mechanic', 'Tuner', 'Sponsor'];
@@ -465,7 +621,7 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
               </div>
             </div>
 
-            {/* Driver Information */}
+            {/* Driver Information + Multi-License System */}
             <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6">
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
@@ -484,29 +640,149 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">License Number</label>
-                    {isEditing ? (
-                      <input type="text" name="driverLicenseNumber" value={formData.driverLicenseNumber} onChange={handleChange} placeholder="NHRA License #" className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500" />
-                    ) : (
-                      <p className="text-white">{formData.driverLicenseNumber || '-'}</p>
+                {/* Racing Licenses Section */}
+                <div className="border-t border-slate-700/50 pt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-blue-400" />
+                      Racing Licenses ({licenses.length})
+                    </h4>
+                    {isEditing && (
+                      <button onClick={() => { setEditingLicenseId(null); setNewLicenseForm(emptyLicense); setShowAddLicense(true); }} className="flex items-center gap-1 px-2.5 py-1 bg-blue-500/20 text-blue-400 rounded text-xs font-medium hover:bg-blue-500/30 transition-colors border border-blue-500/30">
+                        <Plus className="w-3 h-3" /> Add License
+                      </button>
                     )}
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">License Class</label>
-                    {isEditing ? (
-                      <select name="driverLicenseClass" value={formData.driverLicenseClass} onChange={handleChange} className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-orange-500">
-                        <option value="">Select Class</option>
-                        {licenseClasses.map(cls => (<option key={cls} value={cls}>{cls}</option>))}
-                      </select>
-                    ) : (
-                      <p className="text-white">{formData.driverLicenseClass || '-'}</p>
-                    )}
-                  </div>
+
+                  {/* License List */}
+                  {licenses.length === 0 && !showAddLicense ? (
+                    <div className="text-center py-4 bg-slate-900/30 rounded-lg border border-dashed border-slate-700">
+                      <FileText className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                      <p className="text-slate-500 text-sm">No licenses added yet</p>
+                      {isEditing && <p className="text-slate-600 text-xs mt-1">Click "Add License" to add your first racing license</p>}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {/* Sort: primary first */}
+                      {[...licenses].sort((a, b) => (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0)).map(lic => {
+                        const exp = getLicenseExpirationInfo(lic.expirationDate);
+                        return (
+                          <div key={lic.id} className={`p-3 rounded-lg border ${lic.isPrimary ? 'bg-blue-500/5 border-blue-500/30' : 'bg-slate-900/30 border-slate-700/50'} ${exp.isExpired ? 'border-red-500/40' : exp.isExpiringSoon ? 'border-yellow-500/40' : ''}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  {lic.isPrimary && (
+                                    <span className="flex items-center gap-1 px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded text-[10px] font-semibold border border-blue-500/30 uppercase tracking-wider">
+                                      <Star className="w-2.5 h-2.5" /> Primary
+                                    </span>
+                                  )}
+                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${lic.sanctioningBody === 'NHRA' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 'bg-purple-500/20 text-purple-400 border border-purple-500/30'}`}>
+                                    {lic.sanctioningBody}
+                                  </span>
+                                  {exp.isExpired && (
+                                    <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded text-[10px] border border-red-500/30">
+                                      <AlertTriangle className="w-2.5 h-2.5" /> Expired
+                                    </span>
+                                  )}
+                                  {exp.isExpiringSoon && (
+                                    <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-[10px] border border-yellow-500/30">
+                                      <Clock className="w-2.5 h-2.5" /> {exp.diffDays}d left
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-white text-sm font-medium truncate">{lic.licenseClass || 'No class'}</p>
+                                <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
+                                  <span>#{lic.licenseNumber || '-'}</span>
+                                  <span className={`${exp.isExpired ? 'text-red-400' : exp.isExpiringSoon ? 'text-yellow-400' : ''}`}>
+                                    Exp: {exp.formattedDate}
+                                  </span>
+                                </div>
+                              </div>
+                              {isEditing && (
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  {!lic.isPrimary && (
+                                    <button onClick={() => handleSetPrimary(lic.id)} title="Set as primary" className="p-1 text-slate-500 hover:text-blue-400 hover:bg-slate-700 rounded transition-colors">
+                                      <Star className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  <button onClick={() => { setEditingLicenseId(lic.id); setNewLicenseForm({ sanctioningBody: lic.sanctioningBody, licenseClass: lic.licenseClass, licenseNumber: lic.licenseNumber, expirationDate: lic.expirationDate, isPrimary: lic.isPrimary }); setShowAddLicense(true); }} title="Edit" className="p-1 text-slate-500 hover:text-white hover:bg-slate-700 rounded transition-colors">
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button onClick={() => handleDeleteLicense(lic.id)} title="Remove" className="p-1 text-slate-500 hover:text-red-400 hover:bg-slate-700 rounded transition-colors">
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            {/* Individual warning banner */}
+                            {!isEditing && exp.isExpired && (
+                              <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-xs text-red-400">
+                                <AlertTriangle className="w-3 h-3 inline mr-1" />
+                                Expired {Math.abs(exp.diffDays)} day{Math.abs(exp.diffDays) !== 1 ? 's' : ''} ago — renew before your next {lic.sanctioningBody} event.
+                              </div>
+                            )}
+                            {!isEditing && exp.isExpiringSoon && (
+                              <div className="mt-2 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-xs text-yellow-400">
+                                <Clock className="w-3 h-3 inline mr-1" />
+                                Expires in {exp.diffDays} day{exp.diffDays !== 1 ? 's' : ''} — consider renewing your {lic.sanctioningBody} license soon.
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Add/Edit License Inline Form */}
+                  {showAddLicense && isEditing && (
+                    <div className="mt-3 p-3 bg-slate-900/50 rounded-lg border border-slate-600 space-y-3">
+                      <h5 className="text-sm font-medium text-white">{editingLicenseId ? 'Edit License' : 'Add New License'}</h5>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Sanctioning Body</label>
+                          <select value={newLicenseForm.sanctioningBody} onChange={e => setNewLicenseForm({ ...newLicenseForm, sanctioningBody: e.target.value as 'NHRA' | 'IHRA', licenseClass: '' })} className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                            <option value="NHRA">NHRA</option>
+                            <option value="IHRA">IHRA</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">License Class</label>
+                          <select value={newLicenseForm.licenseClass} onChange={e => setNewLicenseForm({ ...newLicenseForm, licenseClass: e.target.value })} className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                            <option value="">Select Class</option>
+                            {(newLicenseForm.sanctioningBody === 'NHRA' ? nhraLicenseClasses : ihraLicenseClasses).map(cls => (
+                              <option key={cls} value={cls}>{cls}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">License Number</label>
+                          <input type="text" value={newLicenseForm.licenseNumber} onChange={e => setNewLicenseForm({ ...newLicenseForm, licenseNumber: e.target.value })} placeholder="e.g., 12345" className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Expiration Date</label>
+                          <DateInputDark name="licExpDate" value={newLicenseForm.expirationDate} onChange={e => setNewLicenseForm({ ...newLicenseForm, expirationDate: e.target.value })} className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" id="licPrimary" checked={newLicenseForm.isPrimary} onChange={e => setNewLicenseForm({ ...newLicenseForm, isPrimary: e.target.checked })} className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500" />
+                        <label htmlFor="licPrimary" className="text-xs text-slate-300">Set as primary license</label>
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => { setShowAddLicense(false); setEditingLicenseId(null); setNewLicenseForm(emptyLicense); }} className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors">Cancel</button>
+                        <button onClick={editingLicenseId ? handleUpdateLicense : handleAddLicense} disabled={!newLicenseForm.licenseClass} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded font-medium hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                          {editingLicenseId ? 'Update' : 'Add License'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
+
+
+
 
             {/* Car Information */}
             <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6">

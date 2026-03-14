@@ -607,8 +607,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         {/* ═══════════════════════════════════════════════════════════
-            SECTION 6: MAIN COMPONENTS — Engines, Supercharger, Drivetrain
+            SECTION 6: MAIN COMPONENTS — Engines, Power Adder, Drivetrain
         ═══════════════════════════════════════════════════════════ */}
+
         <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden mb-6">
           <div className="bg-gradient-to-r from-orange-500/20 to-red-500/20 px-6 py-4 border-b border-slate-700/50">
             <SectionHeader icon={Cog} title="Main Components" iconColor="text-orange-400" navTarget="engines" />
@@ -689,11 +690,11 @@ const Dashboard: React.FC<DashboardProps> = ({
               </div>
             )}
 
-            {/* Active Supercharger */}
+            {/* Active Power Adder */}
             <div>
               <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
                 <Wind className="w-4 h-4 text-blue-400" />
-                Active Supercharger
+                Active Power Adder
               </h3>
               {activeSupercharger ? (
                 <div className="grid md:grid-cols-4 gap-4">
@@ -702,13 +703,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <div><p className="text-slate-400 text-xs">Total Passes</p><p className="text-white font-medium text-sm">{activeSupercharger.totalPasses}</p></div>
                   <div><p className="text-slate-400 text-xs">Since Service</p><p className={`font-medium text-sm ${activeSupercharger.passesSinceService > 75 ? 'text-yellow-400' : 'text-white'}`}>{activeSupercharger.passesSinceService}</p></div>
                 </div>
-              ) : <p className="text-slate-400 text-sm">No supercharger currently installed</p>}
+              ) : <p className="text-slate-400 text-sm">No power adder currently installed</p>}
             </div>
 
-            {/* Supercharger Inventory */}
+            {/* Power Adder Inventory */}
             {carSuperchargers.length > 0 && (
               <div>
-                <h3 className="text-sm font-semibold text-white mb-3">Supercharger Inventory ({carSuperchargers.length})</h3>
+                <h3 className="text-sm font-semibold text-white mb-3">Power Adder Inventory ({carSuperchargers.length})</h3>
+
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
                   {carSuperchargers.map(sc => (
                     <div key={sc.id} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg">
@@ -830,9 +832,10 @@ const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="bg-slate-900/50 rounded-lg p-4 text-center border border-slate-700/30 hover:border-teal-500/30 transition-colors cursor-pointer" onClick={() => onNavigate('engines')}>
               <Wind className="w-6 h-6 text-blue-400 mx-auto mb-2" />
-              <p className="text-white font-medium text-sm">Superchargers</p>
+              <p className="text-white font-medium text-sm">Power Adders</p>
               <p className="text-slate-400 text-xs mt-1">{carSuperchargers.length} total</p>
             </div>
+
             <div className="bg-slate-900/50 rounded-lg p-4 text-center border border-slate-700/30 hover:border-teal-500/30 transition-colors cursor-pointer" onClick={() => onNavigate('engines')}>
               <Cog className="w-6 h-6 text-cyan-400 mx-auto mb-2" />
               <p className="text-white font-medium text-sm">Drivetrain</p>

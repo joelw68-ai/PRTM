@@ -570,7 +570,8 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
     { id: 'team', label: 'Team Profile', icon: Users },
     { id: 'engines', label: 'Main Components', icon: Zap, count: engines.length },
 
-    { id: 'superchargers', label: 'Superchargers', icon: Wind, count: superchargers.length },
+    { id: 'superchargers', label: 'Power Adders', icon: Wind, count: superchargers.length },
+
     { id: 'heads', label: 'Cylinder Heads', icon: Settings2, count: cylinderHeads.length },
     { id: 'maintenance', label: 'Maintenance', icon: Wrench, count: maintenanceItems.length },
     { id: 'sfi', label: 'SFI Certs', icon: Shield, count: sfiCertifications.length },
@@ -1417,11 +1418,12 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
             )}
 
 
-            {/* Superchargers */}
+            {/* Power Adders */}
             {activeSection === 'superchargers' && (
               <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-white">Supercharger Inventory</h3>
+                  <h3 className="text-lg font-semibold text-white">Power Adder Inventory</h3>
+
                   <span className="text-sm text-slate-400">{superchargers.length} units</span>
                 </div>
                 <div className="space-y-3">
