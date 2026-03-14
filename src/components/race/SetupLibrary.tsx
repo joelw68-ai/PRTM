@@ -377,6 +377,10 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   const [serviceAlertThreshold, setServiceAlertThreshold] = useState(80); // percentage
   const [showAlertSettings, setShowAlertSettings] = useState(false);
   const [alertBannerDismissed, setAlertBannerDismissed] = useState(false);
+  const [scAlertBannerDismissed, setScAlertBannerDismissed] = useState(false);
+  const [showSCAlertSettings, setShowSCAlertSettings] = useState(false);
+  const [scServiceAlertThreshold, setScServiceAlertThreshold] = useState(80);
+
 
   interface ServiceAlertItem {
     parentType: 'engine' | 'powerAdder' | 'head' | 'drivetrain';
@@ -456,6 +460,46 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   // Set of parent IDs that have alerts (for card highlighting)
   const alertedParentIds = useMemo(() => new Set(serviceAlerts.map(a => a.parentId)), [serviceAlerts]);
   const criticalParentIds = useMemo(() => new Set(serviceAlerts.filter(a => a.severity === 'critical').map(a => a.parentId)), [serviceAlerts]);
+
+  // ─── Power Adder-Specific Service Alert System ──────────────────────────────
+  const scServiceAlerts = useMemo<ServiceAlertItem[]>(() => {
+    const alerts: ServiceAlertItem[] = [];
+    const threshold = scServiceAlertThreshold / 100;
+
+    superchargers.forEach((sc) => {
+      const scTyped = sc as Supercharger;
+      if (!scTyped.components) return;
+      Object.values(scTyped.components).forEach((comp: ComponentTracker) => {
+        if (comp.serviceInterval > 0) {
+          const pct = comp.passCount / comp.serviceInterval;
+          if (pct >= threshold) {
+            alerts.push({
+              parentType: 'powerAdder',
+              parentId: sc.id,
+              parentName: sc.name,
+              componentName: comp.name,
+              passCount: comp.passCount,
+              serviceInterval: comp.serviceInterval,
+              percentUsed: Math.round(pct * 100),
+              severity: pct >= 1 ? 'critical' : 'warning'
+            });
+          }
+        }
+      });
+    });
+
+    alerts.sort((a, b) => {
+      if (a.severity === 'critical' && b.severity !== 'critical') return -1;
+      if (b.severity === 'critical' && a.severity !== 'critical') return 1;
+      return b.percentUsed - a.percentUsed;
+    });
+
+    return alerts;
+  }, [superchargers, scServiceAlertThreshold]);
+
+  const scAlertedParentIds = useMemo(() => new Set(scServiceAlerts.map(a => a.parentId)), [scServiceAlerts]);
+  const scCriticalParentIds = useMemo(() => new Set(scServiceAlerts.filter(a => a.severity === 'critical').map(a => a.parentId)), [scServiceAlerts]);
+
 
 
   const getStatusColor = (status: string) => {
@@ -1017,7 +1061,60 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
               </button>
             </div>
 
-            
+            {/* Power Adder Service Alert Banner */}
+            {scServiceAlerts.length > 0 && !scAlertBannerDismissed && (
+              <div className={`mb-4 rounded-xl border p-4 ${scServiceAlerts.some(a => a.severity === 'critical') ? 'bg-red-500/10 border-red-500/40' : 'bg-amber-500/10 border-amber-500/40'}`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3 flex-1">
+                    <div className={`mt-0.5 p-2 rounded-lg ${scServiceAlerts.some(a => a.severity === 'critical') ? 'bg-red-500/20' : 'bg-amber-500/20'}`}>
+                      <ShieldAlert className={`w-5 h-5 ${scServiceAlerts.some(a => a.severity === 'critical') ? 'text-red-400' : 'text-amber-400'}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-1">
+                        <h3 className={`font-semibold ${scServiceAlerts.some(a => a.severity === 'critical') ? 'text-red-400' : 'text-amber-400'}`}>
+                          Power Adder Alerts: {scServiceAlerts.length} component{scServiceAlerts.length !== 1 ? 's' : ''} need attention
+                        </h3>
+                        <span className="text-xs text-slate-500">Threshold: {scServiceAlertThreshold}%</span>
+                        <button onClick={() => setShowSCAlertSettings(!showSCAlertSettings)} className="text-xs text-slate-400 hover:text-white underline">
+                          {showSCAlertSettings ? 'Hide' : 'Settings'}
+                        </button>
+                      </div>
+                      {showSCAlertSettings && (
+                        <div className="flex items-center gap-3 mb-3 p-2 bg-slate-800/60 rounded-lg">
+                          <label className="text-xs text-slate-400 whitespace-nowrap">Alert Threshold:</label>
+                          <input
+                            type="range"
+                            min={50}
+                            max={100}
+                            value={scServiceAlertThreshold}
+                            onChange={(e) => setScServiceAlertThreshold(parseInt(e.target.value))}
+                            className="flex-1 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
+                          />
+                          <span className="text-sm font-bold text-white w-10 text-right">{scServiceAlertThreshold}%</span>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-32 overflow-y-auto">
+                        {scServiceAlerts.slice(0, 9).map((alert, idx) => (
+                          <div key={idx} className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${alert.severity === 'critical' ? 'bg-red-500/10 text-red-300' : 'bg-amber-500/10 text-amber-300'}`}>
+                            <AlertTriangle className={`w-3 h-3 flex-shrink-0 ${alert.severity === 'critical' ? 'text-red-400' : 'text-amber-400'}`} />
+                            <span className="truncate">
+                              <span className="font-medium">{alert.parentName}</span> - {alert.componentName} ({alert.percentUsed}%)
+                            </span>
+                          </div>
+                        ))}
+                        {scServiceAlerts.length > 9 && (
+                          <div className="text-xs text-slate-500 px-2 py-1">+{scServiceAlerts.length - 9} more...</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <button onClick={() => setScAlertBannerDismissed(true)} className="text-slate-500 hover:text-white p-1">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
             {filteredSuperchargers.map((sc) => {
               const scTyped = sc as Supercharger;
               const issueCount = countComponentIssues(scTyped.components);
@@ -1027,14 +1124,14 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                 <div 
                   key={sc.id}
                   className={`bg-slate-800/50 rounded-xl border overflow-hidden transition-all ${
-                    criticalParentIds.has(sc.id) ? 'border-red-500/70 animate-pulse ring-1 ring-red-500/30' :
-                    alertedParentIds.has(sc.id) ? 'border-amber-500/60 ring-1 ring-amber-500/20' :
+                    scCriticalParentIds.has(sc.id) ? 'border-red-500/70 animate-pulse ring-1 ring-red-500/30' :
+                    scAlertedParentIds.has(sc.id) ? 'border-amber-500/60 ring-1 ring-amber-500/20' :
                     sc.currentlyInstalled ? 'border-green-500/50' : 'border-slate-700/50'
                   }`}
-
                 >
                   <div 
                     className="p-4 cursor-pointer hover:bg-slate-700/20"
+
                     onClick={() => setExpandedSC(expandedSC === sc.id ? null : sc.id)}
                   >
                     <div className="flex items-center justify-between">
