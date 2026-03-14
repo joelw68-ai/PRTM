@@ -8,9 +8,12 @@ import { useCar } from '@/contexts/CarContext';
 import { useApp } from '@/contexts/AppContext';
 import { CrewRole } from '@/lib/permissions';
 import { MaintenanceItem, SFICertification } from '@/data/proModData';
-import { PartInventoryItem } from '@/data/partsInventory';
-import { toast } from 'sonner';
 import MaintenanceCostReports from './MaintenanceCostReports';
+import MaintenanceTemplates from './MaintenanceTemplates';
+import CompleteMaintenanceModal, {
+  MaintenanceHistoryEntry,
+  loadMaintenanceHistory
+} from './CompleteMaintenanceModal';
 
 
 import { 
@@ -25,44 +28,14 @@ import {
   Edit2,
   Trash2,
   X,
-  ChevronDown,
-  ChevronUp,
-  Search,
   Package,
   History,
-  BarChart3
+  BarChart3,
+  BookOpen
 } from 'lucide-react';
 
 
-// ============ MAINTENANCE HISTORY (localStorage) ============
-interface MaintenanceHistoryEntry {
-  id: string;
-  maintenanceItemId: string;
-  component: string;
-  category: string;
-  dateCompleted: string;
-  passNumberCompletedAt: number | null;
-  partsUsed: { partId: string; partNumber: string; description: string; quantity: number; unitCost: number }[];
-  notes: string;
-  timestamp: string;
-}
 
-const MAINTENANCE_HISTORY_KEY = 'raceLogbook_maintenanceHistory';
-
-function loadMaintenanceHistory(): MaintenanceHistoryEntry[] {
-  try {
-    const raw = localStorage.getItem(MAINTENANCE_HISTORY_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-function saveMaintenanceHistory(entries: MaintenanceHistoryEntry[]) {
-  try {
-    localStorage.setItem(MAINTENANCE_HISTORY_KEY, JSON.stringify(entries));
-  } catch (e) {
-    console.warn('Failed to save maintenance history to localStorage:', e);
-  }
-}
 
 // ============ COMPONENT ============
 
@@ -84,16 +57,16 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     deleteSFICertification,
     addWorkOrder, 
     workOrders,
-    drivetrainComponents,
     vendors: allVendors,
-    partsInventory,
-    updatePartInventory
   } = useApp();
+
+
 
 
   const { selectedCarId, getCarLabel } = useCar();
   
-  const [activeTab, setActiveTab] = useState<'maintenance' | 'sfi' | 'costReports'>('maintenance');
+  const [activeTab, setActiveTab] = useState<'maintenance' | 'sfi' | 'costReports' | 'templates'>('maintenance');
+
 
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
@@ -104,15 +77,9 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   const [editingMaintenance, setEditingMaintenance] = useState<MaintenanceItem | null>(null);
   const [editingSFI, setEditingSFI] = useState<SFICertification | null>(null);
 
-  // Complete Maintenance Modal
+  // Complete Maintenance Modal (uses separate CompleteMaintenanceModal component)
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [completingItem, setCompletingItem] = useState<MaintenanceItem | null>(null);
-  const [completeDateValue, setCompleteDateValue] = useState(getLocalDateString());
-  const [completePassNumber, setCompletePassNumber] = useState<string>('');
-  const [completeNotes, setCompleteNotes] = useState('');
-  const [completePartsUsed, setCompletePartsUsed] = useState<{ partId: string; quantity: number }[]>([]);
-  const [partsSearchTerm, setPartsSearchTerm] = useState('');
-  const [showPartsDropdown, setShowPartsDropdown] = useState(false);
 
   // Maintenance History
   const [maintenanceHistory, setMaintenanceHistory] = useState<MaintenanceHistoryEntry[]>([]);
@@ -207,198 +174,13 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   // Active vendors derived from centralized AppContext (no more independent fetching)
   const vendorsList = useMemo(() => allVendors.filter(v => v.isActive), [allVendors]);
 
-  // Filtered parts for the searchable dropdown
-  const filteredPartsForDropdown = useMemo(() => {
-    if (!partsSearchTerm.trim()) return partsInventory.slice(0, 20);
-    const term = partsSearchTerm.toLowerCase();
-    return partsInventory.filter(p =>
-      p.description.toLowerCase().includes(term) ||
-      p.partNumber.toLowerCase().includes(term) ||
-      p.category.toLowerCase().includes(term) ||
-      (p.name && p.name.toLowerCase().includes(term))
-    ).slice(0, 20);
-  }, [partsInventory, partsSearchTerm]);
-
-  // ============ COMPLETE MAINTENANCE HANDLERS ============
-
+  // ============ OPEN COMPLETE MAINTENANCE MODAL ============
   const openCompleteModal = (item: MaintenanceItem) => {
     setCompletingItem(item);
-    setCompleteDateValue(getLocalDateString());
-    setCompletePassNumber('');
-    setCompleteNotes('');
-    setCompletePartsUsed([]);
-    setPartsSearchTerm('');
-    setShowPartsDropdown(false);
     setShowCompleteModal(true);
   };
 
-  const addPartToCompletion = (part: PartInventoryItem) => {
-    // Don't add if already in list
-    if (completePartsUsed.some(p => p.partId === part.id)) {
-      setPartsSearchTerm('');
-      setShowPartsDropdown(false);
-      return;
-    }
-    setCompletePartsUsed(prev => [...prev, { partId: part.id, quantity: 1 }]);
-    setPartsSearchTerm('');
-    setShowPartsDropdown(false);
-  };
 
-  const updatePartQuantity = (partId: string, quantity: number) => {
-    setCompletePartsUsed(prev => prev.map(p =>
-      p.partId === partId ? { ...p, quantity: Math.max(1, quantity) } : p
-    ));
-  };
-
-  const removePartFromCompletion = (partId: string) => {
-    setCompletePartsUsed(prev => prev.filter(p => p.partId !== partId));
-  };
-
-  const handleConfirmComplete = async () => {
-    if (!completingItem) return;
-
-    try {
-      // 1. Mark maintenance item as completed — reset passes, set status Good
-      await updateMaintenanceItem(completingItem.id, {
-        lastService: completeDateValue,
-        currentPasses: 0,
-        nextServicePasses: completingItem.passInterval,
-        status: 'Good',
-        notes: completeNotes ? `${completingItem.notes ? completingItem.notes + ' | ' : ''}Completed ${completeDateValue}: ${completeNotes}` : completingItem.notes
-      });
-
-      // 2. Deduct parts from inventory and track low-stock parts
-      const lowStockParts: { id: string; partNumber: string; description: string; onHand: number; minQuantity: number; vendor: string }[] = [];
-
-      for (const usedPart of completePartsUsed) {
-        const inventoryPart = partsInventory.find(p => p.id === usedPart.partId);
-        if (inventoryPart) {
-          const newOnHand = Math.max(0, inventoryPart.onHand - usedPart.quantity);
-          const status: PartInventoryItem['status'] = newOnHand === 0 ? 'Out of Stock' :
-            newOnHand <= inventoryPart.minQuantity ? 'Low Stock' : 'In Stock';
-          const reorderStatus: PartInventoryItem['reorderStatus'] = newOnHand === 0 ? 'Critical' :
-            newOnHand <= inventoryPart.minQuantity ? 'Reorder' : 'OK';
-
-          await updatePartInventory(inventoryPart.id, {
-            onHand: newOnHand,
-            totalValue: newOnHand * inventoryPart.unitCost,
-            status,
-            reorderStatus,
-            lastUsed: completeDateValue
-          });
-
-          // Check if part dropped below minimum threshold
-          if (newOnHand <= inventoryPart.minQuantity) {
-            lowStockParts.push({
-              id: inventoryPart.id,
-              partNumber: inventoryPart.partNumber,
-              description: inventoryPart.description,
-              onHand: newOnHand,
-              minQuantity: inventoryPart.minQuantity,
-              vendor: inventoryPart.vendor
-            });
-          }
-        }
-      }
-
-      // 3. Log completion in maintenance history (localStorage)
-      const historyEntry: MaintenanceHistoryEntry = {
-        id: `MH-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        maintenanceItemId: completingItem.id,
-        component: completingItem.component,
-        category: completingItem.category,
-        dateCompleted: completeDateValue,
-        passNumberCompletedAt: completePassNumber ? parseInt(completePassNumber) : null,
-        partsUsed: completePartsUsed.map(pu => {
-          const part = partsInventory.find(p => p.id === pu.partId);
-          return {
-            partId: pu.partId,
-            partNumber: part?.partNumber || '',
-            description: part?.description || '',
-            quantity: pu.quantity,
-            unitCost: part?.unitCost || 0
-          };
-        }),
-        notes: completeNotes,
-        timestamp: new Date().toISOString()
-      };
-
-      const updatedHistory = [historyEntry, ...maintenanceHistory];
-      setMaintenanceHistory(updatedHistory);
-      saveMaintenanceHistory(updatedHistory);
-
-      // Close modal and show success
-      setShowCompleteModal(false);
-      setCompletingItem(null);
-
-      const partsCount = completePartsUsed.length;
-      toast.success(`Maintenance completed: ${completingItem.component}`, {
-        description: partsCount > 0
-          ? `${partsCount} part${partsCount > 1 ? 's' : ''} deducted from inventory. Next due in ${completingItem.passInterval} passes.`
-          : `Next due in ${completingItem.passInterval} passes.`,
-        duration: 5000,
-      });
-
-      // 4. Show low-stock toast notifications with "Create Purchase Order" button
-      if (lowStockParts.length > 0) {
-        // Store low-stock part IDs in localStorage for PartsInventory to pick up
-        try {
-          const poRequest = {
-            partIds: lowStockParts.map(p => p.id),
-            timestamp: new Date().toISOString(),
-            source: 'maintenance_completion',
-            maintenanceComponent: completingItem.component
-          };
-          localStorage.setItem('raceLogbook_lowStockPORequest', JSON.stringify(poRequest));
-        } catch (e) {
-          console.warn('Failed to store PO request:', e);
-        }
-
-        // Show individual toast for each low-stock part (max 3, then summary)
-        if (lowStockParts.length <= 3) {
-          lowStockParts.forEach((part, index) => {
-            setTimeout(() => {
-              toast.warning(
-                `Low Stock Alert: ${part.partNumber}`,
-                {
-                  description: `${part.description} — ${part.onHand === 0 ? 'OUT OF STOCK' : `only ${part.onHand} remaining`} (min: ${part.minQuantity})`,
-                  duration: 15000,
-                  action: {
-                    label: 'Create Purchase Order',
-                    onClick: () => {
-                      if (onNavigate) onNavigate('parts');
-                    }
-                  }
-                }
-              );
-            }, (index + 1) * 800); // Stagger toasts
-          });
-        } else {
-          // Summary toast for many parts
-          setTimeout(() => {
-            const outOfStock = lowStockParts.filter(p => p.onHand === 0).length;
-            const lowStock = lowStockParts.length - outOfStock;
-            toast.warning(
-              `${lowStockParts.length} Parts Below Minimum Stock`,
-              {
-                description: `${outOfStock > 0 ? `${outOfStock} out of stock, ` : ''}${lowStock > 0 ? `${lowStock} low stock` : ''} — ${lowStockParts.map(p => p.partNumber).join(', ')}`,
-                duration: 15000,
-                action: {
-                  label: 'Create Purchase Order',
-                  onClick: () => {
-                    if (onNavigate) onNavigate('parts');
-                  }
-                }
-              }
-            );
-          }, 800);
-        }
-      }
-    } catch (error) {
-      console.error('Error completing maintenance:', error);
-      toast.error('Failed to complete maintenance. Please try again.');
-    }
-  };
 
 
   // ============ EXISTING HANDLERS ============
@@ -579,7 +361,19 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
             <BarChart3 className="w-4 h-4" />
             Cost Reports
           </button>
+          <button
+            onClick={() => setActiveTab('templates')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+              activeTab === 'templates' 
+                ? 'bg-orange-500 text-white' 
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            Templates
+          </button>
         </div>
+
 
 
 
@@ -959,206 +753,30 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
         {activeTab === 'costReports' && (
           <MaintenanceCostReports />
         )}
+
+        {activeTab === 'templates' && (
+          <MaintenanceTemplates onApplyTemplate={() => setActiveTab('maintenance')} />
+        )}
       </div>
 
 
-      {/* ============ COMPLETE MAINTENANCE MODAL ============ */}
+
+      {/* ============ COMPLETE MAINTENANCE MODAL (separate component) ============ */}
       {showCompleteModal && completingItem && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-xl max-w-lg w-full p-6 border border-slate-700 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                  <CheckCircle className="w-5 h-5 text-green-400" />
-                  Complete Maintenance
-                </h3>
-                <p className="text-sm text-slate-400 mt-1">{completingItem.component}</p>
-              </div>
-              <button onClick={() => setShowCompleteModal(false)} className="text-slate-400 hover:text-white">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            {/* Current status summary */}
-            <div className="bg-slate-900/50 rounded-lg p-3 mb-5 grid grid-cols-3 gap-3 text-sm">
-              <div>
-                <p className="text-slate-500 text-xs">Category</p>
-                <p className="text-white">{completingItem.category}</p>
-              </div>
-              <div>
-                <p className="text-slate-500 text-xs">Current Passes</p>
-                <p className="text-white">{completingItem.currentPasses} / {completingItem.nextServicePasses}</p>
-              </div>
-              <div>
-                <p className="text-slate-500 text-xs">Interval</p>
-                <p className="text-white">{completingItem.passInterval} passes</p>
-              </div>
-            </div>
-            
-            <div className="space-y-4">
-              {/* Date Completed */}
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Date Completed *</label>
-                <DateInputDark
-                  value={completeDateValue}
-                  onChange={(e) => setCompleteDateValue(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                />
-              </div>
-
-              {/* Pass Number */}
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Pass Number Completed At <span className="text-slate-600">(optional)</span></label>
-                <input
-                  type="number"
-                  value={completePassNumber}
-                  onChange={(e) => setCompletePassNumber(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                  placeholder="e.g., 47"
-                />
-              </div>
-
-              {/* Parts Used */}
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">
-                  Parts Used <span className="text-slate-600">(optional — auto-deducts from inventory)</span>
-                </label>
-                
-                {/* Searchable parts dropdown */}
-                <div className="relative">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                      type="text"
-                      value={partsSearchTerm}
-                      onChange={(e) => {
-                        setPartsSearchTerm(e.target.value);
-                        setShowPartsDropdown(true);
-                      }}
-                      onFocus={() => setShowPartsDropdown(true)}
-                      className="w-full pl-10 pr-4 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500"
-                      placeholder="Search parts by name, number, or category..."
-                    />
-                  </div>
-                  
-                  {showPartsDropdown && (
-                    <div className="absolute z-10 w-full mt-1 bg-slate-900 border border-slate-600 rounded-lg shadow-xl max-h-48 overflow-y-auto">
-                      {filteredPartsForDropdown.length === 0 ? (
-                        <div className="px-4 py-3 text-slate-500 text-sm">No parts found</div>
-                      ) : (
-                        filteredPartsForDropdown.map(part => {
-                          const alreadyAdded = completePartsUsed.some(p => p.partId === part.id);
-                          return (
-                            <button
-                              key={part.id}
-                              onClick={() => addPartToCompletion(part)}
-                              disabled={alreadyAdded}
-                              className={`w-full text-left px-4 py-2.5 hover:bg-slate-800 border-b border-slate-800 last:border-0 flex items-center justify-between ${
-                                alreadyAdded ? 'opacity-40 cursor-not-allowed' : ''
-                              }`}
-                            >
-                              <div>
-                                <p className="text-white text-sm">{part.description}</p>
-                                <p className="text-slate-500 text-xs">{part.partNumber} — {part.category}</p>
-                              </div>
-                              <div className="text-right">
-                                <p className={`text-sm font-medium ${
-                                  part.onHand === 0 ? 'text-red-400' :
-                                  part.onHand <= part.minQuantity ? 'text-yellow-400' : 'text-green-400'
-                                }`}>
-                                  {part.onHand} in stock
-                                </p>
-                                {alreadyAdded && <p className="text-xs text-slate-500">Already added</p>}
-                              </div>
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Selected parts list */}
-                {completePartsUsed.length > 0 && (
-                  <div className="mt-3 space-y-2">
-                    {completePartsUsed.map(pu => {
-                      const part = partsInventory.find(p => p.id === pu.partId);
-                      if (!part) return null;
-                      return (
-                        <div key={pu.partId} className="flex items-center gap-3 bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
-                          <Package className="w-4 h-4 text-orange-400 flex-shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-white text-sm truncate">{part.description}</p>
-                            <p className="text-slate-500 text-xs">{part.partNumber} — {part.onHand} in stock</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <label className="text-slate-400 text-xs">Qty:</label>
-                            <input
-                              type="number"
-                              min="1"
-                              max={part.onHand}
-                              value={pu.quantity}
-                              onChange={(e) => updatePartQuantity(pu.partId, parseInt(e.target.value) || 1)}
-                              className="w-16 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white text-center text-sm"
-                            />
-                          </div>
-                          <button
-                            onClick={() => removePartFromCompletion(pu.partId)}
-                            className="p-1 text-red-400 hover:text-red-300"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Notes <span className="text-slate-600">(optional)</span></label>
-                <textarea
-                  value={completeNotes}
-                  onChange={(e) => setCompleteNotes(e.target.value)}
-                  rows={3}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500"
-                  placeholder="Any notes about this maintenance completion..."
-                />
-              </div>
-            </div>
-
-            {/* Summary */}
-            <div className="mt-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-sm">
-              <p className="text-green-400 font-medium mb-1">On confirm, this will:</p>
-              <ul className="text-green-300/80 space-y-1 ml-4 list-disc">
-                <li>Mark "{completingItem.component}" as completed and reset pass counter</li>
-                <li>Set next service due in {completingItem.passInterval} passes</li>
-                {completePartsUsed.length > 0 && (
-                  <li>Deduct {completePartsUsed.reduce((s, p) => s + p.quantity, 0)} part(s) from inventory</li>
-                )}
-                <li>Log this completion in maintenance history</li>
-              </ul>
-            </div>
-            
-            <div className="flex gap-3 mt-5">
-              <button
-                onClick={() => setShowCompleteModal(false)}
-                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmComplete}
-                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 flex items-center justify-center gap-2"
-              >
-                <CheckCircle className="w-4 h-4" />
-                Confirm Completion
-              </button>
-            </div>
-          </div>
-        </div>
+        <CompleteMaintenanceModal
+          item={completingItem}
+          onClose={() => {
+            setShowCompleteModal(false);
+            setCompletingItem(null);
+          }}
+          onCompleted={() => {
+            // Refresh history from localStorage after completion
+            setMaintenanceHistory(loadMaintenanceHistory());
+          }}
+          onNavigate={onNavigate}
+        />
       )}
+
 
       {/* ============ MAINTENANCE HISTORY MODAL ============ */}
       {showHistoryModal && historyItemId && (

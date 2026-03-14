@@ -1,16 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useCar, RaceCar } from '@/contexts/CarContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useThemeColor } from '@/contexts/ThemeColorContext';
 import { CrewRole, hasPermission } from '@/lib/permissions';
 import {
   Car, Plus, Edit2, Trash2, X, Save, Search, CheckCircle, XCircle,
   Hash, Palette, Calendar, FileText, Tag, ChevronDown, ChevronUp,
-  Loader2, AlertTriangle, RefreshCw
+  Loader2, AlertTriangle, RefreshCw, Paintbrush
 } from 'lucide-react';
 
 interface CarProfilesProps {
   currentRole?: CrewRole;
 }
+
 
 const carClasses = [
   'Pro Mod', 'Pro Nitrous', 'Pro Boost', 'Outlaw Pro Mod', 'X275',
@@ -21,6 +23,12 @@ const carClasses = [
   'Top Fuel Dragster', 'Top Alcohol Dragster', 'Factory Stock', 'Other'
 ];
 
+const PRESET_TEAM_COLORS = [
+  '#ef4444', '#f97316', '#f59e0b', '#eab308',
+  '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6',
+  '#6366f1', '#8b5cf6', '#a855f7', '#ec4899',
+  '#f43f5e', '#64748b', '#78716c', '#ffffff',
+];
 
 const defaultForm = {
   carNumber: '',
@@ -37,9 +45,11 @@ const defaultForm = {
 const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
   const { cars, addCar, updateCar, deleteCar, selectedCarId, setSelectedCarId, isLoading: carsLoading, refreshCars } = useCar();
   const { user, isDemoMode, isAuthenticated } = useAuth();
+  const { getTeamColor, setTeamColor, getDefaultColor } = useThemeColor();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
+  const [teamColorValue, setTeamColorValue] = useState('#ef4444');
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -50,6 +60,9 @@ const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
   const handleOpenAdd = () => {
     setEditingId(null);
     setForm(defaultForm);
+    // Set default team color for new car based on index
+    const nextIndex = cars.length;
+    setTeamColorValue(getDefaultColor(nextIndex));
     setFormError(null);
     setShowForm(true);
   };
@@ -67,6 +80,8 @@ const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
       isActive: car.isActive,
       notes: car.notes,
     });
+    // Load the car's team color
+    setTeamColorValue(getTeamColor(car.id));
     setFormError(null);
     setShowForm(true);
   };
@@ -96,18 +111,88 @@ const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
       let result;
       if (editingId) {
         result = await updateCar(editingId, form);
+        if (result.success) {
+          // Save team color for existing car
+          setTeamColor(editingId, teamColorValue);
+        }
       } else {
         result = await addCar(form);
+        // For new cars, we need to find the newly added car and set its team color
+        // The car will be added to the cars array after addCar completes
       }
 
       if (result.success) {
-        // Success! Close the form
+        // For new cars, set team color after a brief delay to allow the car to be added
+        if (!editingId) {
+          setTimeout(() => {
+            // Find the most recently added car (last in the array)
+            const latestCars = JSON.parse(localStorage.getItem('demo_race_cars') || '[]');
+            // We'll set it on the next render when cars update
+          }, 100);
+        }
         setShowForm(false);
         setEditingId(null);
         setForm(defaultForm);
         setFormError(null);
       } else {
-        // Failed - show error in the form, don't close it
+        setFormError(result.error || 'An unknown error occurred. Please try again.');
+      }
+    } catch (err: any) {
+      console.error('[CarProfiles] Unexpected error in handleSave:', err);
+      setFormError(`Unexpected error: ${err?.message || 'Unknown error'}. Please try again.`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // When a new car is added, set its team color
+  const handleSaveWithTeamColor = async () => {
+    if (!form.nickname && !form.carNumber && !form.make) {
+      setFormError('Please provide at least a car number, nickname, or make to identify this car.');
+      return;
+    }
+
+    if (!isAuthenticated) {
+      setFormError('You must be signed in to save a car. Please sign in first.');
+      return;
+    }
+
+    if (!isDemoMode && !user?.id) {
+      setFormError('Authentication error: No user ID found. Please sign out and sign back in.');
+      return;
+    }
+
+    setIsSaving(true);
+    setFormError(null);
+
+    try {
+      let result;
+      if (editingId) {
+        result = await updateCar(editingId, form);
+        if (result.success) {
+          setTeamColor(editingId, teamColorValue);
+        }
+      } else {
+        // Capture current car count to identify the new car
+        const prevCarIds = new Set(cars.map(c => c.id));
+        result = await addCar(form);
+        if (result.success) {
+          // Wait a tick for the cars array to update, then find the new car
+          setTimeout(() => {
+            const newCar = cars.find(c => !prevCarIds.has(c.id));
+            if (newCar) {
+              setTeamColor(newCar.id, teamColorValue);
+            }
+          }, 500);
+        }
+      }
+
+      if (result.success) {
+        setShowForm(false);
+        setEditingId(null);
+        setForm(defaultForm);
+        setFormError(null);
+      } else {
         setFormError(result.error || 'An unknown error occurred. Please try again.');
       }
     } catch (err: any) {
@@ -264,27 +349,40 @@ const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
             {filteredCars.map(car => {
               const isExpanded = expandedId === car.id;
               const isSelected = selectedCarId === car.id;
+              const carTeamColor = getTeamColor(car.id);
               
               return (
                 <div
                   key={car.id}
-                  className={`bg-slate-800/50 rounded-xl border transition-all ${
+                  className={`bg-slate-800/50 rounded-xl border transition-all overflow-hidden ${
                     isSelected
-                      ? 'border-cyan-500/60 ring-1 ring-cyan-500/30'
+                      ? 'ring-1'
                       : car.isActive
                         ? 'border-slate-700/50 hover:border-slate-600'
                         : 'border-red-500/30 opacity-70'
                   }`}
+                  style={isSelected ? {
+                    borderColor: `${carTeamColor}99`,
+                    boxShadow: `0 0 0 1px ${carTeamColor}4D`,
+                  } : undefined}
                 >
+                  {/* Team Color Strip at top */}
+                  <div
+                    className="h-1.5 w-full"
+                    style={{ backgroundColor: carTeamColor }}
+                  />
+
                   {/* Card Header */}
                   <div className="p-4">
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                          car.color
-                            ? 'border-2 border-slate-600'
-                            : 'bg-gradient-to-br from-slate-600 to-slate-700'
-                        }`} style={car.color ? { backgroundColor: car.color } : {}}>
+                        <div
+                          className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 border-2"
+                          style={{
+                            backgroundColor: `${carTeamColor}33`,
+                            borderColor: `${carTeamColor}66`,
+                          }}
+                        >
                           <Car className="w-5 h-5 text-white drop-shadow" />
                         </div>
                         <div className="min-w-0">
@@ -315,7 +413,13 @@ const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
                     {/* Quick Info */}
                     <div className="flex flex-wrap gap-2 mt-3">
                       {car.class && (
-                        <span className="px-2 py-0.5 bg-cyan-500/15 text-cyan-400 rounded text-xs font-medium">
+                        <span
+                          className="px-2 py-0.5 rounded text-xs font-medium"
+                          style={{
+                            backgroundColor: `${carTeamColor}26`,
+                            color: carTeamColor,
+                          }}
+                        >
                           {car.class}
                         </span>
                       )}
@@ -333,6 +437,15 @@ const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
                       )}
                     </div>
 
+                    {/* Team Color indicator */}
+                    <div className="flex items-center gap-2 mt-3">
+                      <div
+                        className="w-3.5 h-3.5 rounded-full border border-slate-600"
+                        style={{ backgroundColor: carTeamColor }}
+                      />
+                      <span className="text-[11px] text-slate-500">Team Color</span>
+                    </div>
+
                     {/* Expand/Collapse */}
                     <button
                       onClick={() => setExpandedId(isExpanded ? null : car.id)}
@@ -348,11 +461,17 @@ const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
                         {car.color && (
                           <div className="flex items-center gap-2">
                             <Palette className="w-3.5 h-3.5 text-slate-500" />
-                            <span className="text-slate-400">Color:</span>
+                            <span className="text-slate-400">Paint Color:</span>
                             <span className="text-white">{car.color}</span>
                             <div className="w-4 h-4 rounded border border-slate-600" style={{ backgroundColor: car.color }} />
                           </div>
                         )}
+                        <div className="flex items-center gap-2">
+                          <Paintbrush className="w-3.5 h-3.5 text-slate-500" />
+                          <span className="text-slate-400">Team Color:</span>
+                          <div className="w-4 h-4 rounded border border-slate-600" style={{ backgroundColor: carTeamColor }} />
+                          <span className="text-white text-xs font-mono">{carTeamColor}</span>
+                        </div>
                         {car.notes && (
                           <div className="flex items-start gap-2">
                             <FileText className="w-3.5 h-3.5 text-slate-500 mt-0.5" />
@@ -373,11 +492,16 @@ const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
                   <div className="px-4 pb-4">
                     <button
                       onClick={() => setSelectedCarId(isSelected ? null : car.id)}
-                      className={`w-full py-2 rounded-lg text-sm font-medium transition-all ${
+                      className={`w-full py-2 rounded-lg text-sm font-medium transition-all border ${
                         isSelected
-                          ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                          : 'bg-slate-700/50 text-slate-400 hover:bg-slate-700 hover:text-white border border-transparent'
+                          ? 'border-current'
+                          : 'bg-slate-700/50 text-slate-400 hover:bg-slate-700 hover:text-white border-transparent'
                       }`}
+                      style={isSelected ? {
+                        backgroundColor: `${carTeamColor}33`,
+                        color: carTeamColor,
+                        borderColor: `${carTeamColor}4D`,
+                      } : undefined}
                     >
                       {isSelected ? 'Currently Selected' : 'Select This Car'}
                     </button>
@@ -506,9 +630,9 @@ const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
                 </div>
               </div>
 
-              {/* Color */}
+              {/* Paint Color */}
               <div>
-                <label className="block text-sm text-slate-400 mb-1">Color</label>
+                <label className="block text-sm text-slate-400 mb-1">Paint Color</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -525,6 +649,95 @@ const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
                     disabled={isSaving}
                     className="w-10 h-10 rounded-lg border border-slate-600 cursor-pointer bg-slate-900 disabled:opacity-50"
                   />
+                </div>
+              </div>
+
+              {/* ========== TEAM COLOR SECTION ========== */}
+              <div className="pt-2 border-t border-slate-700/50">
+                <label className="flex items-center gap-2 text-sm font-medium text-white mb-2">
+                  <Paintbrush className="w-4 h-4" style={{ color: teamColorValue }} />
+                  Team Color
+                  <span className="text-xs text-slate-500 font-normal">(changes app accent when this car is selected)</span>
+                </label>
+                <div className="space-y-3">
+                  {/* Color preview + picker */}
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-12 h-12 rounded-xl border-2 border-slate-600 flex-shrink-0 shadow-lg"
+                      style={{
+                        backgroundColor: teamColorValue,
+                        boxShadow: `0 4px 14px ${teamColorValue}40`,
+                      }}
+                    />
+                    <div className="flex-1">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={teamColorValue}
+                          onChange={e => {
+                            const val = e.target.value;
+                            if (/^#[0-9a-fA-F]{0,6}$/.test(val) || val === '') {
+                              setTeamColorValue(val || '#');
+                            }
+                          }}
+                          placeholder="#ef4444"
+                          disabled={isSaving}
+                          className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm font-mono focus:ring-2 focus:ring-cyan-500 focus:outline-none disabled:opacity-50"
+                        />
+                        <input
+                          type="color"
+                          value={teamColorValue}
+                          onChange={e => setTeamColorValue(e.target.value)}
+                          disabled={isSaving}
+                          className="w-10 h-10 rounded-lg border border-slate-600 cursor-pointer bg-slate-900 disabled:opacity-50"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Preset color swatches */}
+                  <div>
+                    <p className="text-[11px] text-slate-500 mb-1.5">Quick pick:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {PRESET_TEAM_COLORS.map(color => (
+                        <button
+                          key={color}
+                          type="button"
+                          onClick={() => setTeamColorValue(color)}
+                          disabled={isSaving}
+                          className={`w-7 h-7 rounded-lg border-2 transition-all hover:scale-110 disabled:opacity-50 ${
+                            teamColorValue === color
+                              ? 'border-white scale-110 shadow-lg'
+                              : 'border-slate-600 hover:border-slate-400'
+                          }`}
+                          style={{
+                            backgroundColor: color,
+                            boxShadow: teamColorValue === color ? `0 0 10px ${color}80` : undefined,
+                          }}
+                          title={color}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Preview bar */}
+                  <div
+                    className="rounded-lg p-3 border"
+                    style={{
+                      backgroundColor: `${teamColorValue}15`,
+                      borderColor: `${teamColorValue}40`,
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: teamColorValue }}
+                      />
+                      <span className="text-xs" style={{ color: teamColorValue }}>
+                        Preview: This is how accent elements will look
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -571,7 +784,7 @@ const CarProfiles: React.FC<CarProfilesProps> = ({ currentRole = 'Crew' }) => {
                 Cancel
               </button>
               <button
-                onClick={handleSave}
+                onClick={handleSaveWithTeamColor}
                 disabled={isSaving || (!form.nickname && !form.carNumber && !form.make)}
                 className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-lg font-medium hover:from-cyan-600 hover:to-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed min-w-[120px] justify-center"
               >

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCar } from '@/contexts/CarContext';
 import { useApp } from '@/contexts/AppContext';
+import { useThemeColor, useAccentStyles } from '@/contexts/ThemeColorContext';
 import { CrewRole, isAdminRole, hasPermission, getRoleColor } from '@/lib/permissions';
 import SaveStatusIndicator from '@/components/race/SaveStatusIndicator';
 import CarSelector from '@/components/race/CarSelector';
@@ -42,8 +43,10 @@ const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
 }) => {
   const { user, profile, isAuthenticated, isDemoMode, signOut, disableDemoMode, isLoading: authLoading, isTeamMember, activeTeamMembership } = useAuth();
-  const { cars } = useCar();
+  const { cars, selectedCarId, getCarLabel } = useCar();
   const { getAlertCount, saveStatus, lastSaveTime, lastSaveError, retrySave, refreshData, isSyncing, syncError, lastSyncTime, isOnline, pendingOfflineCount, hasConnectivityIssue, isOfflineSyncing, offlineSyncProgress, syncOfflineQueue } = useApp();
+  const { colors } = useThemeColor();
+  const styles = useAccentStyles();
   const alertCount = getAlertCount();
 
   const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set());
@@ -53,6 +56,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   const canAccessAdmin = !isTeamMember
     ? (isAdminRole(currentRole) || hasPermission(currentRole, 'settings.admin'))
     : isTeamMember && activeTeamMembership?.permissions?.includes('admin');
+
+  // Get the selected car for the active car indicator
+  const selectedCar = selectedCarId ? cars.find(c => c.id === selectedCarId) : null;
 
   // Build car submenu items from actual car profiles
   const carSubmenuItems = cars.map(car => ({
@@ -160,11 +166,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const sidebarContent = (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full theme-transition">
       {/* Logo / Header */}
       <div className="px-4 py-4 border-b border-slate-700/50">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
+          <div
+            className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+            style={styles.logoGradient}
+          >
             <Gauge className="w-5 h-5 text-white" />
           </div>
           {!collapsed && (
@@ -188,6 +197,61 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
       </div>
+
+      {/* Active Car Indicator — always visible at top */}
+      {!collapsed && (
+        <div
+          className="px-3 py-2.5 border-b border-slate-700/50"
+          style={{
+            backgroundColor: selectedCar ? `rgba(${colors.rgb}, 0.08)` : 'transparent',
+          }}
+        >
+          <div className="flex items-center gap-2.5">
+            <div
+              className="w-3 h-3 rounded-full flex-shrink-0 ring-2 ring-offset-1 ring-offset-slate-900"
+              style={{
+                backgroundColor: colors.base,
+                ringColor: `rgba(${colors.rgb}, 0.4)`,
+                boxShadow: `0 0 8px rgba(${colors.rgb}, 0.4), inset 0 0 0 2px rgba(${colors.rgb}, 0.3)`,
+              }}
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-semibold truncate" style={{ color: colors.light }}>
+                {selectedCar ? getCarLabel(selectedCarId) : 'All Cars'}
+              </p>
+              <p className="text-[9px] text-slate-500 truncate">
+                {selectedCar
+                  ? `${selectedCar.class || 'No class'} ${selectedCar.isActive ? '' : '(Inactive)'}`
+                  : 'Combined team view'}
+              </p>
+            </div>
+            {selectedCar && (
+              <div
+                className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
+                style={{
+                  backgroundColor: `rgba(${colors.rgb}, 0.2)`,
+                }}
+              >
+                <Car className="w-3 h-3" style={{ color: colors.light }} />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Collapsed: just show color dot */}
+      {collapsed && (
+        <div className="px-2 py-3 border-b border-slate-700/50 flex justify-center">
+          <div
+            className="w-4 h-4 rounded-full"
+            style={{
+              backgroundColor: colors.base,
+              boxShadow: `0 0 8px rgba(${colors.rgb}, 0.5)`,
+            }}
+            title={selectedCar ? getCarLabel(selectedCarId) : 'All Cars'}
+          />
+        </div>
+      )}
 
       {/* Team Member Banner */}
       {isTeamMember && activeTeamMembership && !collapsed && (
@@ -262,26 +326,38 @@ const Sidebar: React.FC<SidebarProps> = ({
                     handleNavigate(item.id);
                   }
                 }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 group ${
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 group border ${
                   parentActive && !hasSubmenu
-                    ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                    ? 'border-current'
                     : parentActive && hasSubmenu
-                    ? 'bg-slate-800 text-white border border-slate-600/50'
-                    : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200 border border-transparent'
+                    ? 'bg-slate-800 text-white border-slate-600/50'
+                    : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200 border-transparent'
                 }`}
+                style={
+                  parentActive && !hasSubmenu
+                    ? styles.activeMenuItem
+                    : undefined
+                }
                 title={collapsed ? item.label : undefined}
               >
-                <Icon className={`w-5 h-5 flex-shrink-0 ${
-                  parentActive ? 'text-orange-400' : 'text-slate-500 group-hover:text-slate-300'
-
-                }`} />
+                <Icon
+                  className="w-5 h-5 flex-shrink-0"
+                  style={
+                    parentActive
+                      ? { color: colors.base }
+                      : { color: undefined }
+                  }
+                />
                 {!collapsed && (
                   <>
                     <span className="flex-1 text-left truncate">{item.label}</span>
                     {hasSubmenu && (
-                      <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                        isExpanded ? 'rotate-180' : ''
-                      } ${parentActive ? 'text-orange-400' : 'text-slate-600'}`} />
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                          isExpanded ? 'rotate-180' : ''
+                        }`}
+                        style={parentActive ? { color: colors.base } : { color: 'rgb(71 85 105)' }}
+                      />
                     )}
                   </>
                 )}
@@ -298,13 +374,17 @@ const Sidebar: React.FC<SidebarProps> = ({
                       <button
                         key={sub.id}
                         onClick={() => handleNavigate(sub.id)}
-                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all border ${
                           subActive
-                            ? 'bg-orange-500/15 text-orange-300 border border-orange-500/30'
-                            : 'text-slate-500 hover:bg-slate-800/60 hover:text-slate-300 border border-transparent'
+                            ? 'border-current'
+                            : 'text-slate-500 hover:bg-slate-800/60 hover:text-slate-300 border-transparent'
                         }`}
+                        style={subActive ? styles.activeSubItem : undefined}
                       >
-                        <SubIcon className={`w-3.5 h-3.5 flex-shrink-0 ${subActive ? 'text-orange-400' : ''}`} />
+                        <SubIcon
+                          className="w-3.5 h-3.5 flex-shrink-0"
+                          style={subActive ? { color: colors.base } : undefined}
+                        />
                         <span className="truncate">{sub.label}</span>
                       </button>
                     );
@@ -337,13 +417,17 @@ const Sidebar: React.FC<SidebarProps> = ({
         {/* Backup */}
         <button
           onClick={() => handleNavigate('backup')}
-          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
             activeSection === 'backup'
-              ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
-              : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200 border border-transparent'
+              ? 'border-current'
+              : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200 border-transparent'
           }`}
+          style={activeSection === 'backup' ? styles.activeMenuItem : undefined}
         >
-          <HardDrive className={`w-4.5 h-4.5 flex-shrink-0 ${activeSection === 'backup' ? 'text-orange-400' : 'text-slate-500'}`} />
+          <HardDrive
+            className="w-4.5 h-4.5 flex-shrink-0"
+            style={activeSection === 'backup' ? { color: colors.base } : { color: 'rgb(100 116 139)' }}
+          />
           {!collapsed && <span className="flex-1 text-left">Backup</span>}
         </button>
       </nav>
@@ -364,7 +448,8 @@ const Sidebar: React.FC<SidebarProps> = ({
             )}
             <button
               onClick={() => onOpenAuth('signup')}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-orange-500 to-red-600 text-white text-xs font-medium hover:from-orange-600 hover:to-red-700 transition-all"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-white text-xs font-medium hover:brightness-110 transition-all"
+              style={styles.gradientBtn}
             >
               <UserPlus className="w-3.5 h-3.5" />
               {!collapsed && 'Sign Up'}
@@ -376,7 +461,10 @@ const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => setUserMenuOpen(!userMenuOpen)}
               className="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-slate-800 transition-colors"
             >
-              <div className="w-8 h-8 bg-gradient-to-br from-orange-500 to-red-600 rounded-full flex items-center justify-center flex-shrink-0">
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                style={styles.avatarGradient}
+              >
                 <User className="w-4 h-4 text-white" />
               </div>
               {!collapsed && (
@@ -429,7 +517,8 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
             <button
               onClick={() => onOpenAuth('signup')}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-orange-500 to-red-600 text-white text-xs font-medium hover:from-orange-600 hover:to-red-700 transition-all"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-white text-xs font-medium hover:brightness-110 transition-all"
+              style={styles.gradientBtn}
             >
               <UserPlus className="w-3.5 h-3.5" />
               {!collapsed && 'Sign Up'}

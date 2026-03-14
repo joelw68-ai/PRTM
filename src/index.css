@@ -45,7 +45,18 @@
     --sidebar-accent-foreground: 215 25% 27%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 221 83% 53%;
+
+    /* Theme color CSS custom properties (defaults = orange) */
+    --tc: #f97316;
+    --tc-rgb: 249, 115, 22;
+    --tc-light: rgb(251, 159, 89);
+    --tc-lighter: rgb(252, 192, 143);
+    --tc-dark: rgb(199, 92, 18);
+    --tc-h: 25;
+    --tc-s: 95%;
+    --tc-l: 53%;
   }
+
 
   .dark {
     --background: 222 47% 3%;
@@ -176,13 +187,29 @@
   overflow: hidden;
 }
 
-/* Racing grid pattern */
+/* Racing grid pattern — uses theme color */
 .racing-grid {
   background-image: 
-    linear-gradient(rgba(239, 68, 68, 0.1) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(239, 68, 68, 0.1) 1px, transparent 1px);
+    linear-gradient(rgba(var(--tc-rgb), 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--tc-rgb), 0.1) 1px, transparent 1px);
   background-size: 40px 40px;
 }
+
+/* ============================================================
+   THEME COLOR TRANSITION — smooth accent color change on car switch
+   ============================================================ */
+*, *::before, *::after {
+  transition-property: color, background-color, border-color, box-shadow, fill, stroke;
+  transition-duration: 0s;
+  transition-timing-function: ease;
+}
+
+/* Only apply the smooth transition to elements that opt in */
+.theme-transition,
+.theme-transition * {
+  transition-duration: 350ms !important;
+}
+
 
 /* Telemetry display font */
 .font-telemetry {

@@ -6,6 +6,8 @@ import { useAuth } from '@/contexts/AuthContext';
 
 import { AppProvider, useApp } from '@/contexts/AppContext';
 import { CarProvider } from '@/contexts/CarContext';
+import { ThemeColorProvider } from '@/contexts/ThemeColorContext';
+
 
 // Layout components
 import Sidebar from './race/Sidebar';
@@ -503,16 +505,18 @@ const AppLayoutContent: React.FC = () => {
         />
       )}
 
-      {/* Version Number */}
+      {/* Version Number — uses theme color */}
       <div
         className={`fixed ${isDemoMode ? 'bottom-[52px]' : 'bottom-2'} left-2 z-30 select-none pointer-events-none`}
       >
-        <span className="text-sm font-mono font-semibold text-orange-400 tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+        <span
+          className="text-sm font-mono font-semibold tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
+          style={{ color: 'var(--tc)' }}
+        >
           v1.0.6
-
-
         </span>
       </div>
+
     </div>
   );
 };
@@ -521,7 +525,9 @@ const AppLayout: React.FC = () => {
   return (
     <AppProvider>
       <CarProvider>
-        <AppLayoutContent />
+        <ThemeColorProvider>
+          <AppLayoutContent />
+        </ThemeColorProvider>
       </CarProvider>
     </AppProvider>
   );
