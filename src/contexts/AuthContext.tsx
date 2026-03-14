@@ -730,85 +730,130 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (payload[key] === undefined) delete payload[key];
       });
 
-
-
       // Ensure team_name is never null (DB has NOT NULL or default)
       if (!payload.team_name) payload.team_name = 'My Race Team';
 
       console.log('[Auth] updateProfile payload:', JSON.stringify(payload, null, 2));
 
-      // Use UPSERT with the user's auth ID as both id and user_id
-      // This handles both cases: row exists (update) or row doesn't exist (insert)
-      const upsertPayload = {
-        id: user.id,
-        user_id: user.id,
-        ...payload,
-      };
+      // Helper: attempt upsert/update, stripping columns that PostgREST's schema cache doesn't know about
+      const attemptSave = async (currentPayload: Record<string, any>, retriesLeft: number): Promise<{ error: Error | null }> => {
+        // Use UPSERT with the user's auth ID as both id and user_id
+        const upsertPayload = {
+          id: user!.id,
+          user_id: user!.id,
+          ...currentPayload,
+        };
 
-      const { data: upsertData, error: upsertError } = await supabase
-        .from('user_profiles')
-        .upsert(upsertPayload, { onConflict: 'user_id' })
-        .select('*')
-        .maybeSingle();
-
-      if (upsertError) {
-        console.error('[Auth] Upsert by user_id failed:', upsertError.message, upsertError.details, upsertError.hint);
-        
-        // Fallback: try upsert on id column
-        const { data: upsertData2, error: upsertError2 } = await supabase
+        const { data: upsertData, error: upsertError } = await supabase
           .from('user_profiles')
-          .upsert({ id: user.id, user_id: user.id, ...payload }, { onConflict: 'id' })
+          .upsert(upsertPayload, { onConflict: 'user_id' })
           .select('*')
           .maybeSingle();
 
-        if (upsertError2) {
-          console.error('[Auth] Upsert by id also failed:', upsertError2.message, upsertError2.details, upsertError2.hint);
-          
-          // Last resort: plain update by user_id, then by id
-          const { error: updateErr1 } = await supabase
-            .from('user_profiles')
-            .update(payload)
-            .eq('user_id', user.id);
-          
-          if (updateErr1) {
-            console.error('[Auth] Update by user_id failed:', updateErr1.message);
-            const { error: updateErr2 } = await supabase
-              .from('user_profiles')
-              .update(payload)
-              .eq('id', user.id);
-            
-            if (updateErr2) {
-              const errMsg = `Profile save failed: ${updateErr2.message}. Details: ${updateErr2.details || 'none'}. Hint: ${updateErr2.hint || 'none'}`;
-              console.error('[Auth]', errMsg);
-              throw new Error(errMsg);
-            }
+        if (upsertError) {
+          // Check if this is a schema cache error for a specific column
+          const schemaCacheMatch = upsertError.message?.match(/Could not find the '(\w+)' column/);
+          if (schemaCacheMatch && retriesLeft > 0) {
+            const badColumn = schemaCacheMatch[1];
+            console.warn(`[Auth] Schema cache missing column '${badColumn}', retrying without it...`);
+            const trimmedPayload = { ...currentPayload };
+            delete trimmedPayload[badColumn];
+            // Also remove from upsertPayload keys
+            return attemptSave(trimmedPayload, retriesLeft - 1);
           }
-        } else if (upsertData2) {
-          console.log('[Auth] Profile saved via upsert on id');
-          setProfile(toUserProfile(upsertData2));
+
+          console.error('[Auth] Upsert by user_id failed:', upsertError.message, upsertError.details, upsertError.hint);
+
+          // Fallback: try upsert on id column
+          const { data: upsertData2, error: upsertError2 } = await supabase
+            .from('user_profiles')
+            .upsert({ id: user!.id, user_id: user!.id, ...currentPayload }, { onConflict: 'id' })
+            .select('*')
+            .maybeSingle();
+
+          if (upsertError2) {
+            // Check schema cache error on fallback too
+            const schemaCacheMatch2 = upsertError2.message?.match(/Could not find the '(\w+)' column/);
+            if (schemaCacheMatch2 && retriesLeft > 0) {
+              const badColumn2 = schemaCacheMatch2[1];
+              console.warn(`[Auth] Schema cache missing column '${badColumn2}' on fallback, retrying without it...`);
+              const trimmedPayload2 = { ...currentPayload };
+              delete trimmedPayload2[badColumn2];
+              return attemptSave(trimmedPayload2, retriesLeft - 1);
+            }
+
+            console.error('[Auth] Upsert by id also failed:', upsertError2.message, upsertError2.details, upsertError2.hint);
+
+            // Last resort: plain update by user_id, then by id
+            const { error: updateErr1 } = await supabase
+              .from('user_profiles')
+              .update(currentPayload)
+              .eq('user_id', user!.id);
+
+            if (updateErr1) {
+              // Check schema cache error on last resort too
+              const schemaCacheMatch3 = updateErr1.message?.match(/Could not find the '(\w+)' column/);
+              if (schemaCacheMatch3 && retriesLeft > 0) {
+                const badColumn3 = schemaCacheMatch3[1];
+                console.warn(`[Auth] Schema cache missing column '${badColumn3}' on update, retrying without it...`);
+                const trimmedPayload3 = { ...currentPayload };
+                delete trimmedPayload3[badColumn3];
+                return attemptSave(trimmedPayload3, retriesLeft - 1);
+              }
+
+              console.error('[Auth] Update by user_id failed:', updateErr1.message);
+              const { error: updateErr2 } = await supabase
+                .from('user_profiles')
+                .update(currentPayload)
+                .eq('id', user!.id);
+
+              if (updateErr2) {
+                // Check schema cache error one final time
+                const schemaCacheMatch4 = updateErr2.message?.match(/Could not find the '(\w+)' column/);
+                if (schemaCacheMatch4 && retriesLeft > 0) {
+                  const badColumn4 = schemaCacheMatch4[1];
+                  console.warn(`[Auth] Schema cache missing column '${badColumn4}' on final update, retrying without it...`);
+                  const trimmedPayload4 = { ...currentPayload };
+                  delete trimmedPayload4[badColumn4];
+                  return attemptSave(trimmedPayload4, retriesLeft - 1);
+                }
+
+                const errMsg = `Profile save failed: ${updateErr2.message}. Details: ${updateErr2.details || 'none'}. Hint: ${updateErr2.hint || 'none'}`;
+                console.error('[Auth]', errMsg);
+                throw new Error(errMsg);
+              }
+            }
+          } else if (upsertData2) {
+            console.log('[Auth] Profile saved via upsert on id');
+            setProfile(toUserProfile(upsertData2));
+            return { error: null };
+          }
+        } else if (upsertData) {
+          console.log('[Auth] Profile saved via upsert on user_id');
+          setProfile(toUserProfile(upsertData));
           return { error: null };
         }
-      } else if (upsertData) {
-        console.log('[Auth] Profile saved via upsert on user_id');
-        setProfile(toUserProfile(upsertData));
-        return { error: null };
-      }
 
-      // If we got here via the update fallback path, re-fetch the profile
-      console.log('[Auth] Re-fetching profile after update...');
-      const updatedProfile = await fetchProfile(user.id);
-      if (updatedProfile) {
-        setProfile(updatedProfile);
-        console.log('[Auth] Profile re-fetched successfully');
-      } else {
-        console.warn('[Auth] Could not re-fetch profile after save');
-      }
-      return { error: null };
+        // If we got here via the update fallback path, re-fetch the profile
+        console.log('[Auth] Re-fetching profile after update...');
+        const updatedProfile = await fetchProfile(user!.id);
+        if (updatedProfile) {
+          setProfile(updatedProfile);
+          console.log('[Auth] Profile re-fetched successfully');
+        } else {
+          console.warn('[Auth] Could not re-fetch profile after save');
+        }
+        return { error: null };
+      };
+
+      // Allow up to 3 retries (stripping one problematic column each time)
+      return await attemptSave(payload, 3);
     } catch (error: any) {
       console.error('[Auth] updateProfile exception:', error);
       return { error: error instanceof Error ? error : new Error(String(error?.message || error)) };
     }
   };
+
 
 
 
