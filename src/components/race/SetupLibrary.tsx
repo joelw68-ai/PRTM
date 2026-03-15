@@ -1682,17 +1682,26 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                   );
                 })}
               </div>
-              <button
-                onClick={() => {
-                  setEditingSC(null);
-                  setNewSC(defaultSupercharger);
-                  setShowSCModal(true);
-                }}
-                className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors whitespace-nowrap"
-              >
-                <Plus className="w-4 h-4" />
-                Add Power Adder
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowSCSwapModal(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg font-medium hover:bg-cyan-700 transition-colors whitespace-nowrap"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Swap Power Adder
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingSC(null);
+                    setNewSC(defaultSupercharger);
+                    setShowSCModal(true);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors whitespace-nowrap"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Power Adder
+                </button>
+              </div>
             </div>
 
             {/* Power Adder Service Alert Banner */}
@@ -3644,6 +3653,138 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
           </div>
         </div>
       )}
+
+      {/* ─── Power Adder Swap Modal ────────────────────────────────────────── */}
+      {showSCSwapModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl max-w-lg w-full p-6 border border-cyan-500/30 shadow-2xl shadow-cyan-500/10 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <RefreshCw className="w-5 h-5 text-cyan-400" />
+                Swap Power Adder
+              </h3>
+              <button onClick={() => setShowSCSwapModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Swap visualization preview */}
+            {scSwapPreviousId && scSwapNewId && (
+              <div className="flex items-center gap-3 mb-5">
+                <div className="flex-1 bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+                  <p className="text-xs text-red-400 mb-0.5 uppercase tracking-wide">Removing</p>
+                  <p className="text-sm font-semibold text-white">{superchargers.find(s => s.id === scSwapPreviousId)?.name || 'Unknown'}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{superchargers.find(s => s.id === scSwapPreviousId)?.model || ''}</p>
+                </div>
+                <div className="flex-shrink-0">
+                  <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center">
+                    <ArrowRight className="w-4 h-4 text-cyan-400" />
+                  </div>
+                </div>
+                <div className="flex-1 bg-green-500/10 border border-green-500/20 rounded-lg p-3">
+                  <p className="text-xs text-green-400 mb-0.5 uppercase tracking-wide">Installing</p>
+                  <p className="text-sm font-semibold text-white">{superchargers.find(s => s.id === scSwapNewId)?.name || 'Unknown'}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{superchargers.find(s => s.id === scSwapNewId)?.model || ''}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Previous Power Adder (being removed) *</label>
+                <select
+                  value={scSwapPreviousId}
+                  onChange={(e) => setScSwapPreviousId(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Select power adder...</option>
+                  {superchargers.map(sc => (
+                    <option key={sc.id} value={sc.id}>
+                      {sc.name}{sc.currentlyInstalled ? ' (Currently Installed)' : ''} - {sc.model} [{sc.status}]
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">New Power Adder (being installed) *</label>
+                <select
+                  value={scSwapNewId}
+                  onChange={(e) => setScSwapNewId(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Select power adder...</option>
+                  {superchargers.filter(sc => sc.id !== scSwapPreviousId).map(sc => (
+                    <option key={sc.id} value={sc.id}>
+                      {sc.name} - {sc.model} [{sc.status}]
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Reason for Swap *</label>
+                <select
+                  value={scSwapReason}
+                  onChange={(e) => setScSwapReason(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Select reason...</option>
+                  <option value="Scheduled Maintenance">Scheduled Maintenance</option>
+                  <option value="Component Failure">Component Failure</option>
+                  <option value="Performance Upgrade">Performance Upgrade</option>
+                  <option value="Testing / R&D">Testing / R&D</option>
+                  <option value="Rebuild Required">Rebuild Required</option>
+                  <option value="Preventive Replacement">Preventive Replacement</option>
+                  <option value="Damage / Breakage">Damage / Breakage</option>
+                  <option value="Setup Change">Setup Change</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Performed By *</label>
+                <input
+                  type="text"
+                  value={scSwapPerformedBy}
+                  onChange={(e) => setScSwapPerformedBy(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  placeholder="e.g., John Smith"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Notes</label>
+                <textarea
+                  value={scSwapNotes}
+                  onChange={(e) => setScSwapNotes(e.target.value)}
+                  rows={3}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  placeholder="Additional notes about this swap..."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowSCSwapModal(false)}
+                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePerformSCSwap}
+                disabled={!scSwapPreviousId || !scSwapNewId || !scSwapReason || !scSwapPerformedBy}
+                className="flex-1 px-4 py-2 bg-cyan-600 text-white rounded-lg font-medium hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Swap Power Adder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {/* Record Pass Modal */}
       {showRecordPassModal && (
