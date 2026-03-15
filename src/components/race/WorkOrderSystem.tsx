@@ -1045,10 +1045,9 @@ const WorkOrderSystem: React.FC = () => {
                         </button>
                         <button
                           onClick={() => {
-                            if (confirm('Delete this work order?')) {
-                              deleteWorkOrder(wo.id);
-                            }
+                            deleteWorkOrder(wo.id);
                           }}
+
                           className="p-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30"
                           title="Delete"
                         >

@@ -603,25 +603,24 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     }
   };
 
-  // Delete a pass — with offline queue fallback
+  // Delete a pass — undo toast is handled by AppContext
   const handleDelete = async (passId: string) => {
-    if (window.confirm('Are you sure you want to delete this pass? This action cannot be undone.')) {
-      try {
-        await deletePassLog(passId);
-        setExpandedPass(null);
-        reportSuccess();
-      } catch (err) {
-        console.error('[PassLog] delete failed:', err);
-        if (isConnectivityError(err)) {
-          reportConnectivityError();
-          toast.warning('Delete queued locally — will sync when connection is restored');
-        } else {
-          toast.error('Failed to delete pass');
-        }
-        setExpandedPass(null);
+    try {
+      await deletePassLog(passId);
+      setExpandedPass(null);
+      reportSuccess();
+    } catch (err) {
+      console.error('[PassLog] delete failed:', err);
+      if (isConnectivityError(err)) {
+        reportConnectivityError();
+        toast.warning('Delete queued locally — will sync when connection is restored');
+      } else {
+        toast.error('Failed to delete pass');
       }
+      setExpandedPass(null);
     }
   };
+
 
 
   // Toggle favorite status for a track

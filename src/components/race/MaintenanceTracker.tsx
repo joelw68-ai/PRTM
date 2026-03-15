@@ -240,10 +240,10 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
 
   const handleDeleteMaintenance = async (id: string) => {
-    if (confirm('Are you sure you want to delete this maintenance item?')) {
-      await deleteMaintenanceItem(id);
-    }
+    await deleteMaintenanceItem(id);
   };
+
+
 
   const calculateSFIStatus = (expirationDate: string): { status: SFICertification['status'], daysUntilExpiration: number } => {
     const expDate = parseLocalDate(expirationDate);

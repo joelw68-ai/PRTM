@@ -983,10 +983,9 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
       alert('Cannot delete an installed engine. Swap it out first.');
       return;
     }
-    if (confirm('Are you sure you want to delete this engine?')) {
-      await deleteEngine(id);
-    }
+    await deleteEngine(id);
   };
+
 
   // Head handlers
   const handleSaveHead = async () => {

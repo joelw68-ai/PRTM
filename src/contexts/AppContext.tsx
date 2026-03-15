@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { getLocalDateString } from '@/lib/utils';
 import { purgeDeletedPartFromCaches } from '@/lib/partsCleanup';
+import { auditLog } from '@/lib/auditLog';
+
 
 import * as dbLogger from '@/lib/dbLogger';
 import { toast } from 'sonner';
@@ -235,6 +237,42 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const activeSavesRef = useRef(0);
   const vendorSyncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ============ UNDO DELETE: PENDING PART DELETES ============
+  const pendingPartDeletesRef = useRef<Map<string, {
+    part: PartInventoryItem;
+    timeoutId: ReturnType<typeof setTimeout>;
+    toastId: string | number;
+  }>>(new Map());
+
+  // ============ UNDO DELETE: PENDING ENGINE DELETES ============
+  const pendingEngineDeletesRef = useRef<Map<string, {
+    item: Engine;
+    timeoutId: ReturnType<typeof setTimeout>;
+    toastId: string | number;
+  }>>(new Map());
+
+  // ============ UNDO DELETE: PENDING WORK ORDER DELETES ============
+  const pendingWorkOrderDeletesRef = useRef<Map<string, {
+    item: WorkOrder;
+    timeoutId: ReturnType<typeof setTimeout>;
+    toastId: string | number;
+  }>>(new Map());
+
+  // ============ UNDO DELETE: PENDING MAINTENANCE ITEM DELETES ============
+  const pendingMaintenanceDeletesRef = useRef<Map<string, {
+    item: MaintenanceItem;
+    timeoutId: ReturnType<typeof setTimeout>;
+    toastId: string | number;
+  }>>(new Map());
+
+  // ============ UNDO DELETE: PENDING PASS LOG DELETES ============
+  const pendingPassLogDeletesRef = useRef<Map<string, {
+    item: PassLogEntry;
+    timeoutId: ReturnType<typeof setTimeout>;
+    toastId: string | number;
+  }>>(new Map());
+
+
 
   // Wrapper to sync offline queue and then refresh data
   const syncOfflineQueue = useCallback(async () => {
@@ -355,8 +393,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       mountedRef.current = false;
       if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
       if (vendorSyncIntervalRef.current) clearInterval(vendorSyncIntervalRef.current);
+      // Execute any pending deletes immediately on unmount
+      // (don't leave orphaned soft-deleted items that never get hard-deleted)
+      const allPendingRefs = [
+        pendingPartDeletesRef,
+        pendingEngineDeletesRef,
+        pendingWorkOrderDeletesRef,
+        pendingMaintenanceDeletesRef,
+        pendingPassLogDeletesRef,
+      ];
+      for (const ref of allPendingRefs) {
+        ref.current.forEach((pending) => {
+          clearTimeout(pending.timeoutId);
+        });
+        ref.current.clear();
+      }
     };
   }, []);
+
+
 
 
 
@@ -841,10 +896,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (mergedItem) await trackSave(() => db.upsertPassLog(mergedItem!, user?.id), 'updatePassLog', { type: 'upsertPassLog', data: mergedItem });
   }, [user?.id, trackSave]);
 
+  // ============ SOFT-DELETE WITH UNDO FOR PASS LOGS ============
   const deletePassLogAction = useCallback(async (id: string) => {
-    setPassLogs(prev => prev.filter(p => p.id !== id));
-    await trackSave(() => db.deletePassLog(id), 'deletePassLog', { type: 'deletePassLog', data: id });
+    let itemToDelete: PassLogEntry | null = null;
+    setPassLogs(prev => {
+      itemToDelete = prev.find(p => p.id === id) || null;
+      return prev.filter(p => p.id !== id);
+    });
+    if (!itemToDelete) return;
+    const captured = { ...itemToDelete } as PassLogEntry;
+
+    const existing = pendingPassLogDeletesRef.current.get(id);
+    if (existing) { clearTimeout(existing.timeoutId); toast.dismiss(existing.toastId); pendingPassLogDeletesRef.current.delete(id); }
+
+    const timeoutId = setTimeout(() => {
+      const pending = pendingPassLogDeletesRef.current.get(id);
+      if (!pending) return;
+      pendingPassLogDeletesRef.current.delete(id);
+      trackSave(() => db.deletePassLog(id), 'deletePassLog', { type: 'deletePassLog', data: id });
+      console.log(`[deletePassLog] Hard delete executed for pass ${id}`);
+    }, UNDO_DELETE_WINDOW_MS);
+
+    const toastId = toast(`Pass deleted — ${captured.date} at ${captured.track}`, {
+      description: `${captured.eighth?.toFixed(3) || '—'} ET / ${captured.mph?.toFixed(1) || '—'} MPH — click Undo within 10s to restore`,
+      duration: UNDO_DELETE_WINDOW_MS + 500,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const pending = pendingPassLogDeletesRef.current.get(id);
+          if (pending) {
+            clearTimeout(pending.timeoutId);
+            pendingPassLogDeletesRef.current.delete(id);
+            setPassLogs(prev => prev.some(p => p.id === id) ? prev : [captured, ...prev]);
+            toast.success('Pass restored', { description: `${captured.date} at ${captured.track}`, duration: 3000 });
+          }
+        },
+      },
+    });
+    pendingPassLogDeletesRef.current.set(id, { item: captured, timeoutId, toastId: toastId as string | number });
   }, [trackSave]);
+
 
   // Work Order actions
   const addWorkOrder = useCallback(async (order: WorkOrder) => {
@@ -861,10 +952,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (mergedItem) await trackSave(() => db.upsertWorkOrder(mergedItem!, user?.id), 'updateWorkOrder', { type: 'upsertWorkOrder', data: mergedItem });
   }, [user?.id, trackSave]);
 
+  // ============ SOFT-DELETE WITH UNDO FOR WORK ORDERS ============
   const deleteWorkOrderAction = useCallback(async (id: string) => {
-    setWorkOrders(prev => prev.filter(w => w.id !== id));
-    await trackSave(() => db.deleteWorkOrder(id), 'deleteWorkOrder', { type: 'deleteWorkOrder', data: id });
+    let itemToDelete: WorkOrder | null = null;
+    setWorkOrders(prev => {
+      itemToDelete = prev.find(w => w.id === id) || null;
+      return prev.filter(w => w.id !== id);
+    });
+    if (!itemToDelete) return;
+    const captured = { ...itemToDelete } as WorkOrder;
+
+    const existing = pendingWorkOrderDeletesRef.current.get(id);
+    if (existing) { clearTimeout(existing.timeoutId); toast.dismiss(existing.toastId); pendingWorkOrderDeletesRef.current.delete(id); }
+
+    const timeoutId = setTimeout(() => {
+      const pending = pendingWorkOrderDeletesRef.current.get(id);
+      if (!pending) return;
+      pendingWorkOrderDeletesRef.current.delete(id);
+      trackSave(() => db.deleteWorkOrder(id), 'deleteWorkOrder', { type: 'deleteWorkOrder', data: id });
+      console.log(`[deleteWorkOrder] Hard delete executed for work order ${id}`);
+    }, UNDO_DELETE_WINDOW_MS);
+
+    const toastId = toast(`Work order "${captured.title}" deleted`, {
+      description: `${captured.id} [${captured.priority}] — click Undo within 10s to restore`,
+      duration: UNDO_DELETE_WINDOW_MS + 500,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const pending = pendingWorkOrderDeletesRef.current.get(id);
+          if (pending) {
+            clearTimeout(pending.timeoutId);
+            pendingWorkOrderDeletesRef.current.delete(id);
+            setWorkOrders(prev => prev.some(w => w.id === id) ? prev : [captured, ...prev]);
+            toast.success('Work order restored', { description: `"${captured.title}" has been restored`, duration: 3000 });
+          }
+        },
+      },
+    });
+    pendingWorkOrderDeletesRef.current.set(id, { item: captured, timeoutId, toastId: toastId as string | number });
   }, [trackSave]);
+
 
 
   // Engine Swap action
@@ -949,10 +1076,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     await trackSave(() => db.upsertEngine(engine, user?.id), 'addEngine');
   }, [user?.id, trackSave]);
 
+  // ============ SOFT-DELETE WITH UNDO FOR ENGINES ============
   const deleteEngine = useCallback(async (id: string) => {
-    setEngines(prev => prev.filter(e => e.id !== id));
-    await trackSave(() => db.deleteEngine(id), 'deleteEngine');
+    let itemToDelete: Engine | null = null;
+    setEngines(prev => {
+      itemToDelete = prev.find(e => e.id === id) || null;
+      return prev.filter(e => e.id !== id);
+    });
+    if (!itemToDelete) return;
+    const captured = { ...itemToDelete } as Engine;
+
+    const existing = pendingEngineDeletesRef.current.get(id);
+    if (existing) { clearTimeout(existing.timeoutId); toast.dismiss(existing.toastId); pendingEngineDeletesRef.current.delete(id); }
+
+    const timeoutId = setTimeout(() => {
+      const pending = pendingEngineDeletesRef.current.get(id);
+      if (!pending) return;
+      pendingEngineDeletesRef.current.delete(id);
+      trackSave(() => db.deleteEngine(id), 'deleteEngine');
+      console.log(`[deleteEngine] Hard delete executed for engine ${id} (${captured.name})`);
+    }, UNDO_DELETE_WINDOW_MS);
+
+    const toastId = toast(`Engine "${captured.name}" deleted`, {
+      description: `S/N: ${captured.serialNumber} — click Undo within 10s to restore`,
+      duration: UNDO_DELETE_WINDOW_MS + 500,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const pending = pendingEngineDeletesRef.current.get(id);
+          if (pending) {
+            clearTimeout(pending.timeoutId);
+            pendingEngineDeletesRef.current.delete(id);
+            setEngines(prev => prev.some(e => e.id === id) ? prev : [...prev, captured]);
+            toast.success('Engine restored', { description: `"${captured.name}" has been restored`, duration: 3000 });
+          }
+        },
+      },
+    });
+    pendingEngineDeletesRef.current.set(id, { item: captured, timeoutId, toastId: toastId as string | number });
   }, [trackSave]);
+
 
   const addSupercharger = useCallback(async (sc: Supercharger) => {
     setSuperchargers(prev => [...prev, sc]);
@@ -979,10 +1142,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     await trackSave(() => db.upsertMaintenanceItem(item, user?.id), 'addMaintenance');
   }, [user?.id, trackSave]);
 
+  // ============ SOFT-DELETE WITH UNDO FOR MAINTENANCE ITEMS ============
   const deleteMaintenanceItem = useCallback(async (id: string) => {
-    setMaintenanceItems(prev => prev.filter(m => m.id !== id));
-    await trackSave(() => db.deleteMaintenanceItem(id), 'deleteMaintenance');
+    let itemToDelete: MaintenanceItem | null = null;
+    setMaintenanceItems(prev => {
+      itemToDelete = prev.find(m => m.id === id) || null;
+      return prev.filter(m => m.id !== id);
+    });
+    if (!itemToDelete) return;
+    const captured = { ...itemToDelete } as MaintenanceItem;
+
+    const existing = pendingMaintenanceDeletesRef.current.get(id);
+    if (existing) { clearTimeout(existing.timeoutId); toast.dismiss(existing.toastId); pendingMaintenanceDeletesRef.current.delete(id); }
+
+    const timeoutId = setTimeout(() => {
+      const pending = pendingMaintenanceDeletesRef.current.get(id);
+      if (!pending) return;
+      pendingMaintenanceDeletesRef.current.delete(id);
+      trackSave(() => db.deleteMaintenanceItem(id), 'deleteMaintenance');
+      console.log(`[deleteMaintenanceItem] Hard delete executed for maintenance item ${id} (${captured.component})`);
+    }, UNDO_DELETE_WINDOW_MS);
+
+    const toastId = toast(`Maintenance item "${captured.component}" deleted`, {
+      description: `${captured.category} — click Undo within 10s to restore`,
+      duration: UNDO_DELETE_WINDOW_MS + 500,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const pending = pendingMaintenanceDeletesRef.current.get(id);
+          if (pending) {
+            clearTimeout(pending.timeoutId);
+            pendingMaintenanceDeletesRef.current.delete(id);
+            setMaintenanceItems(prev => prev.some(m => m.id === id) ? prev : [...prev, captured]);
+            toast.success('Maintenance item restored', { description: `"${captured.component}" has been restored`, duration: 3000 });
+          }
+        },
+      },
+    });
+    pendingMaintenanceDeletesRef.current.set(id, { item: captured, timeoutId, toastId: toastId as string | number });
   }, [trackSave]);
+
 
   const addSFICertification = useCallback(async (cert: SFICertification) => {
     setSFICertifications(prev => [...prev, cert]);
@@ -1005,14 +1204,102 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     await trackSave(() => db.upsertPartInventory(part, user?.id), 'addPart');
   }, [user?.id, trackSave]);
 
+  // ============ SOFT-DELETE WITH UNDO FOR PARTS INVENTORY ============
+  // When a part is deleted, it is immediately hidden from the UI (soft-delete)
+  // but retained in memory for 10 seconds. A toast with an "Undo" button appears.
+  // If the user clicks Undo within 10 seconds, the part is restored to state and
+  // the database delete is cancelled. Only after the 10-second window expires
+  // does the hard delete (cache purge + DB delete + audit log) execute.
+  // This prevents accidental data loss from mis-clicks.
+  const UNDO_DELETE_WINDOW_MS = 10000; // 10 seconds
+
   const deletePartInventory = useCallback(async (id: string) => {
-    setPartsInventory(prev => prev.filter(p => p.id !== id));
-    // Immediately purge all localStorage caches that reference this deleted part.
-    // This prevents ghost records from appearing in Recently Depleted, Usage History,
-    // and the local backup after the part has been deleted from the database.
-    purgeDeletedPartFromCaches(id);
-    await trackSave(() => db.deletePartInventory(id), 'deletePart');
+    // 1. Capture the part data BEFORE removing from state
+    //    (using functional update so the updater runs synchronously)
+    let partToDelete: PartInventoryItem | null = null;
+    setPartsInventory(prev => {
+      partToDelete = prev.find(p => p.id === id) || null;
+      return prev.filter(p => p.id !== id);
+    });
+
+    // Guard: if the part wasn't found, nothing to do
+    if (!partToDelete) {
+      console.warn(`[deletePartInventory] Part ${id} not found in state — skipping`);
+      return;
+    }
+
+    // 2. Cancel any existing pending delete for this part (edge case: rapid double-click)
+    const existingPending = pendingPartDeletesRef.current.get(id);
+    if (existingPending) {
+      clearTimeout(existingPending.timeoutId);
+      toast.dismiss(existingPending.toastId);
+      pendingPartDeletesRef.current.delete(id);
+    }
+
+    // 3. Capture a local reference for closures
+    const capturedPart = { ...partToDelete } as PartInventoryItem;
+
+    // 4. Set up the deferred hard delete (fires after UNDO_DELETE_WINDOW_MS)
+    const timeoutId = setTimeout(() => {
+      // ── HARD DELETE: undo window has expired ──
+      const pending = pendingPartDeletesRef.current.get(id);
+      if (!pending) return; // Already undone or cleaned up
+
+      pendingPartDeletesRef.current.delete(id);
+
+      // Purge all localStorage caches referencing this part
+      purgeDeletedPartFromCaches(id);
+
+      // Delete from database
+      trackSave(() => db.deletePartInventory(id), 'deletePart', { type: 'deletePartInventory', data: id });
+
+      // Audit log the permanent deletion
+      auditLog.logInventoryChange(id, capturedPart.description, 'delete', capturedPart, undefined).catch(() => {});
+
+      console.log(`[deletePartInventory] Hard delete executed for part ${id} (${capturedPart.partNumber})`);
+    }, UNDO_DELETE_WINDOW_MS);
+
+    // 5. Show toast with Undo action button
+    const toastId = toast(`"${capturedPart.description}" deleted`, {
+      description: `${capturedPart.partNumber} — click Undo within 10s to restore`,
+      duration: UNDO_DELETE_WINDOW_MS + 500, // Slightly longer than the window so it's still visible
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          // ── UNDO: restore the part ──
+          const pending = pendingPartDeletesRef.current.get(id);
+          if (pending) {
+            // Cancel the hard delete timer
+            clearTimeout(pending.timeoutId);
+            pendingPartDeletesRef.current.delete(id);
+
+            // Restore the part back into state
+            setPartsInventory(prev => {
+              // Guard against duplicates (in case a background sync re-added it)
+              if (prev.some(p => p.id === id)) return prev;
+              return [...prev, capturedPart];
+            });
+
+            toast.success(`"${capturedPart.description}" restored`, {
+              description: `${capturedPart.partNumber} has been restored to inventory`,
+              duration: 3000,
+            });
+
+            console.log(`[deletePartInventory] Undo — part ${id} (${capturedPart.partNumber}) restored`);
+          }
+        },
+      },
+    });
+
+    // 6. Store the pending delete for potential undo
+    pendingPartDeletesRef.current.set(id, {
+      part: capturedPart,
+      timeoutId,
+      toastId: toastId as string | number,
+    });
   }, [trackSave]);
+
+
 
 
   const addChecklistItem = useCallback(async (checklistType: 'preRun' | 'betweenRounds' | 'postRun', item: ChecklistItem) => {

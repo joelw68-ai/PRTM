@@ -7,7 +7,8 @@ import { CrewRole } from '@/lib/permissions';
 import { auditLog } from '@/lib/auditLog';
 import { VendorRecord } from '@/lib/database';
 import { toast } from 'sonner';
-import { purgeDeletedPartFromCaches } from '@/lib/partsCleanup';
+
+
 
 import {
   Package,
@@ -490,23 +491,13 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
 
 
 
+  // ============ DELETE PART (with undo) ============
+  // The confirm() dialog is removed — the undo toast in AppContext serves as the safety net.
+  // Audit logging is now handled by AppContext after the 10-second undo window expires.
   const handleDeletePart = async (id: string) => {
-    const part = partsInventory.find(p => p.id === id);
-    if (confirm('Are you sure you want to delete this part?')) {
-      await deletePartInventory(id);
-      
-      // Log the deletion
-      if (part) {
-        await auditLog.logInventoryChange(
-          id,
-          part.description,
-          'delete',
-          part,
-          undefined
-        );
-      }
-    }
+    await deletePartInventory(id);
   };
+
 
   // Purchase Order Functions
   const openPOModal = (parts: PartInventoryItem[]) => {
