@@ -200,6 +200,54 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   const [swapPerformedBy, setSwapPerformedBy] = useState('');
   const [swapNotes, setSwapNotes] = useState('');
 
+  // ─── Power Adder Swap Modal State ───────────────────────────────────────────
+  const [showSCSwapModal, setShowSCSwapModal] = useState(false);
+  const [scSwapPreviousId, setScSwapPreviousId] = useState('');
+  const [scSwapNewId, setScSwapNewId] = useState('');
+  const [scSwapReason, setScSwapReason] = useState('');
+  const [scSwapPerformedBy, setScSwapPerformedBy] = useState('');
+  const [scSwapNotes, setScSwapNotes] = useState('');
+
+  // Auto-populate previous SC when swap modal opens
+  useEffect(() => {
+    if (showSCSwapModal) {
+      const installed = superchargers.find(s => s.currentlyInstalled);
+      setScSwapPreviousId(installed?.id || '');
+      setScSwapNewId('');
+    }
+  }, [showSCSwapModal, superchargers]);
+
+  const handlePerformSCSwap = async () => {
+    if (!scSwapPreviousId || !scSwapNewId || !scSwapReason || !scSwapPerformedBy) return;
+    const today = getLocalDateString();
+    try {
+      // Mark old one as not installed
+      await updateSupercharger(scSwapPreviousId, {
+        currentlyInstalled: false,
+        status: 'Ready' as SuperchargerStatus,
+      });
+      // Mark new one as installed
+      await updateSupercharger(scSwapNewId, {
+        currentlyInstalled: true,
+        status: 'Active' as SuperchargerStatus,
+        installDate: today,
+      });
+      const prevSC = superchargers.find(s => s.id === scSwapPreviousId);
+      const newSC_item = superchargers.find(s => s.id === scSwapNewId);
+      toast.success(`Swapped "${prevSC?.name || 'Unknown'}" out, installed "${newSC_item?.name || 'Unknown'}"`, { duration: 5000 });
+    } catch (err) {
+      console.error('[SCSwap] Error:', err);
+      toast.error('Failed to perform power adder swap.');
+    }
+    setShowSCSwapModal(false);
+    setScSwapPreviousId('');
+    setScSwapNewId('');
+    setScSwapReason('');
+    setScSwapPerformedBy('');
+    setScSwapNotes('');
+  };
+
+
   // Swap counts by category
   const swapCountsByCategory = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1027,14 +1075,18 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   const handleDeleteSC = async (id: string) => {
     const sc = superchargers.find(s => s.id === id);
     if (sc?.currentlyInstalled) {
-      alert('Cannot delete an installed power adder. Swap it out first.');
+      const shouldUninstall = confirm('This power adder is currently installed. Would you like to uninstall it first so you can delete it?\n\nClick OK to uninstall, then try deleting again.\nClick Cancel to keep it installed.');
+      if (shouldUninstall) {
+        await updateSupercharger(id, { currentlyInstalled: false, status: 'Ready' as SuperchargerStatus });
+        toast.success(`"${sc.name}" has been uninstalled. You can now delete it.`, { duration: 4000 });
+      }
       return;
     }
     if (confirm('Are you sure you want to delete this power adder?')) {
-
       await deleteSupercharger(id);
     }
   };
+
 
   // ─── Reset After Service Handler ────────────────────────────────────────────
   const resetSubComponents = (comps: Record<string, ComponentTracker> | undefined): Record<string, ComponentTracker> | undefined => {
@@ -2964,13 +3016,14 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                   </select>
                 </div>
                 <div>
+                  <label className="block text-sm text-slate-400 mb-1">Install Date</label>
                   <DateInputDark
                     value={newSC.installDate}
                     onChange={(e) => setNewSC({...newSC, installDate: e.target.value})}
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   />
-
                 </div>
+
               </div>
               
               <div className="grid grid-cols-2 gap-4">
@@ -2993,6 +3046,20 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                   />
                 </div>
               </div>
+
+              {/* Currently Installed Toggle */}
+              <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                <span className="text-sm text-slate-300">Currently Installed</span>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <div onClick={() => setNewSC({...newSC, currentlyInstalled: !newSC.currentlyInstalled})} className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${newSC.currentlyInstalled ? 'bg-green-500' : 'bg-slate-600'}`}>
+                    <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${newSC.currentlyInstalled ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                  </div>
+                  <span className={`text-sm font-medium ${newSC.currentlyInstalled ? 'text-green-400' : 'text-slate-500'}`}>
+                    {newSC.currentlyInstalled ? 'Yes' : 'No'}
+                  </span>
+                </label>
+              </div>
+
               
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Notes</label>
