@@ -237,6 +237,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const activeSavesRef = useRef(0);
   const vendorSyncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ============ UNDO DELETE WINDOW (must be before any useCallback that references it) ============
+  const UNDO_DELETE_WINDOW_MS = 10000; // 10 seconds
+
   // ============ UNDO DELETE: PENDING PART DELETES ============
   const pendingPartDeletesRef = useRef<Map<string, {
     part: PartInventoryItem;
@@ -1211,7 +1214,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // the database delete is cancelled. Only after the 10-second window expires
   // does the hard delete (cache purge + DB delete + audit log) execute.
   // This prevents accidental data loss from mis-clicks.
-  const UNDO_DELETE_WINDOW_MS = 10000; // 10 seconds
+
+
 
   const deletePartInventory = useCallback(async (id: string) => {
     // 1. Capture the part data BEFORE removing from state
