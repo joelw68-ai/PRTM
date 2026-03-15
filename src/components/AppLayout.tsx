@@ -249,6 +249,15 @@ const AppLayoutContent: React.FC = () => {
     }
   }, [showPasswordReset]);
 
+  // Race Day Mode: redirect to teamdash if on a non-allowed section
+  // MUST be above any conditional returns to avoid violating Rules of Hooks
+  useEffect(() => {
+    if (isRaceDayMode && !raceDaySections.includes(activeSection)) {
+      setActiveSection('teamdash');
+    }
+  }, [isRaceDayMode]);
+
+
   // Render the active section content
   const renderSection = () => {
     switch (activeSection) {
@@ -455,12 +464,7 @@ const AppLayoutContent: React.FC = () => {
     );
   }
 
-  // Race Day Mode: redirect to teamdash if on a non-allowed section
-  useEffect(() => {
-    if (isRaceDayMode && !raceDaySections.includes(activeSection)) {
-      setActiveSection('teamdash');
-    }
-  }, [isRaceDayMode]);
+
 
   // Authenticated layout with sidebar
   return (

@@ -49,6 +49,11 @@ import type { SaveStatus } from '@/components/race/SaveStatusIndicator';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { isConnectivityError, type QueueOperationType } from '@/lib/offlineQueue';
 
+// ============ MODULE-LEVEL CONSTANT — UNDO DELETE WINDOW ============
+// Declared at module scope (outside the component) so it cannot interfere
+// with React's hook ordering inside AppProvider. This is the ONLY declaration.
+const UNDO_DELETE_WINDOW_MS = 10000; // 10 seconds
+
 
 
 interface AppContextType {
@@ -237,8 +242,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const activeSavesRef = useRef(0);
   const vendorSyncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ============ UNDO DELETE WINDOW (must be before any useCallback that references it) ============
-  const UNDO_DELETE_WINDOW_MS = 10000; // 10 seconds
+
 
   // ============ UNDO DELETE: PENDING PART DELETES ============
   const pendingPartDeletesRef = useRef<Map<string, {
