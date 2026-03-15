@@ -7,6 +7,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { AppProvider, useApp } from '@/contexts/AppContext';
 import { CarProvider } from '@/contexts/CarContext';
 import { ThemeColorProvider } from '@/contexts/ThemeColorContext';
+import { RaceDayProvider, useRaceDay } from '@/contexts/RaceDayContext';
+
 
 
 // Layout components
@@ -14,6 +16,8 @@ import Sidebar from './race/Sidebar';
 import LoginScreen from './race/LoginScreen';
 import DashboardGrid from './race/DashboardGrid';
 import LoginAlertPopup from './race/LoginAlertPopup';
+import RaceDayBanner from './race/RaceDayBanner';
+
 
 // Section components
 import Dashboard from './race/Dashboard';
@@ -49,6 +53,7 @@ import FuelLog from './race/FuelLog';
 import CarProfiles from './race/CarProfiles';
 import BulkCarAssign from './race/BulkCarAssign';
 import RaceDayTimeline from './race/RaceDayTimeline';
+import TeamDashboard from './race/TeamDashboard';
 
 import { CrewRole, hasPermission, isAdminRole, Permission } from '@/lib/permissions';
 import { TeamMember } from './race/TeamProfile';
@@ -59,8 +64,10 @@ const AppLayoutContent: React.FC = () => {
   const { setTheme } = useTheme();
   const { profile, user, isAuthenticated, isDemoMode, showPasswordReset, isTeamMember, activeTeamMembership } = useAuth();
   const { teamMembers } = useApp();
+  const { isRaceDayMode, raceDaySections } = useRaceDay();
 
   const [activeSection, setActiveSection] = useState('profile');
+
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'signup'>('login');
   const [selectedCrewMember, setSelectedCrewMember] = useState<TeamMember | null>(null);
@@ -418,9 +425,15 @@ const AppLayoutContent: React.FC = () => {
       case 'help':
         return <HeroSection />;
 
+      case 'teamdash':
+        return (
+          <TeamDashboard currentRole={currentRole} onNavigate={handleNavigate} />
+        );
+
       default:
         return <DashboardGrid onNavigate={handleNavigate} />;
     }
+
   };
 
   // If not authenticated and not in demo mode, show login screen
@@ -441,6 +454,13 @@ const AppLayoutContent: React.FC = () => {
       </div>
     );
   }
+
+  // Race Day Mode: redirect to teamdash if on a non-allowed section
+  useEffect(() => {
+    if (isRaceDayMode && !raceDaySections.includes(activeSection)) {
+      setActiveSection('teamdash');
+    }
+  }, [isRaceDayMode]);
 
   // Authenticated layout with sidebar
   return (
@@ -464,6 +484,9 @@ const AppLayoutContent: React.FC = () => {
           sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-64'
         }`}
       >
+        {/* Race Day Banner — persistent top banner when Race Day Mode is active */}
+        <RaceDayBanner onNavigate={handleNavigate} activeSection={activeSection} />
+
         {/* Mobile top padding for hamburger */}
         <div className="h-14 lg:hidden" />
 
@@ -513,7 +536,7 @@ const AppLayoutContent: React.FC = () => {
           className="text-sm font-mono font-semibold tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
           style={{ color: 'var(--tc)' }}
         >
-          v1.0.6
+          v1.0.7
         </span>
       </div>
 
@@ -526,7 +549,9 @@ const AppLayout: React.FC = () => {
     <AppProvider>
       <CarProvider>
         <ThemeColorProvider>
-          <AppLayoutContent />
+          <RaceDayProvider>
+            <AppLayoutContent />
+          </RaceDayProvider>
         </ThemeColorProvider>
       </CarProvider>
     </AppProvider>

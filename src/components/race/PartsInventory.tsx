@@ -7,6 +7,7 @@ import { CrewRole } from '@/lib/permissions';
 import { auditLog } from '@/lib/auditLog';
 import { VendorRecord } from '@/lib/database';
 import { toast } from 'sonner';
+import { purgeDeletedPartFromCaches } from '@/lib/partsCleanup';
 
 import {
   Package,
@@ -149,10 +150,16 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
   const [recentlyDepletedExpanded, setRecentlyDepletedExpanded] = useState(true);
 
   // ============ RECENTLY DEPLETED PARTS (from maintenance completions) ============
+  // CRITICAL: Only show parts that STILL EXIST in parts_inventory.
+  // If a part has been deleted from the database, it must never appear here
+  // regardless of what the maintenance history localStorage cache contains.
   const recentlyDepletedParts = useMemo<RecentlyDepletedPart[]>(() => {
     const history = loadMaintenanceHistory();
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    // Build a Set of valid part IDs for O(1) lookups
+    const validPartIds = new Set(partsInventory.map(p => p.id));
 
     // Filter entries from the last 7 days that used parts
     const recentEntries = history.filter(entry => {
@@ -167,8 +174,15 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
 
     recentEntries.forEach(entry => {
       entry.partsUsed.forEach(pu => {
-        const existing = partMap.get(pu.partId);
+        // ── GUARD: Skip any part whose ID no longer exists in parts_inventory ──
+        // This prevents deleted parts (like the ghost spark plug) from appearing.
+        if (!validPartIds.has(pu.partId)) return;
+
         const inventoryPart = partsInventory.find(p => p.id === pu.partId);
+        // Double-check: inventoryPart must exist (should always be true after the Set check)
+        if (!inventoryPart) return;
+
+        const existing = partMap.get(pu.partId);
 
         if (existing) {
           existing.totalQuantityUsed += pu.quantity;
@@ -180,24 +194,22 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
             existing.lastUsedComponent = entry.component;
           }
           // Update current stock from live inventory
-          if (inventoryPart) {
-            existing.currentOnHand = inventoryPart.onHand;
-            existing.status = inventoryPart.status;
-          }
+          existing.currentOnHand = inventoryPart.onHand;
+          existing.status = inventoryPart.status;
         } else {
           partMap.set(pu.partId, {
             partId: pu.partId,
-            partNumber: pu.partNumber || inventoryPart?.partNumber || '',
-            description: pu.description || inventoryPart?.description || '',
+            partNumber: inventoryPart.partNumber,
+            description: inventoryPart.description,
             totalQuantityUsed: pu.quantity,
             totalCost: pu.quantity * pu.unitCost,
             usageCount: 1,
             lastUsedDate: entry.dateCompleted,
             lastUsedComponent: entry.component,
-            currentOnHand: inventoryPart?.onHand ?? 0,
-            minQuantity: inventoryPart?.minQuantity ?? 0,
-            vendor: inventoryPart?.vendor || '',
-            status: inventoryPart?.status || 'Unknown'
+            currentOnHand: inventoryPart.onHand,
+            minQuantity: inventoryPart.minQuantity,
+            vendor: inventoryPart.vendor,
+            status: inventoryPart.status
           });
         }
       });
@@ -214,6 +226,7 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
       return b.totalQuantityUsed - a.totalQuantityUsed;
     });
   }, [partsInventory]); // Re-compute when partsInventory changes
+
 
   // ============ PENDING PO REQUEST FROM MAINTENANCE ============
   useEffect(() => {

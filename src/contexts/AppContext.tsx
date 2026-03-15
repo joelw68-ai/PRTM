@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { getLocalDateString } from '@/lib/utils';
+import { purgeDeletedPartFromCaches } from '@/lib/partsCleanup';
+
 import * as dbLogger from '@/lib/dbLogger';
 import { toast } from 'sonner';
 import { checkNewlyTriggeredAlerts, loadAlertSettings } from '@/lib/maintenanceAlerts';
@@ -1005,8 +1007,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deletePartInventory = useCallback(async (id: string) => {
     setPartsInventory(prev => prev.filter(p => p.id !== id));
+    // Immediately purge all localStorage caches that reference this deleted part.
+    // This prevents ghost records from appearing in Recently Depleted, Usage History,
+    // and the local backup after the part has been deleted from the database.
+    purgeDeletedPartFromCaches(id);
     await trackSave(() => db.deletePartInventory(id), 'deletePart');
   }, [trackSave]);
+
 
   const addChecklistItem = useCallback(async (checklistType: 'preRun' | 'betweenRounds' | 'postRun', item: ChecklistItem) => {
     const setters = { preRun: setPreRunChecklist, betweenRounds: setBetweenRoundsChecklist, postRun: setPostRunChecklist };
