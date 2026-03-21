@@ -18,6 +18,8 @@ import { CrewRole } from '@/lib/permissions';
 import { fetchWeatherData, calculateDewPoint, calculateVaporPressure, calculateWaterGrains, calculateWetBulb, calculateSTDCorrection } from '@/lib/weather';
 
 import { SavedTrack } from '@/lib/database';
+import * as db from '@/lib/database';
+
 
 
 
@@ -52,8 +54,12 @@ import {
   GitCompare,
   CheckSquare,
   Square,
-  FlaskConical
+  FlaskConical,
+  Package,
+  Undo2
 } from 'lucide-react';
+
+
 
 
 import { PassLogEntry } from '@/data/proModData';
@@ -83,8 +89,12 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     deletePassLog, 
     engines, 
     superchargers, 
+    drivetrainComponents,
     getActiveEngine, 
     getActiveSupercharger,
+    updateEngine,
+    updateSupercharger,
+    updateDrivetrainComponent,
     savedTracks,
     addSavedTrack,
     updateSavedTrack,
@@ -94,6 +104,24 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   const { profile } = useAuth();
   const { queueOperation, reportConnectivityError, reportSuccess } = useOfflineSync();
 
+  // ═══════════════════════════════════════════════════════════════════
+  // AUTO-INCREMENT STANDALONE PARTS ON NEW PASS
+  // ═══════════════════════════════════════════════════════════════════
+  // When enabled (default ON), saving a new pass automatically adds +1 pass
+  // to every standalone part on every currently-installed component.
+  // User can toggle this off per-pass in the modal footer.
+  const AUTO_INCREMENT_KEY = 'passlog_auto_increment_parts';
+  const [autoIncrementParts, setAutoIncrementParts] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(AUTO_INCREMENT_KEY);
+      return stored === null ? true : stored === 'true';
+    } catch { return true; }
+  });
+
+  // Persist the toggle to localStorage whenever it changes
+  useEffect(() => {
+    try { localStorage.setItem(AUTO_INCREMENT_KEY, String(autoIncrementParts)); } catch {}
+  }, [autoIncrementParts]);
 
 
   const autoFetchTriggered = useRef(false);
@@ -110,6 +138,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   const [savingTrack, setSavingTrack] = useState(false);
   const [trackSaveSuccess, setTrackSaveSuccess] = useState<string | null>(null);
   const [isHistoricalFetch, setIsHistoricalFetch] = useState(false);
+
 
   // Weather Verify Panel state
   const [showVerifyPanel, setShowVerifyPanel] = useState(false);
@@ -568,7 +597,11 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
 
   // Save pass (add new or update existing) — with offline queue fallback
+  // When adding a NEW pass and autoIncrementParts is ON, also increment
+  // standalone parts passes on all currently-installed components.
   const handleSave = async () => {
+    const isNewPass = !editingPassId;
+
     try {
       if (editingPassId) {
         await updatePassLog(editingPassId, formData);
@@ -589,10 +622,123 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
         toast.error('Failed to save pass');
       }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // AUTO-INCREMENT STANDALONE PARTS ON NEW PASS + UNDO CAPABILITY
+    // ═══════════════════════════════════════════════════════════════════
+    if (isNewPass && autoIncrementParts) {
+      try {
+        let totalUpdated = 0;
+        const n = 1; // Always +1 pass per logged pass
+
+        // Capture snapshot of components for undo
+        const undoEngineIds: { id: string; prevTotal: number; prevSinceRebuild: number }[] = [];
+        const undoSuperchargerIds: { id: string; prevTotal: number; prevSinceService: number }[] = [];
+        const undoDrivetrainIds: { id: string; prevTotal: number; prevSinceService: number }[] = [];
+        const passId = `PASS-${String(passLogs.length + 1).padStart(3, '0')}`;
+
+        // Increment all installed engines
+        for (const eng of engines.filter((e: any) => e.currentlyInstalled)) {
+          undoEngineIds.push({ id: eng.id, prevTotal: eng.totalPasses, prevSinceRebuild: eng.passesSinceRebuild });
+          updateEngine(eng.id, {
+            totalPasses: eng.totalPasses + n,
+            passesSinceRebuild: eng.passesSinceRebuild + n,
+          }).catch(err => console.warn('[PassLog AutoIncrement] engine update failed:', err));
+          db.bulkIncrementComponentPartPasses(eng.id, n).catch(err => console.warn('[PassLog AutoIncrement] engine parts increment failed:', err));
+          totalUpdated++;
+        }
+
+        // Increment all installed power adders (superchargers)
+        for (const sc of superchargers.filter((s: any) => s.currentlyInstalled)) {
+          undoSuperchargerIds.push({ id: sc.id, prevTotal: sc.totalPasses, prevSinceService: sc.passesSinceService });
+          updateSupercharger(sc.id, {
+            totalPasses: sc.totalPasses + n,
+            passesSinceService: sc.passesSinceService + n,
+          }).catch(err => console.warn('[PassLog AutoIncrement] supercharger update failed:', err));
+          db.bulkIncrementComponentPartPasses(sc.id, n).catch(err => console.warn('[PassLog AutoIncrement] supercharger parts increment failed:', err));
+          totalUpdated++;
+        }
+
+        // Increment all installed drivetrain components
+        for (const dt of drivetrainComponents.filter((d: any) => d.currentlyInstalled)) {
+          undoDrivetrainIds.push({ id: dt.id, prevTotal: dt.totalPasses, prevSinceService: dt.passesSinceService });
+          updateDrivetrainComponent(dt.id, {
+            totalPasses: dt.totalPasses + n,
+            passesSinceService: dt.passesSinceService + n,
+          }).catch(err => console.warn('[PassLog AutoIncrement] drivetrain update failed:', err));
+          db.bulkIncrementComponentPartPasses(dt.id, n).catch(err => console.warn('[PassLog AutoIncrement] drivetrain parts increment failed:', err));
+          totalUpdated++;
+        }
+
+        if (totalUpdated > 0) {
+          console.log(`[PassLog AutoIncrement] +1 pass added to ${totalUpdated} installed component(s) and their standalone parts`);
+          
+          // Show undo toast with 10-second window
+          const UNDO_WINDOW_MS = 10000;
+          const undoTimeoutRef = { current: null as ReturnType<typeof setTimeout> | null };
+          let undone = false;
+
+          const handleUndo = async () => {
+            if (undone) return;
+            undone = true;
+            if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+
+            try {
+              // 1. Delete the pass log entry
+              await deletePassLog(passId);
+
+              // 2. Reverse engine increments
+              for (const eng of undoEngineIds) {
+                updateEngine(eng.id, { totalPasses: eng.prevTotal, passesSinceRebuild: eng.prevSinceRebuild })
+                  .catch(err => console.warn('[Undo] engine revert failed:', err));
+                db.bulkIncrementComponentPartPasses(eng.id, -n)
+                  .catch(err => console.warn('[Undo] engine parts decrement failed:', err));
+              }
+
+              // 3. Reverse supercharger increments
+              for (const sc of undoSuperchargerIds) {
+                updateSupercharger(sc.id, { totalPasses: sc.prevTotal, passesSinceService: sc.prevSinceService })
+                  .catch(err => console.warn('[Undo] supercharger revert failed:', err));
+                db.bulkIncrementComponentPartPasses(sc.id, -n)
+                  .catch(err => console.warn('[Undo] supercharger parts decrement failed:', err));
+              }
+
+              // 4. Reverse drivetrain increments
+              for (const dt of undoDrivetrainIds) {
+                updateDrivetrainComponent(dt.id, { totalPasses: dt.prevTotal, passesSinceService: dt.prevSinceService })
+                  .catch(err => console.warn('[Undo] drivetrain revert failed:', err));
+                db.bulkIncrementComponentPartPasses(dt.id, -n)
+                  .catch(err => console.warn('[Undo] drivetrain parts decrement failed:', err));
+              }
+
+              toast.success('Pass undone — pass log entry deleted and component passes reverted', { duration: 4000 });
+              console.log('[PassLog Undo] Successfully reverted pass and component increments');
+            } catch (err) {
+              console.error('[PassLog Undo] Error:', err);
+              toast.error('Failed to undo pass — some changes may not have been reverted');
+            }
+          };
+
+          toast(`Pass logged — ${totalUpdated} component${totalUpdated !== 1 ? 's' : ''} updated`, {
+            description: 'Click Undo within 10 seconds to reverse this action',
+            duration: UNDO_WINDOW_MS + 500,
+            action: {
+              label: 'Undo',
+              onClick: handleUndo,
+            },
+          });
+        }
+      } catch (err) {
+        console.error('[PassLog AutoIncrement] Error:', err);
+        // Don't block the pass save — this is a background enhancement
+      }
+    }
+
     setShowModal(false);
   };
 
-  // Toggle aborted status for a pass — with offline queue fallback
+
+
   const handleToggleAborted = async (passId: string, currentAborted: boolean) => {
     try {
       await updatePassLog(passId, { aborted: !currentAborted });
@@ -1913,7 +2059,36 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                 </div>
               </div>
 
-              <div className="flex gap-3 mt-6 pt-4 border-t border-slate-700">
+              {/* Auto-increment toggle + action buttons */}
+              {!isEditMode && (
+                <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-lg border border-slate-700/50 mt-4">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <label className="flex items-center gap-3 cursor-pointer flex-1">
+                        <div
+                          onClick={() => setAutoIncrementParts(!autoIncrementParts)}
+                          className={`w-10 h-5 rounded-full transition-colors relative cursor-pointer flex-shrink-0 ${autoIncrementParts ? 'bg-green-500' : 'bg-slate-600'}`}
+                        >
+                          <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${autoIncrementParts ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                        </div>
+                        <span className="text-sm text-slate-300 flex items-center gap-2">
+                          <Package className="w-4 h-4 text-orange-400" />
+                          Auto-update standalone parts (+1 pass)
+                        </span>
+                      </label>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs bg-slate-900 border-slate-700 text-white">
+                      <p className="text-sm">
+                        When enabled, saving a new pass will automatically add +1 to the pass count on every standalone part 
+                        across all currently-installed components (engines, power adders, transmissions, etc.). 
+                        You can adjust individual part passes later in Main Components. This setting is remembered between sessions.
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              )}
+
+              <div className="flex gap-3 mt-4 pt-4 border-t border-slate-700">
                 <button
                   onClick={() => setShowModal(false)}
                   className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors"
@@ -1927,6 +2102,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                   {isEditMode ? 'Update Pass' : 'Save Pass'}
                 </button>
               </div>
+
             </div>
             </div>
           </div>

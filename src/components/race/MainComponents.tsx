@@ -18,8 +18,9 @@ import {
   Zap, Wind, Plus, Edit2, Trash2, X, ChevronDown, ChevronUp,
   Wrench, Save, Package, Play, CheckCircle2, RefreshCw,
   ListChecks, FileText, RotateCcw, Cog, Settings,
-  Check, ClipboardList, AlertCircle, Loader2, Upload
+  Check, ClipboardList, AlertCircle, Loader2, Upload, AlertTriangle, Sliders
 } from 'lucide-react';
+
 
 
 
@@ -350,12 +351,61 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
   const [recordPassCount, setRecordPassCount] = useState(1);
   const [recordPassLoading, setRecordPassLoading] = useState(false);
 
+  // ═══════════════════════════════════════════════════════════════════
+  // WEAR THRESHOLD STATE — stored in localStorage
+  // ═══════════════════════════════════════════════════════════════════
+  const WEAR_THRESHOLDS_KEY = 'mainComp_wearThresholds';
+  const WEAR_DEFAULTS_KEY = 'mainComp_wearDefaults';
+
+  const [wearThresholds, setWearThresholds] = useState<Record<string, number>>(() => {
+    try { const raw = localStorage.getItem(WEAR_THRESHOLDS_KEY); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+  });
+  const [wearDefaults, setWearDefaults] = useState<Record<string, number>>(() => {
+    try { const raw = localStorage.getItem(WEAR_DEFAULTS_KEY); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+  });
+  const [showWearSettingsModal, setShowWearSettingsModal] = useState(false);
+  const [resetConfirmPartId, setResetConfirmPartId] = useState<string | null>(null);
+
+  // Persist wear thresholds
+  useEffect(() => { try { localStorage.setItem(WEAR_THRESHOLDS_KEY, JSON.stringify(wearThresholds)); } catch {} }, [wearThresholds]);
+  useEffect(() => { try { localStorage.setItem(WEAR_DEFAULTS_KEY, JSON.stringify(wearDefaults)); } catch {} }, [wearDefaults]);
+
+  const getWearThreshold = (partId: string): number => wearThresholds[partId] || 0;
+  const setWearThreshold = (partId: string, threshold: number) => {
+    setWearThresholds(prev => ({ ...prev, [partId]: threshold }));
+  };
+  const isPartOverThreshold = (part: ComponentPart): boolean => {
+    const threshold = wearThresholds[part.id] || 0;
+    return threshold > 0 && part.passesOnPart >= threshold;
+  };
+
+  // Count parts exceeding wear thresholds (for badge display)
+  const wearAlertCount = useMemo(() => {
+    return componentParts.filter(p => isPartOverThreshold(p)).length;
+  }, [componentParts, wearThresholds]);
+
+  // Reset passes for a single part
+  const handleResetPartPasses = (compId: string, partId: string) => {
+    const today = getLocalDateString();
+    setComponentParts(prev =>
+      prev.map(p =>
+        p.id === partId && p.componentId === compId
+          ? { ...p, passesOnPart: 0, dateReplaced: today, notes: `${p.notes ? p.notes + ' | ' : ''}Reset ${today}` }
+          : p
+      )
+    );
+    // Mark as dirty so it auto-saves
+    setDirtyPartIds(prev => { const next = new Set(prev); next.add(partId); return next; });
+    setResetConfirmPartId(null);
+    toast.success('Part passes reset to 0', { description: `Reset date logged: ${today}`, duration: 4000 });
+  };
 
 
 
   // Persist extra fields and templates to localStorage (parts are now DB-backed)
   useEffect(() => { saveExtraFieldsToLocalStorage(extraFields); }, [extraFields]);
   useEffect(() => { saveTemplates(templates); }, [templates]);
+
 
   // ═══════════════════════════════════════════════════════════════════
   // STARTUP MIGRATION CHECK — verify component_parts has date_replaced & notes
@@ -1191,20 +1241,25 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
 
         {parts.length > 0 ? (
           <div className="space-y-1">
-            <div className="grid grid-cols-[1fr_100px_120px_1fr_32px_32px] gap-2 px-3 py-1.5 text-xs text-slate-500 font-medium uppercase tracking-wider">
+            <div className="grid grid-cols-[1fr_80px_65px_100px_1fr_32px_32px_32px] gap-2 px-3 py-1.5 text-xs text-slate-500 font-medium uppercase tracking-wider">
               <span>Part Name</span>
               <span className="text-center">Passes</span>
+              <span className="text-center" title="Wear threshold — alert when passes reach this number">Limit</span>
               <span className="text-center">Date Replaced</span>
               <span>Notes</span>
+              <span></span>
               <span></span>
               <span></span>
             </div>
             {parts.map(part => {
               const isInlineEditing = editingInlinePartId === part.id;
               const isDirty = dirtyPartIds.has(part.id);
+              const threshold = getWearThreshold(part.id);
+              const overThreshold = threshold > 0 && part.passesOnPart >= threshold;
+              const nearThreshold = threshold > 0 && !overThreshold && part.passesOnPart >= threshold * 0.8;
               return (
-                <div key={part.id} className={`grid grid-cols-[1fr_100px_120px_1fr_32px_32px] gap-2 items-center px-3 py-2 bg-slate-900/50 rounded-lg border ${isDirty ? 'border-yellow-500/40' : 'border-slate-700/30'}`} onClick={(e) => e.stopPropagation()}>
-                  {/* Part Name — inline editable */}
+                <div key={part.id} className={`grid grid-cols-[1fr_80px_65px_100px_1fr_32px_32px_32px] gap-2 items-center px-3 py-2 bg-slate-900/50 rounded-lg border ${overThreshold ? 'border-red-500/50 bg-red-500/5' : isDirty ? 'border-yellow-500/40' : 'border-slate-700/30'}`} onClick={(e) => e.stopPropagation()}>
+                  {/* Part Name — inline editable + wear badge */}
                   {isInlineEditing ? (
                     <input
                       type="text"
@@ -1223,7 +1278,20 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
                       autoFocus
                     />
                   ) : (
-                    <span className="text-sm text-slate-200 truncate">{part.partName}</span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-sm text-slate-200 truncate">{part.partName}</span>
+                      {overThreshold && (
+                        <span className="flex-shrink-0 px-1.5 py-0.5 bg-red-500/20 text-red-400 text-[9px] rounded font-bold flex items-center gap-0.5" title={`Wear limit reached: ${part.passesOnPart}/${threshold} passes`}>
+                          <AlertTriangle className="w-2.5 h-2.5" />
+                          REPLACE
+                        </span>
+                      )}
+                      {nearThreshold && (
+                        <span className="flex-shrink-0 px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 text-[9px] rounded font-bold" title={`Approaching wear limit: ${part.passesOnPart}/${threshold} passes`}>
+                          DUE SOON
+                        </span>
+                      )}
+                    </div>
                   )}
 
                   {/* Passes input */}
@@ -1231,8 +1299,19 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
                     type="number"
                     value={part.passesOnPart}
                     onChange={(e) => updatePartPasses(compId, part.id, parseInt(e.target.value) || 0)}
-                    className={`w-full bg-slate-800 border rounded px-2 py-1 text-white text-sm text-center ${isDirty ? 'border-yellow-500/60' : 'border-slate-600'}`}
+                    className={`w-full bg-slate-800 border rounded px-2 py-1 text-sm text-center ${overThreshold ? 'text-red-400 border-red-500/60 font-bold' : isDirty ? 'text-white border-yellow-500/60' : 'text-white border-slate-600'}`}
                     min={0}
+                  />
+
+                  {/* Wear Threshold input */}
+                  <input
+                    type="number"
+                    value={threshold || ''}
+                    onChange={(e) => setWearThreshold(part.id, parseInt(e.target.value) || 0)}
+                    placeholder="--"
+                    className="w-full bg-slate-800 border border-slate-600 rounded px-1.5 py-1 text-white text-sm text-center"
+                    min={0}
+                    title="Set max passes before replacement (0 = no limit)"
                   />
 
                   {/* Date Replaced input */}
@@ -1247,7 +1326,7 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
                       );
                       setDirtyPartIds(prev => { const next = new Set(prev); next.add(part.id); return next; });
                     }}
-                    className={`w-full bg-slate-800 border rounded px-1.5 py-1 text-white text-xs ${isDirty ? 'border-yellow-500/60' : 'border-slate-600'}`}
+                    className={`w-full bg-slate-800 border rounded px-1 py-1 text-white text-xs ${isDirty ? 'border-yellow-500/60' : 'border-slate-600'}`}
                   />
 
                   {/* Notes input */}
@@ -1292,6 +1371,15 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
                     </button>
                   )}
 
+                  {/* Reset Passes button */}
+                  <button
+                    onClick={() => setResetConfirmPartId(part.id)}
+                    className="p-1 text-amber-400 hover:bg-amber-500/20 rounded"
+                    title="Reset passes to 0 (part replaced/rebuilt)"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+
                   {/* Delete button */}
                   <button
                     onClick={() => removePartFromComponent(compId, part.id)}
@@ -1304,6 +1392,7 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
               );
             })}
           </div>
+
         ) : (
           <p className="text-xs text-slate-500 italic py-2">No parts added yet. Click "Add Part" to start building the parts list.</p>
         )}
@@ -1965,6 +2054,48 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
           </div>
         </div>
       )}
+
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {/* RESET PASSES CONFIRMATION DIALOG */}
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {resetConfirmPartId && (() => {
+        const part = componentParts.find(p => p.id === resetConfirmPartId);
+        if (!part) return null;
+        return (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setResetConfirmPartId(null)}>
+            <div className="bg-slate-800 rounded-xl max-w-sm w-full p-6 border border-slate-700" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+                  <RotateCcw className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Reset Part Passes</h3>
+                  <p className="text-sm text-slate-400">This action cannot be undone</p>
+                </div>
+              </div>
+              <div className="bg-slate-900/50 rounded-lg p-3 mb-4 border border-slate-700/50">
+                <p className="text-white font-medium text-sm">{part.partName}</p>
+                <p className="text-slate-400 text-xs mt-1">Current passes: <span className="text-white font-bold">{part.passesOnPart}</span></p>
+              </div>
+              <p className="text-sm text-slate-400 mb-5">
+                This will reset the pass count to <span className="text-white font-bold">0</span> and log today's date as the replacement/rebuild date.
+              </p>
+              <div className="flex gap-3">
+                <button onClick={() => setResetConfirmPartId(null)}
+                  className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600">
+                  Cancel
+                </button>
+                <button onClick={() => handleResetPartPasses(part.componentId, part.id)}
+                  className="flex-1 px-4 py-2 bg-amber-500 text-white rounded-lg font-medium hover:bg-amber-600 flex items-center justify-center gap-2">
+                  <RotateCcw className="w-4 h-4" />
+                  Reset to 0
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
     </section>
 
   );

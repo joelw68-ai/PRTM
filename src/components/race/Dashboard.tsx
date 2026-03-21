@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+
 import { getLocalDateString, parseLocalDate } from '@/lib/utils';
 
 import { useApp } from '@/contexts/AppContext';
@@ -26,7 +27,8 @@ import {
 } from '@/data/proModData';
 
 import { PartInventoryItem } from '@/data/partsInventory';
-import { VendorRecord, DrivetrainComponent } from '@/lib/database';
+import { VendorRecord, DrivetrainComponent, ComponentPart } from '@/lib/database';
+
 import { RaceEvent } from '@/components/race/RaceCalendar';
 
 import ImageEditor from './ImageEditor';
@@ -80,7 +82,99 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Vendors from AppContext (filtered to active only)
   const activeVendors = useMemo(() => vendors.filter((v: VendorRecord) => v.isActive), [vendors]);
 
+  // ─── Wear Threshold Alerts (Standalone Parts) ────────────────────
+  const [dashComponentParts, setDashComponentParts] = useState<ComponentPart[]>([]);
+  const [dashWearThresholds, setDashWearThresholds] = useState<Record<string, number>>({});
+  const wearPartsLoadedRef = useRef(false);
 
+  // Load component parts from DB + wear thresholds from localStorage
+  useEffect(() => {
+    if (wearPartsLoadedRef.current) return;
+    wearPartsLoadedRef.current = true;
+
+    // Load wear thresholds from localStorage (same key as MainComponents)
+    try {
+      const raw = localStorage.getItem('mainComp_wearThresholds');
+      if (raw) setDashWearThresholds(JSON.parse(raw));
+    } catch { /* silent */ }
+
+    // Load component parts from DB
+    const loadParts = async () => {
+      try {
+        const parts = await db.fetchComponentParts(user?.id);
+        if (parts.length > 0) {
+          setDashComponentParts(parts);
+        } else {
+          // Fallback to localStorage
+          try {
+            const raw = localStorage.getItem('mainComp_parts_db_fallback');
+            if (raw) setDashComponentParts(JSON.parse(raw));
+          } catch { /* silent */ }
+        }
+      } catch {
+        // DB unavailable — try localStorage fallback
+        try {
+          const raw = localStorage.getItem('mainComp_parts_db_fallback');
+          if (raw) setDashComponentParts(JSON.parse(raw));
+        } catch { /* silent */ }
+      }
+    };
+    loadParts();
+  }, [user?.id]);
+
+  // Re-sync wear thresholds from localStorage when window regains focus
+  // (in case user changed thresholds in MainComponents tab)
+  useEffect(() => {
+    const handleFocus = () => {
+      try {
+        const raw = localStorage.getItem('mainComp_wearThresholds');
+        if (raw) setDashWearThresholds(JSON.parse(raw));
+      } catch { /* silent */ }
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
+
+  // Compute wear threshold alerts — parts at or exceeding their configured limit
+  const wearAlerts = useMemo(() => {
+    if (dashComponentParts.length === 0 || Object.keys(dashWearThresholds).length === 0) return [];
+
+    // Build a lookup map for component names
+    const componentNameMap: Record<string, string> = {};
+    for (const eng of carEngines) componentNameMap[eng.id] = eng.name;
+    for (const sc of carSuperchargers) componentNameMap[sc.id] = sc.name;
+    for (const dt of carDrivetrainComponents) componentNameMap[dt.id] = dt.name;
+
+    const alerts: Array<{
+      partId: string;
+      partName: string;
+      componentId: string;
+      componentName: string;
+      passes: number;
+      threshold: number;
+      percent: number;
+    }> = [];
+
+    for (const part of dashComponentParts) {
+      const threshold = dashWearThresholds[part.id] || 0;
+      if (threshold <= 0) continue;
+      if (part.passesOnPart >= threshold) {
+        const percent = Math.min(Math.round((part.passesOnPart / threshold) * 100), 999);
+        alerts.push({
+          partId: part.id,
+          partName: part.partName,
+          componentId: part.componentId,
+          componentName: componentNameMap[part.componentId] || 'Unknown Component',
+          passes: part.passesOnPart,
+          threshold,
+          percent,
+        });
+      }
+    }
+
+    // Sort by percent descending (most over-threshold first)
+    return alerts.sort((a, b) => b.percent - a.percent);
+  }, [dashComponentParts, dashWearThresholds, carEngines, carSuperchargers, carDrivetrainComponents]);
 
 
 
@@ -294,6 +388,77 @@ const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>}
 
+        {/* ═══════════════════════════════════════════════════════════
+            WEAR THRESHOLD ALERTS — Standalone Parts Needing Replacement
+        ═══════════════════════════════════════════════════════════ */}
+        {wearAlerts.length > 0 && (
+          <div className="bg-red-500/10 border border-red-500/40 rounded-xl p-5 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
+                Wear Threshold Alerts
+                <span className="ml-1 px-2 py-0.5 rounded-full text-xs font-bold bg-red-500/20 text-red-400">{wearAlerts.length}</span>
+              </h2>
+              <button onClick={() => onNavigate('engines')} className="text-sm text-orange-400 hover:text-orange-300 flex items-center gap-1 transition-colors">
+                View in Main Components <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-sm text-red-300/70 mb-4">
+              The following standalone parts have reached or exceeded their configured wear limits and may need replacement.
+            </p>
+            <div className="space-y-3">
+              {wearAlerts.slice(0, 8).map(alert => {
+                const barColor = alert.percent >= 150 ? 'bg-red-500' : alert.percent >= 120 ? 'bg-red-400' : 'bg-orange-400';
+                const barWidth = Math.min(alert.percent, 100);
+                return (
+                  <div key={alert.partId} className="bg-slate-900/60 rounded-lg p-4 border border-red-500/20 hover:border-red-500/40 transition-colors">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-white font-medium text-sm">{alert.partName}</span>
+                          <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 text-[9px] rounded font-bold flex items-center gap-0.5">
+                            <AlertTriangle className="w-2.5 h-2.5" />
+                            REPLACE
+                          </span>
+                        </div>
+                        <p className="text-slate-400 text-xs mt-0.5">
+                          on <span className="text-slate-300">{alert.componentName}</span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0 ml-4">
+                        <div className="text-right">
+                          <p className="text-red-400 font-bold text-sm">{alert.passes} / {alert.threshold}</p>
+                          <p className="text-red-400/60 text-[10px]">{alert.percent}% used</p>
+                        </div>
+                        <button
+                          onClick={() => onNavigate('engines')}
+                          className="px-2.5 py-1.5 bg-slate-800 text-orange-400 rounded-lg text-xs font-medium hover:bg-slate-700 hover:text-orange-300 transition-colors border border-slate-700/50"
+                          title="View in Main Components"
+                        >
+                          View
+                        </button>
+                      </div>
+                    </div>
+                    {/* Progress Bar */}
+                    <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                        style={{ width: `${barWidth}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+              {wearAlerts.length > 8 && (
+                <div className="flex items-center justify-center pt-2">
+                  <button onClick={() => onNavigate('engines')} className="text-sm text-orange-400 hover:text-orange-300 font-medium">
+                    +{wearAlerts.length - 8} more alerts — View in Main Components →
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
 
 
