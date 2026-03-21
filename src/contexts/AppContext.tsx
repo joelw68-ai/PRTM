@@ -904,6 +904,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [user?.id, trackSave]);
 
   // ============ SOFT-DELETE WITH UNDO FOR PASS LOGS ============
+  // When a pass is deleted, DECREMENT all pass-count-driven items:
+  //   - Engines (totalPasses, passesSinceRebuild, sub-components)
+  //   - Superchargers (totalPasses, passesSinceService)
+  //   - Cylinder Heads (totalPasses, passesSinceRefresh, sub-components)
+  //   - Drivetrain Components (totalPasses, passesSinceService, sub-components)
+  //   - Maintenance Items (currentPasses, recalculate status)
+  //   - Standalone Parts (DB, localStorage, custom event)
+  // On Undo: restore the pass AND re-increment everything.
   const deletePassLogAction = useCallback(async (id: string) => {
     let itemToDelete: PassLogEntry | null = null;
     setPassLogs(prev => {
@@ -912,7 +920,174 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
     if (!itemToDelete) return;
     const captured = { ...itemToDelete } as PassLogEntry;
+    const userId = user?.id;
 
+    // ═══════════════════════════════════════════════════════════════
+    // HELPER: Decrement sub-component pass counts (reverse of bumpSubComponents)
+    // ═══════════════════════════════════════════════════════════════
+    const decrementSubComponents = (comps: Record<string, ComponentTracker> | undefined): Record<string, ComponentTracker> | undefined => {
+      if (!comps) return comps;
+      const updated: Record<string, ComponentTracker> = {};
+      for (const [key, comp] of Object.entries(comps)) {
+        const newPassCount = Math.max(0, (comp.passCount || 0) - 1);
+        let newStatus: ComponentTracker['status'] = comp.status || 'Good';
+        if (comp.replaceInterval > 0 && newPassCount >= comp.replaceInterval) {
+          newStatus = 'Replace';
+        } else if (comp.serviceInterval > 0 && newPassCount >= comp.serviceInterval) {
+          newStatus = 'Service';
+        } else if (comp.inspectionInterval > 0 && newPassCount >= comp.inspectionInterval) {
+          newStatus = 'Inspect';
+        } else {
+          newStatus = 'Good';
+        }
+        updated[key] = { ...comp, passCount: newPassCount, status: newStatus };
+      }
+      return updated;
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // CAPTURE PRE-DECREMENT SNAPSHOTS (for undo)
+    // ═══════════════════════════════════════════════════════════════
+    const preDecrementEngines = engines.filter(e => e.currentlyInstalled).map(e => ({ ...e, components: e.components ? { ...e.components } : undefined }));
+    const preDecrementSuperchargers = superchargers.filter(s => s.currentlyInstalled).map(s => ({ ...s }));
+    const preDecrementCylinderHeads = cylinderHeads.filter(h => h.status === 'Active').map(h => ({ ...h, components: h.components ? { ...h.components } : undefined }));
+    const preDecrementDrivetrain = drivetrainComponents.filter(d => d.currentlyInstalled).map(d => ({ ...d, components: d.components ? { ...d.components } : undefined }));
+    const preDecrementMaintenance = maintenanceItems.map(m => ({ ...m }));
+
+    // ═══════════════════════════════════════════════════════════════
+    // DECREMENT ALL INSTALLED ENGINES
+    // ═══════════════════════════════════════════════════════════════
+    const enginesToPersist: Engine[] = [];
+    setEngines(prev => prev.map(e => {
+      if (e.currentlyInstalled) {
+        const updated: Engine = {
+          ...e,
+          totalPasses: Math.max(0, e.totalPasses - 1),
+          passesSinceRebuild: Math.max(0, e.passesSinceRebuild - 1),
+          components: decrementSubComponents(e.components) as any
+        };
+        enginesToPersist.push(updated);
+        return updated;
+      }
+      return e;
+    }));
+
+    // ═══════════════════════════════════════════════════════════════
+    // DECREMENT ALL INSTALLED SUPERCHARGERS
+    // ═══════════════════════════════════════════════════════════════
+    const scsToPersist: Supercharger[] = [];
+    setSuperchargers(prev => prev.map(s => {
+      if (s.currentlyInstalled) {
+        const updated: Supercharger = {
+          ...s,
+          totalPasses: Math.max(0, s.totalPasses - 1),
+          passesSinceService: Math.max(0, s.passesSinceService - 1),
+        };
+        scsToPersist.push(updated);
+        return updated;
+      }
+      return s;
+    }));
+
+    // ═══════════════════════════════════════════════════════════════
+    // DECREMENT ALL ACTIVE CYLINDER HEADS
+    // ═══════════════════════════════════════════════════════════════
+    const headsToPersist: CylinderHead[] = [];
+    setCylinderHeads(prev => prev.map(h => {
+      if (h.status === 'Active') {
+        const updated: CylinderHead = {
+          ...h,
+          totalPasses: Math.max(0, h.totalPasses - 1),
+          passesSinceRefresh: Math.max(0, h.passesSinceRefresh - 1),
+          components: decrementSubComponents(h.components) as any
+        };
+        headsToPersist.push(updated);
+        return updated;
+      }
+      return h;
+    }));
+
+    // ═══════════════════════════════════════════════════════════════
+    // DECREMENT ALL INSTALLED DRIVETRAIN COMPONENTS
+    // ═══════════════════════════════════════════════════════════════
+    const dtToPersist: DrivetrainComponent[] = [];
+    setDrivetrainComponents(prev => prev.map(d => {
+      if (d.currentlyInstalled) {
+        const updated: DrivetrainComponent = {
+          ...d,
+          totalPasses: Math.max(0, d.totalPasses - 1),
+          passesSinceService: Math.max(0, d.passesSinceService - 1),
+          components: decrementSubComponents(d.components) as any
+        };
+        dtToPersist.push(updated);
+        return updated;
+      }
+      return d;
+    }));
+
+    // ═══════════════════════════════════════════════════════════════
+    // DECREMENT MAINTENANCE ITEMS
+    // ═══════════════════════════════════════════════════════════════
+    const maintToPersist: MaintenanceItem[] = [];
+    setMaintenanceItems(prev => prev.map(m => {
+      const newPasses = Math.max(0, m.currentPasses - 1);
+      if (newPasses !== m.currentPasses) {
+        const updated: MaintenanceItem = { ...m, currentPasses: newPasses };
+        updated.status = calculateMaintenanceStatus(updated);
+        maintToPersist.push(updated);
+        return updated;
+      }
+      return m;
+    }));
+
+    // ═══════════════════════════════════════════════════════════════
+    // DECREMENT STANDALONE PARTS (DB + localStorage + custom event)
+    // ═══════════════════════════════════════════════════════════════
+    const allInstalledComponentIds = [
+      ...engines.filter(e => e.currentlyInstalled).map(e => e.id),
+      ...superchargers.filter(s => s.currentlyInstalled).map(s => s.id),
+      ...drivetrainComponents.filter(d => d.currentlyInstalled).map(d => d.id),
+    ];
+
+    if (allInstalledComponentIds.length > 0) {
+      // 1. DB: decrement standalone parts for each installed component
+      for (const compId of allInstalledComponentIds) {
+        db.bulkIncrementComponentPartPasses(compId, -1).catch(err =>
+          console.warn('[deletePassLog] standalone parts DB decrement failed:', err)
+        );
+      }
+      // 2. Custom event: notify MainComponents to update local state
+      window.dispatchEvent(new CustomEvent('component-parts-incremented', {
+        detail: { componentIds: allInstalledComponentIds, increment: -1 }
+      }));
+      // 3. localStorage fallback: update directly
+      try {
+        const PARTS_FALLBACK_KEY = 'mainComp_parts_db_fallback';
+        const raw = localStorage.getItem(PARTS_FALLBACK_KEY);
+        if (raw) {
+          const parts: ComponentPart[] = JSON.parse(raw);
+          if (Array.isArray(parts) && parts.length > 0) {
+            const updatedParts = parts.map(p => {
+              if (allInstalledComponentIds.includes(p.componentId)) {
+                return { ...p, passesOnPart: Math.max(0, (p.passesOnPart || 0) - 1) };
+              }
+              return p;
+            });
+            localStorage.setItem(PARTS_FALLBACK_KEY, JSON.stringify(updatedParts));
+          }
+        }
+      } catch (err) {
+        console.warn('[deletePassLog] localStorage parts fallback update failed:', err);
+      }
+      console.log(`[deletePassLog] Decremented standalone parts for ${allInstalledComponentIds.length} installed component(s)`);
+    }
+
+    const totalDecremented = enginesToPersist.length + scsToPersist.length + headsToPersist.length + dtToPersist.length + maintToPersist.length;
+    console.log(`[deletePassLog] Decremented ${totalDecremented} pass-count-driven items for pass ${id}`);
+
+    // ═══════════════════════════════════════════════════════════════
+    // UNDO / HARD-DELETE MECHANISM
+    // ═══════════════════════════════════════════════════════════════
     const existing = pendingPassLogDeletesRef.current.get(id);
     if (existing) { clearTimeout(existing.timeoutId); toast.dismiss(existing.toastId); pendingPassLogDeletesRef.current.delete(id); }
 
@@ -920,12 +1095,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const pending = pendingPassLogDeletesRef.current.get(id);
       if (!pending) return;
       pendingPassLogDeletesRef.current.delete(id);
+      // Hard-delete the pass from DB
       trackSave(() => db.deletePassLog(id), 'deletePassLog', { type: 'deletePassLog', data: id });
-      console.log(`[deletePassLog] Hard delete executed for pass ${id}`);
+      // Persist all decremented components to DB
+      for (const eng of enginesToPersist) {
+        trackSave(() => db.upsertEngine(eng, userId), 'autoDecrementEngine').catch(() => {});
+      }
+      for (const sc of scsToPersist) {
+        trackSave(() => db.upsertSupercharger(sc, userId), 'autoDecrementSupercharger').catch(() => {});
+      }
+      for (const head of headsToPersist) {
+        trackSave(() => db.upsertCylinderHead(head, userId), 'autoDecrementCylinderHead').catch(() => {});
+      }
+      for (const dt of dtToPersist) {
+        trackSave(() => db.upsertDrivetrainComponent(dt, userId), 'autoDecrementDrivetrain').catch(() => {});
+      }
+      for (const m of maintToPersist) {
+        trackSave(() => db.upsertMaintenanceItem(m, userId), 'autoDecrementMaintenance').catch(() => {});
+      }
+      console.log(`[deletePassLog] Hard delete executed for pass ${id} — ${totalDecremented} components persisted`);
     }, UNDO_DELETE_WINDOW_MS);
 
     const toastId = toast(`Pass deleted — ${captured.date} at ${captured.track}`, {
-      description: `${captured.eighth?.toFixed(3) || '—'} ET / ${captured.mph?.toFixed(1) || '—'} MPH — click Undo within 10s to restore`,
+      description: `${captured.eighth?.toFixed(3) || '—'} ET / ${captured.mph?.toFixed(1) || '—'} MPH — all component passes reduced. Click Undo within 10s to restore`,
       duration: UNDO_DELETE_WINDOW_MS + 500,
       action: {
         label: 'Undo',
@@ -934,14 +1126,76 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (pending) {
             clearTimeout(pending.timeoutId);
             pendingPassLogDeletesRef.current.delete(id);
+
+            // ═══════════════════════════════════════════════════════
+            // RESTORE PASS
+            // ═══════════════════════════════════════════════════════
             setPassLogs(prev => prev.some(p => p.id === id) ? prev : [captured, ...prev]);
-            toast.success('Pass restored', { description: `${captured.date} at ${captured.track}`, duration: 3000 });
+
+            // ═══════════════════════════════════════════════════════
+            // RE-INCREMENT ALL COMPONENTS (restore pre-decrement state)
+            // ═══════════════════════════════════════════════════════
+            setEngines(prev => prev.map(e => {
+              const pre = preDecrementEngines.find(pe => pe.id === e.id);
+              return pre ? { ...e, totalPasses: pre.totalPasses, passesSinceRebuild: pre.passesSinceRebuild, components: pre.components } as Engine : e;
+            }));
+            setSuperchargers(prev => prev.map(s => {
+              const pre = preDecrementSuperchargers.find(ps => ps.id === s.id);
+              return pre ? { ...s, totalPasses: pre.totalPasses, passesSinceService: pre.passesSinceService } as Supercharger : s;
+            }));
+            setCylinderHeads(prev => prev.map(h => {
+              const pre = preDecrementCylinderHeads.find(ph => ph.id === h.id);
+              return pre ? { ...h, totalPasses: pre.totalPasses, passesSinceRefresh: pre.passesSinceRefresh, components: pre.components } as CylinderHead : h;
+            }));
+            setDrivetrainComponents(prev => prev.map(d => {
+              const pre = preDecrementDrivetrain.find(pd => pd.id === d.id);
+              return pre ? { ...d, totalPasses: pre.totalPasses, passesSinceService: pre.passesSinceService, components: pre.components } as DrivetrainComponent : d;
+            }));
+            setMaintenanceItems(preDecrementMaintenance);
+
+            // ═══════════════════════════════════════════════════════
+            // RE-INCREMENT STANDALONE PARTS
+            // ═══════════════════════════════════════════════════════
+            if (allInstalledComponentIds.length > 0) {
+              // DB
+              for (const compId of allInstalledComponentIds) {
+                db.bulkIncrementComponentPartPasses(compId, 1).catch(() => {});
+              }
+              // Custom event for MainComponents
+              window.dispatchEvent(new CustomEvent('component-parts-incremented', {
+                detail: { componentIds: allInstalledComponentIds, increment: 1 }
+              }));
+              // localStorage fallback
+              try {
+                const PARTS_FALLBACK_KEY = 'mainComp_parts_db_fallback';
+                const raw = localStorage.getItem(PARTS_FALLBACK_KEY);
+                if (raw) {
+                  const parts: ComponentPart[] = JSON.parse(raw);
+                  if (Array.isArray(parts) && parts.length > 0) {
+                    const updatedParts = parts.map(p => {
+                      if (allInstalledComponentIds.includes(p.componentId)) {
+                        return { ...p, passesOnPart: (p.passesOnPart || 0) + 1 };
+                      }
+                      return p;
+                    });
+                    localStorage.setItem(PARTS_FALLBACK_KEY, JSON.stringify(updatedParts));
+                  }
+                }
+              } catch {}
+            }
+
+            toast.success('Pass restored — all component passes reverted', {
+              description: `${captured.date} at ${captured.track} — ${totalDecremented} component(s) re-incremented`,
+              duration: 4000
+            });
+            console.log(`[deletePassLog Undo] Pass ${id} restored, ${totalDecremented} components re-incremented`);
           }
         },
       },
     });
     pendingPassLogDeletesRef.current.set(id, { item: captured, timeoutId, toastId: toastId as string | number });
-  }, [trackSave]);
+  }, [trackSave, user?.id, engines, superchargers, cylinderHeads, drivetrainComponents, maintenanceItems]);
+
 
 
 
