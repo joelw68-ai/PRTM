@@ -487,7 +487,7 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-6">
           <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
@@ -499,91 +499,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
               </div>
             </div>
           </div>
-          
-          <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center">
-                <FileText className="w-5 h-5 text-purple-400" />
-              </div>
-              <div>
-                <p className="text-slate-400 text-xs">Total Orders</p>
-                <p className="text-xl font-bold text-white">{stats.totalOrders}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-yellow-500/20 rounded-lg flex items-center justify-center">
-                <Truck className="w-5 h-5 text-yellow-400" />
-              </div>
-              <div>
-                <p className="text-slate-400 text-xs">Pending</p>
-                <p className="text-xl font-bold text-yellow-400">{stats.pendingOrders}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center">
-                <DollarSign className="w-5 h-5 text-green-400" />
-              </div>
-              <div>
-                <p className="text-slate-400 text-xs">Total Spent</p>
-                <p className="text-lg font-bold text-green-400">${(stats.totalSpent / 1000).toFixed(0)}k</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-cyan-500/20 rounded-lg flex items-center justify-center">
-                <Clock className="w-5 h-5 text-cyan-400" />
-              </div>
-              <div>
-                <p className="text-slate-400 text-xs">Avg Lead Time</p>
-                <p className="text-xl font-bold text-white">{stats.avgLeadTime}d</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-emerald-500/20 rounded-lg flex items-center justify-center">
-                <Target className="w-5 h-5 text-emerald-400" />
-              </div>
-              <div>
-                <p className="text-slate-400 text-xs">On-Time Rate</p>
-                <p className="text-xl font-bold text-emerald-400">{stats.onTimeRate}%</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-red-500/20 rounded-lg flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-red-400" />
-              </div>
-              <div>
-                <p className="text-slate-400 text-xs">Quality Issues</p>
-                <p className="text-xl font-bold text-red-400">{stats.qualityIssues}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center">
-                <Percent className="w-5 h-5 text-orange-400" />
-              </div>
-              <div>
-                <p className="text-slate-400 text-xs">Avg Discount</p>
-                <p className="text-xl font-bold text-orange-400">{stats.avgDiscount}%</p>
-              </div>
-            </div>
-          </div>
         </div>
+
 
         {/* Single Vendors tab - no tab bar needed */}
 
