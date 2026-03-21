@@ -128,6 +128,7 @@ import PassComparison from './PassComparison';
 import OfflineSyncBanner from './OfflineSyncBanner';
 import WeatherVerifyPanel from './WeatherVerifyPanel';
 import PassLogAdvancedSearch from './PassLogAdvancedSearch';
+import PassLogTimeline from './PassLogTimeline';
 
 
 
@@ -193,6 +194,18 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   const [savingTrack, setSavingTrack] = useState(false);
   const [trackSaveSuccess, setTrackSaveSuccess] = useState<string | null>(null);
   const [isHistoricalFetch, setIsHistoricalFetch] = useState(false);
+
+  // Delete confirmation modal state
+  const [deleteConfirmPassId, setDeleteConfirmPassId] = useState<string | null>(null);
+
+  // Bulk delete confirmation state
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  // View mode: table or timeline
+  const [viewMode, setViewMode] = useState<'table' | 'timeline'>('table');
+
+
 
 
   // Weather Verify Panel state
@@ -875,6 +888,47 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     }
   };
 
+  // Bulk delete selected passes — calls deletePassLog for each selected pass sequentially
+  const handleBulkDelete = async () => {
+    const idsToDelete = Array.from(selectedPassIds);
+    if (idsToDelete.length === 0) return;
+    setBulkDeleting(true);
+    let deletedCount = 0;
+    let failedCount = 0;
+    for (const passId of idsToDelete) {
+      try {
+        await deletePassLog(passId);
+        deletedCount++;
+      } catch (err) {
+        console.error(`[PassLog BulkDelete] Failed to delete pass ${passId}:`, err);
+        failedCount++;
+      }
+    }
+    setBulkDeleting(false);
+    setShowBulkDeleteConfirm(false);
+    setSelectedPassIds(new Set());
+    setExpandedPass(null);
+    if (failedCount === 0) {
+      toast.success(`Deleted ${deletedCount} pass${deletedCount !== 1 ? 'es' : ''} — all component passes reduced by ${deletedCount}`, { duration: 5000 });
+    } else {
+      toast.warning(`Deleted ${deletedCount} of ${idsToDelete.length} passes. ${failedCount} failed.`, { duration: 6000 });
+    }
+  };
+
+  // Compute bulk delete summary for the confirmation modal
+  const bulkDeleteSummary = useMemo(() => {
+    if (selectedPassIds.size === 0) return { count: 0, dateRange: '', tracks: [], trackNames: '' };
+    const selected = passLogs.filter(p => selectedPassIds.has(p.id));
+    const dates = selected.map(p => p.date).sort();
+    const tracks = [...new Set(selected.map(p => p.track))];
+    return {
+      count: selected.length,
+      dateRange: dates.length > 1 ? `${dates[0]} to ${dates[dates.length - 1]}` : dates[0] || '',
+      tracks,
+      trackNames: tracks.slice(0, 4).join(', ') + (tracks.length > 4 ? ` +${tracks.length - 4} more` : ''),
+    };
+  }, [selectedPassIds, passLogs]);
+
 
 
   // Toggle favorite status for a track
@@ -1032,29 +1086,38 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                   Clear selection
                 </button>
               </div>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={handleOpenComparison}
-                    disabled={selectedPassIds.size < 2}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                      selectedPassIds.size >= 2
-                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                        : 'bg-slate-700 text-slate-400 cursor-not-allowed'
-                    }`}
-                  >
-                    <GitCompare className="w-4 h-4" />
-                    Compare Passes
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent className="bg-slate-900 border-slate-700 text-white">
-                  {selectedPassIds.size < 2 ? (
-                    <p className="text-sm">Select at least 2 passes to compare</p>
-                  ) : (
-                    <p className="text-sm">Compare {selectedPassIds.size} selected passes side-by-side</p>
-                  )}
-                </TooltipContent>
-              </Tooltip>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowBulkDeleteConfirm(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete Selected ({selectedPassIds.size})
+                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleOpenComparison}
+                      disabled={selectedPassIds.size < 2}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                        selectedPassIds.size >= 2
+                          ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                          : 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                      }`}
+                    >
+                      <GitCompare className="w-4 h-4" />
+                      Compare
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="bg-slate-900 border-slate-700 text-white">
+                    {selectedPassIds.size < 2 ? (
+                      <p className="text-sm">Select at least 2 passes to compare</p>
+                    ) : (
+                      <p className="text-sm">Compare {selectedPassIds.size} selected passes side-by-side</p>
+                    )}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
             </div>
           )}
 
@@ -1065,7 +1128,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
             onExportCSV={(passes) => exportPassesToCSV(passes)}
           />
 
-          {/* Quick Filters */}
+          {/* Quick Filters + View Mode Toggle */}
           <div className="flex flex-col md:flex-row gap-4 mb-6">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -1089,8 +1152,37 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
               <option value="Eliminations">Eliminations</option>
               <option value="Match Race">Match Race</option>
             </select>
+
+            {/* View Mode Toggle */}
+            <div className="flex items-center bg-slate-800 border border-slate-700 rounded-lg p-0.5">
+              <button
+                onClick={() => setViewMode('table')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  viewMode === 'table' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Filter className="w-3.5 h-3.5" />
+                Table
+              </button>
+              <button
+                onClick={() => setViewMode('timeline')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  viewMode === 'timeline' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                Timeline
+              </button>
+            </div>
           </div>
 
+          {/* Timeline View */}
+          {viewMode === 'timeline' && (
+            <PassLogTimeline passLogs={filteredPasses} />
+          )}
+
+          {/* Table View */}
+          {viewMode === 'table' && (
 
           <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
             <div className="overflow-x-auto">
@@ -1404,13 +1496,14 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleDelete(pass.id);
+                                      setDeleteConfirmPassId(pass.id);
                                     }}
                                     className="flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg transition-colors"
                                   >
                                     <Trash2 className="w-4 h-4" />
                                     Delete
                                   </button>
+
                                 </div>
                               </div>
                             </div>
@@ -1429,7 +1522,9 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
               </div>
             )}
           </div>
+          )}
         </div>
+
 
 
         {/* Add/Edit Pass Modal */}
@@ -2310,7 +2405,199 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
             onClose={() => setShowComparison(false)}
           />
         )}
+
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* DELETE PASS CONFIRMATION MODAL — Large Red Alert */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {deleteConfirmPassId && (() => {
+          const passToDelete = passLogs.find(p => p.id === deleteConfirmPassId);
+          return (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4" onClick={() => setDeleteConfirmPassId(null)}>
+              <div
+                className="bg-slate-900 rounded-2xl max-w-md w-full border-2 border-red-500/60 shadow-2xl shadow-red-500/20 overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Red Header Bar */}
+                <div className="bg-red-600 px-6 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
+                      <AlertCircle className="w-7 h-7 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-black text-white tracking-wide">ARE YOU SURE?</h3>
+                      <p className="text-red-100 text-sm font-medium">This action will reduce all component passes</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Body */}
+                <div className="px-6 py-5">
+                  {/* Pass Info */}
+                  {passToDelete && (
+                    <div className="bg-slate-800 rounded-xl p-4 mb-5 border border-slate-700">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-white font-bold text-lg">{passToDelete.track}</span>
+                        <span className="text-slate-400 text-sm">{passToDelete.date}</span>
+                      </div>
+                      <div className="flex items-center gap-4 text-sm">
+                        <span className="text-green-400 font-mono font-bold">{passToDelete.eighth.toFixed(3)} ET</span>
+                        <span className="text-blue-400 font-mono font-bold">{passToDelete.mph.toFixed(1)} MPH</span>
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          passToDelete.result === 'Win' ? 'bg-green-500/20 text-green-400' :
+                          passToDelete.result === 'Loss' ? 'bg-red-500/20 text-red-400' :
+                          'bg-slate-500/20 text-slate-400'
+                        }`}>
+                          {passToDelete.result}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Warning Message */}
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-5">
+                    <p className="text-red-300 text-sm leading-relaxed">
+                      <strong className="text-red-400">Deleting this pass will:</strong>
+                    </p>
+                    <ul className="mt-2 space-y-1.5 text-red-300/90 text-sm">
+                      <li className="flex items-start gap-2">
+                        <span className="text-red-400 font-bold mt-0.5">-1</span>
+                        <span>Reduce passes on all installed engines, power adders, and drivetrain components</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-red-400 font-bold mt-0.5">-1</span>
+                        <span>Reduce passes on all standalone parts</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-red-400 font-bold mt-0.5">-1</span>
+                        <span>Reduce passes on all maintenance items</span>
+                      </li>
+                    </ul>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setDeleteConfirmPassId(null)}
+                      className="flex-1 px-5 py-3 bg-slate-700 text-white rounded-xl font-semibold hover:bg-slate-600 transition-colors text-base"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleDelete(deleteConfirmPassId);
+                        setDeleteConfirmPassId(null);
+                      }}
+                      className="flex-1 px-5 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-500 transition-all shadow-lg shadow-red-600/30 flex items-center justify-center gap-2 text-base"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                      Confirm Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* BULK DELETE CONFIRMATION MODAL — Large Red Alert */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {showBulkDeleteConfirm && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4" onClick={() => !bulkDeleting && setShowBulkDeleteConfirm(false)}>
+            <div
+              className="bg-slate-900 rounded-2xl max-w-lg w-full border-2 border-red-500/60 shadow-2xl shadow-red-500/20 overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Red Header Bar */}
+              <div className="bg-red-600 px-6 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
+                    <AlertCircle className="w-8 h-8 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black text-white tracking-wide">ARE YOU SURE?</h3>
+                    <p className="text-red-100 text-sm font-medium">
+                      You are about to delete {bulkDeleteSummary.count} pass{bulkDeleteSummary.count !== 1 ? 'es' : ''}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Body */}
+              <div className="px-6 py-5">
+                {/* Summary */}
+                <div className="bg-slate-800 rounded-xl p-4 mb-5 border border-slate-700">
+                  <div className="grid grid-cols-2 gap-4 mb-3">
+                    <div>
+                      <span className="text-slate-500 text-xs block">Passes to Delete</span>
+                      <span className="text-red-400 font-bold text-2xl">{bulkDeleteSummary.count}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 text-xs block">Date Range</span>
+                      <span className="text-white text-sm font-medium">{bulkDeleteSummary.dateRange}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 text-xs block mb-1">Tracks</span>
+                    <span className="text-slate-300 text-sm">{bulkDeleteSummary.trackNames}</span>
+                  </div>
+                </div>
+
+                {/* Warning Message */}
+                <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-5">
+                  <p className="text-red-300 text-sm leading-relaxed">
+                    <strong className="text-red-400">Deleting {bulkDeleteSummary.count} passes will:</strong>
+                  </p>
+                  <ul className="mt-2 space-y-1.5 text-red-300/90 text-sm">
+                    <li className="flex items-start gap-2">
+                      <span className="text-red-400 font-bold mt-0.5">-{bulkDeleteSummary.count}</span>
+                      <span>passes on all installed engines, power adders, and drivetrain components</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="text-red-400 font-bold mt-0.5">-{bulkDeleteSummary.count}</span>
+                      <span>passes on all standalone parts</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="text-red-400 font-bold mt-0.5">-{bulkDeleteSummary.count}</span>
+                      <span>passes on all maintenance items</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowBulkDeleteConfirm(false)}
+                    disabled={bulkDeleting}
+                    className="flex-1 px-5 py-3 bg-slate-700 text-white rounded-xl font-semibold hover:bg-slate-600 transition-colors text-base disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleBulkDelete}
+                    disabled={bulkDeleting}
+                    className="flex-1 px-5 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-500 transition-all shadow-lg shadow-red-600/30 flex items-center justify-center gap-2 text-base disabled:opacity-50"
+                  >
+                    {bulkDeleting ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Deleting...
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-5 h-5" />
+                        Confirm Delete {bulkDeleteSummary.count} Passes
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
       </section>
+
     </TooltipProvider>
   );
 };

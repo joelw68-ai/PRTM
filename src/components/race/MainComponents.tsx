@@ -7,6 +7,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { CrewRole } from '@/lib/permissions';
 import { DrivetrainComponent, DrivetrainCategory, ComponentPart, ComponentExtraFieldsRecord, checkComponentPartsSchema, didLastComponentPartsFetchHitSchemaCache } from '@/lib/database';
 import * as db from '@/lib/database';
+import RebuildWizard from './RebuildWizard';
+
 
 
 
@@ -378,10 +380,6 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
 
 
 
-  // Record Pass modal
-  const [showRecordPassModal, setShowRecordPassModal] = useState(false);
-  const [recordPassCount, setRecordPassCount] = useState(1);
-  const [recordPassLoading, setRecordPassLoading] = useState(false);
 
   // ═══════════════════════════════════════════════════════════════════
   // WEAR THRESHOLD STATE — stored in localStorage
@@ -887,47 +885,8 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
   };
 
 
-  // ═══════════════════════════════════════════════════════════════════
-  // RECORD PASS
-  const handleRecordPass = async () => {
-    if (recordPassCount < 1) return;
-    setRecordPassLoading(true);
-    const n = recordPassCount;
-    let totalUpdated = 0;
 
-    try {
-      // Update all installed engines
-      for (const eng of allEngines.filter((e: any) => e.currentlyInstalled)) {
-        await updateEngine(eng.id, { totalPasses: eng.totalPasses + n, passesSinceRebuild: eng.passesSinceRebuild + n });
-        totalUpdated++;
-        db.bulkIncrementComponentPartPasses(eng.id, n).catch(err => console.warn('[RecordPass] bulk increment failed:', err));
-        setComponentParts(prev => prev.map(p => p.componentId === eng.id ? { ...p, passesOnPart: p.passesOnPart + n } : p));
-      }
-      // Update all installed power adders
-      for (const sc of allSuperchargers.filter((s: any) => s.currentlyInstalled)) {
-        await updateSupercharger(sc.id, { totalPasses: sc.totalPasses + n, passesSinceService: sc.passesSinceService + n });
-        totalUpdated++;
-        db.bulkIncrementComponentPartPasses(sc.id, n).catch(err => console.warn('[RecordPass] bulk increment failed:', err));
-        setComponentParts(prev => prev.map(p => p.componentId === sc.id ? { ...p, passesOnPart: p.passesOnPart + n } : p));
-      }
-      // Update all installed drivetrain components
-      for (const dt of allDrivetrainComponents.filter((d: any) => d.currentlyInstalled)) {
-        await updateDrivetrainComponent(dt.id, { totalPasses: dt.totalPasses + n, passesSinceService: dt.passesSinceService + n });
-        totalUpdated++;
-        db.bulkIncrementComponentPartPasses(dt.id, n).catch(err => console.warn('[RecordPass] bulk increment failed:', err));
-        setComponentParts(prev => prev.map(p => p.componentId === dt.id ? { ...p, passesOnPart: p.passesOnPart + n } : p));
-      }
 
-      toast.success(`Recorded ${n} pass${n > 1 ? 'es' : ''} across ${totalUpdated} installed components.`);
-    } catch (err) {
-      console.error('[RecordPass] Error:', err);
-      toast.error('Failed to record passes.');
-    } finally {
-      setRecordPassLoading(false);
-      setShowRecordPassModal(false);
-      setRecordPassCount(1);
-    }
-  };
 
 
   // ═══════════════════════════════════════════════════════════════════
@@ -1647,32 +1606,27 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
   const currentTabConfig = tabConfig.find(t => t.id === activeTab);
   const currentItems = currentTabConfig?.items || [];
 
+  // Rebuild Wizard state
+  const [showRebuildWizard, setShowRebuildWizard] = useState(false);
+
   return (
     <section className="py-8 px-4">
       <div className="max-w-[1920px] mx-auto">
-        {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
             <h2 className="text-2xl font-bold text-white">Main Components</h2>
-            <p className="text-sm text-slate-400 mt-1">Track engines, power adders, transmissions, and drivetrain components</p>
+            <p className="text-sm text-slate-400 mt-1">Track engines, power adders, transmissions, and drivetrain components. Passes are automatically updated when you log a pass.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-
-
-
-            <button
-              onClick={() => {
-                setRecordPassCount(1);
-                setShowRecordPassModal(true);
-              }}
-              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-500 hover:to-emerald-500 transition-all shadow-lg shadow-green-600/20 whitespace-nowrap"
-            >
-              <Play className="w-5 h-5" />
-              Record Pass
-            </button>
-          </div>
-
+          <button
+            onClick={() => setShowRebuildWizard(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg font-medium hover:from-amber-400 hover:to-orange-400 transition-all shadow-lg shadow-orange-500/20"
+          >
+            <RotateCcw className="w-4 h-4" />
+            Rebuild / Refresh Wizard
+          </button>
         </div>
+
+
 
         {/* Tabs */}
         <div className="flex gap-2 mb-6 overflow-x-auto pb-2 scrollbar-hide">
@@ -1897,52 +1851,8 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      {/* RECORD PASS MODAL */}
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      {showRecordPassModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-xl max-w-md w-full p-6 border border-slate-700">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                <Play className="w-5 h-5 text-green-400" />
-                Record Pass
-              </h3>
-              <button onClick={() => setShowRecordPassModal(false)} className="text-slate-400 hover:text-white">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <p className="text-sm text-slate-400 mb-5">
-              Update <span className="text-white font-medium">totalPasses</span>, <span className="text-white font-medium">passesSinceRebuild/Refresh</span>, and all <span className="text-white font-medium">standalone parts list passes</span> on every currently installed component.
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Number of Passes to Add</label>
-                <input type="number" min={1} value={recordPassCount}
-                  onChange={(e) => setRecordPassCount(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-lg font-bold text-center" />
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button onClick={() => setShowRecordPassModal(false)}
-                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600">
-                Cancel
-              </button>
-              <button onClick={handleRecordPass}
-                disabled={recordPassCount < 1 || recordPassLoading}
-                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-500 hover:to-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all">
-                {recordPassLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                {recordPassLoading ? 'Updating...' : 'Confirm'}
-              </button>
-            </div>
 
 
-          </div>
-        </div>
-      )}
 
       {/* ═══════════════════════════════════════════════════════════════ */}
       {/* BULK IMPORT MODAL */}
@@ -2128,7 +2038,29 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
         );
       })()}
 
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {/* REBUILD / REFRESH WIZARD */}
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {showRebuildWizard && (
+        <RebuildWizard
+          engines={engines}
+          superchargers={superchargers}
+          drivetrainComponents={allDrivetrainComponents}
+          componentParts={componentParts}
+          updateEngine={updateEngine}
+          updateSupercharger={updateSupercharger}
+          updateDrivetrainComponent={updateDrivetrainComponent}
+          setComponentParts={setComponentParts}
+          setDirtyPartIds={setDirtyPartIds}
+          extraFields={extraFields}
+          setExtraFields={setExtraFields}
+          userId={user?.id}
+          onClose={() => setShowRebuildWizard(false)}
+        />
+      )}
+
     </section>
+
 
   );
 };
