@@ -670,6 +670,27 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
           totalUpdated++;
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // DISPATCH EVENT TO SYNC MAINCOMPONENTS LOCAL STATE
+        // ═══════════════════════════════════════════════════════════════
+        // MainComponents holds standalone parts in local React state.
+        // The DB is updated above via bulkIncrementComponentPartPasses,
+        // but MainComponents won't see the change until it re-fetches.
+        // This custom event tells MainComponents to update its local
+        // state immediately so the UI reflects the new pass counts.
+        const incrementedComponentIds = [
+          ...engines.filter((e: any) => e.currentlyInstalled).map((e: any) => e.id),
+          ...superchargers.filter((s: any) => s.currentlyInstalled).map((s: any) => s.id),
+          ...drivetrainComponents.filter((d: any) => d.currentlyInstalled).map((d: any) => d.id),
+        ];
+        if (incrementedComponentIds.length > 0) {
+          window.dispatchEvent(new CustomEvent('component-parts-incremented', {
+            detail: { componentIds: incrementedComponentIds, increment: n }
+          }));
+          console.log(`[PassLog] Dispatched component-parts-incremented event: +${n} for ${incrementedComponentIds.length} component(s)`);
+        }
+
+
         if (totalUpdated > 0) {
           console.log(`[PassLog AutoIncrement] +1 pass added to ${totalUpdated} installed component(s) and their standalone parts`);
           
@@ -711,8 +732,22 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                   .catch(err => console.warn('[Undo] drivetrain parts decrement failed:', err));
               }
 
+              // Dispatch decrement event so MainComponents updates its local state
+              const undoComponentIds = [
+                ...undoEngineIds.map(e => e.id),
+                ...undoSuperchargerIds.map(s => s.id),
+                ...undoDrivetrainIds.map(d => d.id),
+              ];
+              if (undoComponentIds.length > 0) {
+                window.dispatchEvent(new CustomEvent('component-parts-incremented', {
+                  detail: { componentIds: undoComponentIds, increment: -n }
+                }));
+                console.log(`[PassLog Undo] Dispatched component-parts-incremented event: -${n} for ${undoComponentIds.length} component(s)`);
+              }
+
               toast.success('Pass undone — pass log entry deleted and component passes reverted', { duration: 4000 });
               console.log('[PassLog Undo] Successfully reverted pass and component increments');
+
             } catch (err) {
               console.error('[PassLog Undo] Error:', err);
               toast.error('Failed to undo pass — some changes may not have been reverted');

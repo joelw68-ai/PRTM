@@ -282,6 +282,38 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
     }
   }, [componentParts, partsLoaded]);
 
+  // ═══════════════════════════════════════════════════════════════════
+  // LISTEN FOR PASS LOG AUTO-INCREMENT EVENTS
+  // ═══════════════════════════════════════════════════════════════════
+  // When PassLog logs a new pass with auto-increment enabled, it dispatches
+  // a 'component-parts-incremented' CustomEvent with { componentIds, increment }.
+  // This listener updates the local componentParts state immediately so the UI
+  // reflects the new pass counts without requiring a page refresh or DB re-fetch.
+  // Also handles the Undo case (increment = -1).
+  useEffect(() => {
+    const handlePartsIncremented = (e: Event) => {
+      const detail = (e as CustomEvent<{ componentIds: string[]; increment: number }>).detail;
+      if (!detail?.componentIds || typeof detail.increment !== 'number') return;
+
+      const { componentIds, increment } = detail;
+      setComponentParts(prev =>
+        prev.map(p =>
+          componentIds.includes(p.componentId)
+            ? { ...p, passesOnPart: Math.max(0, p.passesOnPart + increment) }
+            : p
+        )
+      );
+      console.log(
+        `[MainComponents] Received component-parts-incremented event: ${increment > 0 ? '+' : ''}${increment} ` +
+        `for ${componentIds.length} component(s), updating local standalone parts state`
+      );
+    };
+
+    window.addEventListener('component-parts-incremented', handlePartsIncremented);
+    return () => window.removeEventListener('component-parts-incremented', handlePartsIncremented);
+  }, []);
+
+
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
