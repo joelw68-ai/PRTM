@@ -10,15 +10,14 @@ import DateInputDark from '@/components/ui/DateInputDark';
 import InvoiceLineItemsEditor, { InvoiceLineItem } from './InvoiceLineItemsEditor';
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { useCar } from '@/contexts/CarContext';
-import CarDropdown from '@/components/race/CarDropdown';
+
 
 import {
   Upload, FileText, Search, Plus, X, Eye, Download, Trash2, Edit2,
   DollarSign, Calendar, Building2, Clock, CheckCircle2, AlertTriangle,
   ChevronDown, ChevronUp, Loader2, ExternalLink, Receipt, CreditCard,
   FileImage, File, MoreVertical, Tag, Info, ShieldAlert, Package,
-  Link2, Wrench, Flag, ClipboardList, UserPlus, History, ArrowRight
+  Flag, UserPlus, History, ArrowRight
 } from 'lucide-react';
 import { Vendor } from '@/data/vendorData';
 
@@ -44,11 +43,10 @@ interface Invoice {
   payment_date: string | null;
   linked_event_id: string | null;
   linked_event_name: string | null;
-  linked_work_order_id: string | null;
-  linked_work_order_title: string | null;
   created_at: string;
   updated_at: string;
 }
+
 
 interface InvoiceUploadProps {
   vendors: Vendor[];
@@ -73,7 +71,8 @@ interface InvoiceDetailRow {
 
 const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) => {
   // Context
-  const { partsInventory, addPartInventory, updatePartInventory, raceEvents, workOrders } = useApp();
+  const { partsInventory, addPartInventory, updatePartInventory, raceEvents } = useApp();
+
   const { user } = useAuth();
 
   // State
@@ -103,7 +102,6 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
     vendor_name: '',
     invoice_number: '',
     invoice_date: getLocalDateString(),
-
     due_date: '',
     amount: 0,
     tax: 0,
@@ -114,9 +112,8 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
     category: '',
     payment_method: '',
     linked_event_id: '',
-    linked_work_order_id: '',
   });
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
   const [dragActive, setDragActive] = useState(false);
   const [addToCostReport, setAddToCostReport] = useState(true);
   const [autoCreateInventory, setAutoCreateInventory] = useState(true);
@@ -400,7 +397,8 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
 
       // Get linked names
       const linkedEvent = raceEvents.find(e => e.id === newInvoice.linked_event_id);
-      const linkedWO = workOrders.find(w => w.id === newInvoice.linked_work_order_id);
+
+
 
       const invoiceRecord: any = {
         vendor_id: newInvoice.vendor_id,
@@ -422,9 +420,8 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
         file_size: fileData?.size || null,
         linked_event_id: newInvoice.linked_event_id || null,
         linked_event_name: linkedEvent?.title || null,
-        linked_work_order_id: newInvoice.linked_work_order_id || null,
-        linked_work_order_title: linkedWO?.title || null,
       };
+
 
       let savedInvoiceId: string;
 
@@ -532,8 +529,8 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
       category: invoice.category || '',
       payment_method: invoice.payment_method || '',
       linked_event_id: invoice.linked_event_id || '',
-      linked_work_order_id: invoice.linked_work_order_id || '',
     });
+
     // Load existing line items for editing
     loadEditLineItems(invoice.id);
     setShowUploadModal(true);
@@ -573,11 +570,11 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
     setNewInvoice({
       vendor_id: '', vendor_name: '', invoice_number: '',
       invoice_date: getLocalDateString(),
-
       due_date: '', amount: 0, tax: 0, total: 0,
       status: 'Pending', po_number: '', notes: '', category: '',
-      payment_method: '', linked_event_id: '', linked_work_order_id: '',
+      payment_method: '', linked_event_id: '',
     });
+
     setSelectedFile(null);
     setEditingInvoice(null);
     setAddToCostReport(true);
@@ -594,8 +591,8 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
         inv.invoice_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         inv.vendor_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (inv.po_number && inv.po_number.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (inv.linked_event_name && inv.linked_event_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (inv.linked_work_order_title && inv.linked_work_order_title.toLowerCase().includes(searchTerm.toLowerCase()));
+        (inv.linked_event_name && inv.linked_event_name.toLowerCase().includes(searchTerm.toLowerCase()));
+
       const matchesStatus = statusFilter === 'all' || inv.status === statusFilter;
       const matchesVendor = vendorFilter === 'all' || inv.vendor_id === vendorFilter;
       return matchesSearch && matchesStatus && matchesVendor;
@@ -763,7 +760,8 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
       <div className="flex flex-col md:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input type="text" placeholder="Search invoices, events, work orders..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-400" />
+          <input type="text" placeholder="Search invoices, vendors, events..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-400" />
+
         </div>
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white">
           <option value="all">All Status</option>
@@ -835,21 +833,15 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
                           {invoice.po_number && <span className="text-slate-500 flex items-center gap-1"><Tag className="w-3.5 h-3.5" />{invoice.po_number}</span>}
                           {invoice.category && <span className="text-slate-500 text-xs px-2 py-0.5 bg-slate-700/50 rounded">{invoice.category}</span>}
                         </div>
-                        {/* Linked event/work order badges */}
-                        {(invoice.linked_event_name || invoice.linked_work_order_title) && (
+                        {/* Linked event badge */}
+                        {invoice.linked_event_name && (
                           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                            {invoice.linked_event_name && (
-                              <span className="text-xs px-2 py-0.5 bg-blue-500/15 text-blue-400 rounded border border-blue-500/20 flex items-center gap-1">
-                                <Flag className="w-3 h-3" />{invoice.linked_event_name}
-                              </span>
-                            )}
-                            {invoice.linked_work_order_title && (
-                              <span className="text-xs px-2 py-0.5 bg-purple-500/15 text-purple-400 rounded border border-purple-500/20 flex items-center gap-1">
-                                <Wrench className="w-3 h-3" />{invoice.linked_work_order_title}
-                              </span>
-                            )}
+                            <span className="text-xs px-2 py-0.5 bg-blue-500/15 text-blue-400 rounded border border-blue-500/20 flex items-center gap-1">
+                              <Flag className="w-3 h-3" />{invoice.linked_event_name}
+                            </span>
                           </div>
                         )}
+
                       </div>
                     </div>
                     <div className="flex items-center gap-6 flex-shrink-0">
@@ -1025,23 +1017,15 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
                 </div>
               </div>
 
-              {/* Link to Race Event / Work Order */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <select value={newInvoice.linked_event_id} onChange={(e) => setNewInvoice(prev => ({ ...prev, linked_event_id: e.target.value }))} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white">
-                    <option value="">None</option>
-                    {raceEvents.map(e => (<option key={e.id} value={e.id}>{e.title} ({formatLocalDate(e.startDate)})</option>))}
-                  </select>
-
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1"><Wrench className="w-3.5 h-3.5 text-purple-400" /> Link to Work Order</label>
-                  <select value={newInvoice.linked_work_order_id} onChange={(e) => setNewInvoice(prev => ({ ...prev, linked_work_order_id: e.target.value }))} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white">
-                    <option value="">None</option>
-                    {workOrders.map(w => (<option key={w.id} value={w.id}>{w.title} ({w.status})</option>))}
-                  </select>
-                </div>
+              {/* Link to Race Event */}
+              <div>
+                <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1"><Flag className="w-3.5 h-3.5 text-blue-400" /> Link to Race Event</label>
+                <select value={newInvoice.linked_event_id} onChange={(e) => setNewInvoice(prev => ({ ...prev, linked_event_id: e.target.value }))} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white">
+                  <option value="">None</option>
+                  {raceEvents.map(e => (<option key={e.id} value={e.id}>{e.title} ({formatLocalDate(e.startDate)})</option>))}
+                </select>
               </div>
+
 
               {/* PO, Category, Status */}
               <div className="grid grid-cols-3 gap-4">
@@ -1171,26 +1155,18 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
                     ))}
                   </div>
 
-                  {/* Linked Event / Work Order */}
-                  {(selectedInvoice.linked_event_name || selectedInvoice.linked_work_order_title) && (
+                  {/* Linked Event */}
+                  {selectedInvoice.linked_event_name && (
                     <div className="mt-3 space-y-2">
                       <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Linked To</p>
-                      {selectedInvoice.linked_event_name && (
-                        <div className="flex items-center gap-2 p-2 bg-blue-500/10 rounded-lg border border-blue-500/20">
-                          <Flag className="w-4 h-4 text-blue-400" />
-                          <span className="text-blue-300 text-sm font-medium">{selectedInvoice.linked_event_name}</span>
-                          <span className="text-xs text-slate-500 ml-auto">Race Event</span>
-                        </div>
-                      )}
-                      {selectedInvoice.linked_work_order_title && (
-                        <div className="flex items-center gap-2 p-2 bg-purple-500/10 rounded-lg border border-purple-500/20">
-                          <Wrench className="w-4 h-4 text-purple-400" />
-                          <span className="text-purple-300 text-sm font-medium">{selectedInvoice.linked_work_order_title}</span>
-                          <span className="text-xs text-slate-500 ml-auto">Work Order</span>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2 p-2 bg-blue-500/10 rounded-lg border border-blue-500/20">
+                        <Flag className="w-4 h-4 text-blue-400" />
+                        <span className="text-blue-300 text-sm font-medium">{selectedInvoice.linked_event_name}</span>
+                        <span className="text-xs text-slate-500 ml-auto">Race Event</span>
+                      </div>
                     </div>
                   )}
+
 
                   {/* Line Items */}
                   {loadingLineItems ? (

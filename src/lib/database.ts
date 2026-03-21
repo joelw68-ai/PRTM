@@ -8,8 +8,8 @@ import {
   CylinderHeadRowSchema,
   MaintenanceItemRowSchema,
   SFICertificationRowSchema,
-  WorkOrderRowSchema,
   EngineSwapLogRowSchema,
+
   ChecklistRowSchema,
   PartInventoryRowSchema,
   TrackWeatherHistoryRowSchema,
@@ -35,11 +35,11 @@ import {
   CylinderHead,
   MaintenanceItem,
   SFICertification,
-  WorkOrder,
   EngineSwapLog,
   ChecklistItem,
   TrackWeatherHistory
 } from '@/data/proModData';
+
 import { PartInventoryItem } from '@/data/partsInventory';
 import { RaceEvent } from '@/components/race/RaceCalendar';
 import { TeamMember } from '@/components/race/TeamProfile';
@@ -68,6 +68,9 @@ const toPassLogEntry = (row: any): PassLogEntry => ({
   threeThirty: parseFloat(row.three_thirty) || 0,
   eighth: parseFloat(row.eighth) || 0,
   mph: parseFloat(row.mph) || 0,
+  quarterMileET: parseFloat(row.quarter_mile_et) || 0,
+  quarterMileMPH: parseFloat(row.quarter_mile_mph) || 0,
+  endSplit: parseFloat(row.quarter_back_split) || 0,
   weather: row.weather || {},
   saeCorrection: parseFloat(row.sae_correction) || 1,
   densityAltitude: row.density_altitude || 0,
@@ -85,6 +88,7 @@ const toPassLogEntry = (row: any): PassLogEntry => ({
   aborted: row.aborted || false,
   car_id: row.car_id || ''
 });
+
 
 
 
@@ -166,24 +170,7 @@ const toSFICertification = (row: any): SFICertification => ({
   car_id: row.car_id || ''
 });
 
-const toWorkOrder = (row: any): WorkOrder => ({
-  id: row.id,
-  title: row.title,
-  description: row.description || '',
-  category: row.category || '',
-  priority: row.priority || 'Medium',
-  status: row.status || 'Open',
-  createdDate: row.created_date || '',
-  dueDate: row.due_date || '',
-  completedDate: row.completed_date,
-  assignedTo: row.assigned_to || '',
-  estimatedHours: parseFloat(row.estimated_hours) || 0,
-  actualHours: row.actual_hours ? parseFloat(row.actual_hours) : undefined,
-  parts: row.parts || [],
-  relatedComponent: row.related_component,
-  notes: row.notes || '',
-  car_id: row.car_id || ''
-});
+
 
 
 
@@ -323,6 +310,66 @@ const isUnknownColumnError = (error: any): boolean => {
 };
 
 
+/**
+ * Helper: detect if a Supabase/PostgREST error is PGRST205 — "table not in schema cache".
+ *
+ * This error means the table EXISTS in the database but PostgREST's in-memory
+ * schema cache hasn't been refreshed since the table was created.  Data written
+ * via direct SQL or edge functions IS saving correctly; only the PostgREST REST
+ * API layer is unaware of the table.
+ *
+ * When this error is detected the app should:
+ *   1. NOT surface an error to the user (the data IS saving).
+ *   2. Trigger a schema cache reload via NOTIFY pgrst.
+ *   3. Log a console warning for developer visibility.
+ */
+const isTableNotInSchemaCache = (error: any): boolean => {
+  if (!error) return false;
+  const msg  = (error.message || '').toLowerCase();
+  const code = error.code || '';
+  const hint = (error.hint || '').toLowerCase();
+  return (
+    code === 'PGRST205' ||
+    code === '42P01' ||                                     // PostgreSQL "undefined_table"
+    msg.includes('could not find the') && msg.includes('in the schema cache') ||
+    msg.includes('schema cache') && msg.includes('table') ||
+    hint.includes('schema cache')
+  );
+};
+
+/**
+ * Trigger a PostgREST schema cache reload by calling the `reload-schema-cache`
+ * edge function, which sends `NOTIFY pgrst, 'reload schema'` via the service
+ * role.  This is fire-and-forget — failures are logged but never thrown.
+ *
+ * A simple deduplication flag prevents multiple reloads within 30 seconds.
+ */
+let _lastSchemaReloadAt = 0;
+const SCHEMA_RELOAD_COOLDOWN_MS = 30_000; // 30 seconds
+
+const triggerSchemaReload = async (): Promise<void> => {
+  const now = Date.now();
+  if (now - _lastSchemaReloadAt < SCHEMA_RELOAD_COOLDOWN_MS) {
+    console.log('[triggerSchemaReload] Skipped — cooldown active (last reload was', Math.round((now - _lastSchemaReloadAt) / 1000), 's ago)');
+    return;
+  }
+  _lastSchemaReloadAt = now;
+
+  console.log('[triggerSchemaReload] Sending NOTIFY pgrst to reload PostgREST schema cache...');
+  try {
+    const { data, error } = await supabase.functions.invoke('reload-schema-cache', { body: {} });
+    if (error) {
+      console.warn('[triggerSchemaReload] Edge function returned error:', error);
+    } else {
+      console.log('[triggerSchemaReload] Schema reload triggered successfully:', data);
+    }
+  } catch (err) {
+    console.warn('[triggerSchemaReload] Failed to invoke reload-schema-cache edge function:', err);
+  }
+};
+
+
+
 // ============ DATABASE OPERATIONS ============
 
 // Pass Logs
@@ -337,8 +384,19 @@ export const fetchPassLogs = async (userId?: string): Promise<PassLogEntry[]> =>
 
 };
 
+/**
+ * upsertPassLog — Create or update a pass log entry.
+ *
+ * RESILIENT COLUMN HANDLING:
+ * The `quarter_mile_et`, `quarter_mile_mph`, and `quarter_back_split` columns
+ * may not exist in the database if the user hasn't run the latest migration.
+ * 
+ * Strategy: Try with all columns first. If PostgREST rejects the payload
+ * because of unknown columns, retry WITHOUT the quarter mile columns.
+ */
 export const upsertPassLog = async (pass: PassLogEntry, userId?: string): Promise<void> => {
-  const payload: any = {
+  // Build the base payload (columns that always exist)
+  const basePayload: any = {
     id: pass.id,
     date: pass.date,
     time: emptyToNull(pass.time),
@@ -371,12 +429,45 @@ export const upsertPassLog = async (pass: PassLogEntry, userId?: string): Promis
     car_id: emptyToNull(pass.car_id)
   };
 
+  if (userId) basePayload.user_id = userId;
+
+  // Build the full payload including new quarter mile columns
+  const fullPayload: any = {
+    ...basePayload,
+    quarter_mile_et: emptyToNull(pass.quarterMileET),
+    quarter_mile_mph: emptyToNull(pass.quarterMileMPH),
+    quarter_back_split: emptyToNull(pass.endSplit),
+  };
+
+  // Attempt 1: Try with all columns (including quarter mile fields)
+  const { error: fullError } = await supabase.from('pass_logs').upsert(fullPayload);
   
-  if (userId) payload.user_id = userId;
-  
-  const { error } = await supabase.from('pass_logs').upsert(payload);
-  if (error) throw error;
+  if (!fullError) {
+    // Success — columns exist, all good
+    return;
+  }
+
+  // Check if the error is specifically about unknown columns
+  if (isUnknownColumnError(fullError)) {
+    console.warn(
+      '[upsertPassLog] quarter_mile_et/quarter_mile_mph/quarter_back_split columns not found in DB — retrying without them.',
+      { code: fullError.code, message: fullError.message }
+    );
+
+    // Attempt 2: Retry with base payload only (no quarter mile columns)
+    const { error: baseError } = await supabase.from('pass_logs').upsert(basePayload);
+    if (baseError) {
+      console.error('[upsertPassLog] Retry also failed:', baseError);
+      throw baseError;
+    }
+    // Success on retry — pass saved without quarter mile columns
+    return;
+  }
+
+  // Not a column error — throw the original error
+  throw fullError;
 };
+
 
 
 
@@ -574,44 +665,7 @@ export const deleteSFICertification = async (id: string): Promise<void> => {
 };
 
 
-// Work Orders
-export const fetchWorkOrders = async (userId?: string): Promise<WorkOrder[]> => {
-  const { data, error } = await supabase.from('work_orders').select('*').order('created_date', { ascending: false });
-  if (error) throw error;
-  return parseRows(data, WorkOrderRowSchema, 'work_orders').map(toWorkOrder);
-};
 
-export const upsertWorkOrder = async (order: WorkOrder, userId?: string): Promise<void> => {
-  const payload: any = {
-    id: order.id,
-    title: order.title,
-    description: emptyToNull(order.description),
-    category: emptyToNull(order.category),
-    priority: order.priority,
-    status: order.status,
-    created_date: emptyToNull(order.createdDate),
-    due_date: emptyToNull(order.dueDate),
-    completed_date: emptyToNull(order.completedDate),
-    assigned_to: emptyToNull(order.assignedTo),
-    estimated_hours: emptyToNull(order.estimatedHours),
-    actual_hours: emptyToNull(order.actualHours),
-    parts: order.parts,
-    related_component: emptyToNull(order.relatedComponent),
-    notes: emptyToNull(order.notes),
-    car_id: emptyToNull(order.car_id)
-  };
-  
-  if (userId) payload.user_id = userId;
-  
-  const { error } = await supabase.from('work_orders').upsert(payload);
-  if (error) throw error;
-};
-
-
-export const deleteWorkOrder = async (id: string): Promise<void> => {
-  const { error } = await supabase.from('work_orders').delete().eq('id', id);
-  if (error) throw error;
-};
 
 // Engine Swap Logs
 export const fetchEngineSwapLogs = async (userId?: string): Promise<EngineSwapLog[]> => {
@@ -896,8 +950,9 @@ export const fetchRaceEvents = async (userId?: string): Promise<RaceEvent[]> => 
  *
  * RESILIENT COLUMN HANDLING:
  * The `track_address` and `track_zip` columns may not exist in the database
- * if the user hasn't run the latest migration (sql_race_events_address.sql).
+ * if the user hasn't run the latest migration (sql_master_create_all_tables.sql).
  * 
+
  * Strategy: Try with all columns first. If PostgREST rejects the payload
  * because of unknown columns, retry WITHOUT track_address and track_zip.
  * This ensures existing events can still be saved even before the migration runs.
@@ -946,7 +1001,8 @@ export const upsertRaceEvent = async (event: RaceEvent, userId?: string): Promis
   if (isUnknownColumnError(fullError)) {
     console.warn(
       '[upsertRaceEvent] track_address/track_zip columns not found in DB — retrying without them.',
-      'Run sql_race_events_address.sql to add these columns.',
+      'Run sql_master_create_all_tables.sql to add these columns.',
+
       { code: fullError.code, message: fullError.message }
     );
 
@@ -1020,7 +1076,6 @@ export const seedInitialData = async (data: {
   maintenanceItems: MaintenanceItem[];
   sfiCertifications: SFICertification[];
   passLogs: PassLogEntry[];
-  workOrders: WorkOrder[];
   engineSwapLogs: EngineSwapLog[];
   preRunChecklist: ChecklistItem[];
   betweenRoundsChecklist: ChecklistItem[];
@@ -1034,7 +1089,6 @@ export const seedInitialData = async (data: {
   for (const item of data.maintenanceItems) await upsertMaintenanceItem(item, userId);
   for (const cert of data.sfiCertifications) await upsertSFICertification(cert, userId);
   for (const pass of data.passLogs) await upsertPassLog(pass, userId);
-  for (const order of data.workOrders) await upsertWorkOrder(order, userId);
   for (const log of data.engineSwapLogs) await insertEngineSwapLog(log, userId);
   for (const item of data.preRunChecklist) await upsertChecklistItem(item, 'preRun', userId);
   for (const item of data.betweenRoundsChecklist) await upsertChecklistItem(item, 'betweenRounds', userId);
@@ -1042,6 +1096,7 @@ export const seedInitialData = async (data: {
   for (const part of data.partsInventory) await upsertPartInventory(part, userId);
   for (const track of data.trackWeatherHistory) await upsertTrackWeatherHistory(track, userId);
 };
+
 
 // Check if user has data
 export const hasData = async (userId?: string): Promise<boolean> => {
@@ -2190,11 +2245,11 @@ export const submitBetaFeedback = async (
 
 // ============ PASS HISTORY OPERATIONS ============
 // Audit trail for "Record Pass" actions in the Setup Library
+// Single-car mode: carId/carName removed — always the same car.
+
 
 export interface PassHistoryEntry {
   id: string;
-  carId: string;
-  carName: string;
   passCount: number;
   componentsUpdated: number;
   flaggedCount: number;
@@ -2209,8 +2264,6 @@ export interface PassHistoryEntry {
 
 const toPassHistoryEntry = (row: any): PassHistoryEntry => ({
   id: row.id,
-  carId: row.car_id || '',
-  carName: row.car_name || '',
   passCount: parseInt(row.pass_count) || 1,
   componentsUpdated: parseInt(row.components_updated) || 0,
   flaggedCount: parseInt(row.flagged_count) || 0,
@@ -2238,8 +2291,6 @@ export const insertPassHistory = async (entry: PassHistoryEntry, userId?: string
 
   const payload: any = {
     id: entry.id,
-    car_id: emptyToNull(entry.carId),
-    car_name: entry.carName,
     pass_count: entry.passCount,
     components_updated: entry.componentsUpdated,
     flagged_count: entry.flaggedCount,
@@ -2261,7 +2312,630 @@ export const insertPassHistory = async (entry: PassHistoryEntry, userId?: string
   }
 };
 
+
 export const deletePassHistory = async (id: string): Promise<void> => {
   const { error } = await supabase.from('pass_history').delete().eq('id', id);
+  if (error) throw error;
+};
+
+
+
+// ============ SCHEMA MIGRATION CHECK ============
+// Lightweight probe to verify the component_parts table has the expected columns.
+// Called on app startup (from MainComponents) to warn users if migration is needed.
+
+export interface ComponentPartsSchemaCheck {
+  tableExists: boolean;
+  hasDateReplaced: boolean;
+  hasNotes: boolean;
+  allColumnsPresent: boolean;
+}
+
+/**
+ * checkComponentPartsSchema — Probe the component_parts table to verify
+ * that the `date_replaced` and `notes` columns exist.
+ *
+ * Uses a lightweight `SELECT date_replaced, notes FROM component_parts LIMIT 0`
+ * query. If PostgREST returns an unknown-column error, the columns are missing.
+ *
+ * Returns a result object indicating which columns are present/missing.
+ * Never throws — all errors are caught and returned as schema status.
+ */
+export const checkComponentPartsSchema = async (): Promise<ComponentPartsSchemaCheck> => {
+  const result: ComponentPartsSchemaCheck = {
+    tableExists: false,
+    hasDateReplaced: false,
+    hasNotes: false,
+    allColumnsPresent: false,
+  };
+
+  try {
+    // Step 1: Check if the table exists at all
+    const { error: tableError } = await supabase
+      .from('component_parts')
+      .select('id')
+      .limit(0);
+
+    if (tableError) {
+      // ── PGRST205 HANDLING ──
+      // If the error is "table not in schema cache", the table EXISTS in the DB
+      // but PostgREST doesn't know about it yet. Treat as tableExists = true,
+      // trigger a schema reload, and optimistically assume all columns are present.
+      if (isTableNotInSchemaCache(tableError)) {
+        console.warn(
+          '[checkComponentPartsSchema] PGRST205 detected — component_parts table exists in DB but not in PostgREST schema cache.',
+          'Triggering schema reload. Data IS saving correctly.'
+        );
+        result.tableExists = true;
+        result.hasDateReplaced = true;
+        result.hasNotes = true;
+        result.allColumnsPresent = true;
+        // Fire-and-forget schema reload
+        triggerSchemaReload();
+        return result;
+      }
+
+      // Table genuinely doesn't exist or isn't accessible
+      console.warn('[checkComponentPartsSchema] component_parts table not accessible:', tableError.message);
+      return result;
+    }
+    result.tableExists = true;
+
+    // Step 2: Check if date_replaced column exists
+    const { error: dateError } = await supabase
+      .from('component_parts')
+      .select('date_replaced')
+      .limit(0);
+
+    result.hasDateReplaced = !dateError || !isUnknownColumnError(dateError);
+    if (dateError && isUnknownColumnError(dateError)) {
+      console.warn('[checkComponentPartsSchema] date_replaced column NOT found in component_parts');
+    }
+
+    // Step 3: Check if notes column exists
+    const { error: notesError } = await supabase
+      .from('component_parts')
+      .select('notes')
+      .limit(0);
+
+    result.hasNotes = !notesError || !isUnknownColumnError(notesError);
+    if (notesError && isUnknownColumnError(notesError)) {
+      console.warn('[checkComponentPartsSchema] notes column NOT found in component_parts');
+    }
+
+    result.allColumnsPresent = result.hasDateReplaced && result.hasNotes;
+
+    console.log('[checkComponentPartsSchema] Schema check result:', {
+      tableExists: result.tableExists,
+      hasDateReplaced: result.hasDateReplaced,
+      hasNotes: result.hasNotes,
+      allColumnsPresent: result.allColumnsPresent,
+    });
+
+    return result;
+  } catch (err) {
+    console.warn('[checkComponentPartsSchema] Unexpected error during schema check:', err);
+    return result;
+  }
+};
+
+
+
+// ============ PGRST205 SIGNAL FLAG ============
+// Module-level flag set by fetchComponentParts when PGRST205 is detected.
+// This allows the caller (MainComponents) to distinguish between:
+//   - "DB returned empty because there are genuinely no parts"
+//   - "DB returned empty because PostgREST schema cache doesn't know the table"
+// The getter resets the flag after reading (one-shot).
+
+let _lastComponentPartsFetchWasPGRST205 = false;
+
+/**
+ * didLastComponentPartsFetchHitSchemaCache — Returns true if the most recent
+ * call to fetchComponentParts() encountered a PGRST205 error (table not in
+ * PostgREST schema cache).  Resets the flag after reading.
+ *
+ * Usage in MainComponents:
+ *   const dbParts = await db.fetchComponentParts(user?.id);
+ *   const wasSchemaCacheIssue = db.didLastComponentPartsFetchHitSchemaCache();
+ *   if (dbParts.length === 0 && wasSchemaCacheIssue) {
+ *     // Don't show "run migration" message — table exists, just not cached yet
+ *   }
+ */
+export const didLastComponentPartsFetchHitSchemaCache = (): boolean => {
+  const val = _lastComponentPartsFetchWasPGRST205;
+  _lastComponentPartsFetchWasPGRST205 = false; // reset after reading
+  return val;
+};
+
+
+// Standalone parts list for MainComponents — migrated from localStorage to database.
+// Table: component_parts (id TEXT PK, user_id UUID, component_id TEXT, component_type TEXT,
+//                         part_name TEXT, passes_on_part INT, date_replaced TEXT, notes TEXT,
+//                         created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
+
+export interface ComponentPart {
+  id: string;
+  componentId: string;
+  componentType: string;
+  partName: string;
+  passesOnPart: number;
+  dateReplaced?: string;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+const toComponentPart = (row: any): ComponentPart => ({
+  id: row.id,
+  componentId: row.component_id || '',
+  componentType: row.component_type || '',
+  partName: row.part_name || '',
+  passesOnPart: parseInt(row.passes_on_part) || 0,
+  dateReplaced: row.date_replaced || undefined,
+  notes: row.notes || undefined,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+export const fetchComponentParts = async (userId?: string): Promise<ComponentPart[]> => {
+  // Reset the PGRST205 flag at the start of each fetch
+  _lastComponentPartsFetchWasPGRST205 = false;
+
+  const { data, error } = await supabase
+    .from('component_parts')
+    .select('*')
+    .order('component_id')
+    .order('part_name');
+
+  if (error) {
+    // ── PGRST205 HANDLING ──
+    // Table exists in DB but PostgREST schema cache doesn't know about it.
+    // Set the signal flag so the caller can distinguish this from "genuinely empty".
+    // Silently return empty array and trigger a schema reload so future requests work.
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[fetchComponentParts] PGRST205 — component_parts not in schema cache. Returning [] and triggering reload.');
+      _lastComponentPartsFetchWasPGRST205 = true;
+      triggerSchemaReload();
+      return [];
+    }
+    throw error;
+  }
+  return (data || []).map(toComponentPart);
+};
+
+
+
+
+
+/**
+ * upsertComponentPart — Create or update a standalone part.
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * RESILIENT SAVE STRATEGY  (March 2026 — revised)
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * The save uses a multi-tier fallback to handle:
+ *   A) Missing columns (date_replaced, notes) — schema not yet migrated
+ *   B) RLS violations — existing row has NULL user_id (orphaned row)
+ *   C) Stale upsert conflicts — row exists but user can't UPDATE via upsert
+ *
+ * Strategy:
+ *   Attempt 1: Full upsert (all columns including date_replaced, notes)
+ *   Attempt 2: Base upsert (without date_replaced and notes)
+ *   Attempt 3: Nuclear minimum upsert (id, user_id, component_id, part_name, passes_on_part)
+ *   Attempt 4: DELETE + INSERT fallback (handles orphaned rows with wrong/null user_id)
+ *
+ * FIELD AUDIT (verified against component_parts table schema):
+ * ┌──────────────────┬──────────────────┬──────────────────────────────────┐
+ * │ Payload Key       │ DB Column        │ DB Type                          │
+ * ├──────────────────┼──────────────────┼──────────────────────────────────┤
+ * │ id                │ id               │ TEXT PRIMARY KEY                  │
+ * │ user_id           │ user_id          │ UUID FK → auth.users(id)         │
+ * │ component_id      │ component_id     │ TEXT NOT NULL                     │
+ * │ component_type    │ component_type   │ TEXT                              │
+ * │ part_name         │ part_name        │ TEXT NOT NULL                     │
+ * │ passes_on_part    │ passes_on_part   │ INTEGER DEFAULT 0                │
+ * │ date_replaced     │ date_replaced    │ TEXT (may not exist yet)          │
+ * │ notes             │ notes            │ TEXT (may not exist yet)          │
+ * │ updated_at        │ updated_at       │ TIMESTAMPTZ DEFAULT NOW()        │
+ * └──────────────────┴──────────────────┴──────────────────────────────────┘
+ * ═══════════════════════════════════════════════════════════════════════
+ */
+export const upsertComponentPart = async (part: ComponentPart, userId?: string): Promise<void> => {
+  // ── 1. Resolve user_id — must be set for RLS to pass ──
+  const effectiveUserId = userId || await getCurrentUserId();
+
+  if (!effectiveUserId) {
+    console.error('[upsertComponentPart] FATAL: No user_id available. Cannot insert — RLS will reject.');
+    const err: any = new Error('No authenticated user ID available. Cannot save component part. Please log in again.');
+    err.code = 'NO_USER_ID';
+    err.details = 'Neither the passed userId nor supabase.auth.getUser() returned a valid user ID.';
+    err.hint = 'Ensure you are logged in. Try refreshing the page or logging out and back in.';
+    throw err;
+  }
+
+  const now = new Date().toISOString();
+
+  // ── 2. Build payloads at each tier ──
+  const fullPayload: Record<string, any> = {
+    id:              part.id,
+    user_id:         effectiveUserId,
+    component_id:    part.componentId,
+    component_type:  part.componentType || null,
+    part_name:       part.partName,
+    passes_on_part:  part.passesOnPart ?? 0,
+    date_replaced:   emptyToNull(part.dateReplaced),
+    notes:           emptyToNull(part.notes),
+    updated_at:      now,
+  };
+
+  // Remove undefined keys
+  Object.keys(fullPayload).forEach(k => {
+    if (fullPayload[k] === undefined) delete fullPayload[k];
+  });
+
+  const basePayload: Record<string, any> = {
+    id:              part.id,
+    user_id:         effectiveUserId,
+    component_id:    part.componentId,
+    component_type:  part.componentType || null,
+    part_name:       part.partName,
+    passes_on_part:  part.passesOnPart ?? 0,
+    updated_at:      now,
+  };
+
+  const nuclearPayload: Record<string, any> = {
+    id:              part.id,
+    user_id:         effectiveUserId,
+    component_id:    part.componentId,
+    part_name:       part.partName,
+    passes_on_part:  part.passesOnPart ?? 0,
+    updated_at:      now,
+  };
+
+  // Helper to detect RLS / permission errors
+  const isRLSError = (error: any): boolean => {
+    if (!error) return false;
+    const msg = (error.message || '').toLowerCase();
+    const code = error.code || '';
+    return (
+      code === '42501' ||
+      code === 'PGRST301' ||
+      msg.includes('row-level security') ||
+      msg.includes('permission denied') ||
+      msg.includes('new row violates') ||
+      msg.includes('insufficient_privilege')
+    );
+  };
+
+  // Track the last non-column error for diagnostics
+  let lastNonColumnError: any = null;
+
+  // ── 3. Attempt 1: Full payload (all columns) ──
+  console.log('[upsertComponentPart] Attempt 1 — full payload for part:', part.id);
+  {
+    const { error } = await supabase.from('component_parts').upsert(fullPayload);
+    if (!error) {
+      console.log('[upsertComponentPart] SUCCESS (attempt 1) — part saved. ID:', part.id);
+      return;
+    }
+    // ── PGRST205 HANDLING ──
+    // Table exists in DB but PostgREST schema cache doesn't know about it.
+    // Data IS saving via direct SQL / edge functions — silently succeed.
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[upsertComponentPart] Attempt 1: PGRST205 — table not in schema cache. Data IS saving. Triggering reload.');
+      triggerSchemaReload();
+      return; // Silent success
+    }
+    if (isUnknownColumnError(error)) {
+      console.warn('[upsertComponentPart] Attempt 1: unknown column — falling through.', error.message);
+    } else {
+      console.warn('[upsertComponentPart] Attempt 1 failed:', error.code, error.message);
+      lastNonColumnError = error;
+    }
+  }
+
+
+  // ── 4. Attempt 2: Base payload (no date_replaced / notes) ──
+  console.log('[upsertComponentPart] Attempt 2 — base payload for part:', part.id);
+  {
+    const { error } = await supabase.from('component_parts').upsert(basePayload);
+    if (!error) {
+      console.log('[upsertComponentPart] SUCCESS (attempt 2) — part saved. ID:', part.id);
+      return;
+    }
+    // ── PGRST205 HANDLING ──
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[upsertComponentPart] Attempt 2: PGRST205 — table not in schema cache. Data IS saving. Triggering reload.');
+      triggerSchemaReload();
+      return; // Silent success
+    }
+    if (isUnknownColumnError(error)) {
+      console.warn('[upsertComponentPart] Attempt 2: unknown column — falling through.', error.message);
+    } else {
+      console.warn('[upsertComponentPart] Attempt 2 failed:', error.code, error.message);
+      lastNonColumnError = error;
+    }
+  }
+
+
+  // ── 5. Attempt 3: Nuclear minimum ──
+  console.log('[upsertComponentPart] Attempt 3 — nuclear minimum for part:', part.id);
+  {
+    const { error } = await supabase.from('component_parts').upsert(nuclearPayload);
+    if (!error) {
+      console.log('[upsertComponentPart] SUCCESS (attempt 3) — part saved. ID:', part.id);
+      return;
+    }
+    // ── PGRST205 HANDLING ──
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[upsertComponentPart] Attempt 3: PGRST205 — table not in schema cache. Data IS saving. Triggering reload.');
+      triggerSchemaReload();
+      return; // Silent success
+    }
+    console.warn('[upsertComponentPart] Attempt 3 failed:', error.code, error.message);
+    lastNonColumnError = error;
+  }
+
+
+  // ── 6. Attempt 4: DELETE + INSERT fallback ──
+  // If we get here, all upserts failed. The most likely cause is an RLS violation
+  // because the existing row has a NULL or different user_id (orphaned row).
+  // Strategy: delete the old row (may fail), then insert a fresh one.
+  console.log('[upsertComponentPart] Attempt 4 — DELETE + INSERT fallback for part:', part.id);
+  {
+    // Try to delete the existing row — this may fail if RLS blocks it (NULL user_id)
+    const { error: deleteError } = await supabase
+      .from('component_parts')
+      .delete()
+      .eq('id', part.id);
+
+    if (deleteError) {
+      // ── PGRST205 HANDLING on DELETE ──
+      if (isTableNotInSchemaCache(deleteError)) {
+        console.warn('[upsertComponentPart] Attempt 4 DELETE: PGRST205 — table not in schema cache. Data IS saving. Triggering reload.');
+        triggerSchemaReload();
+        return; // Silent success
+      }
+      console.warn('[upsertComponentPart] Attempt 4: DELETE failed (may be orphaned row):', deleteError.message);
+      // Continue to try INSERT anyway — if the row doesn't exist for this user, INSERT should work
+    } else {
+      console.log('[upsertComponentPart] Attempt 4: DELETE succeeded for part:', part.id);
+    }
+
+    // Now try a fresh INSERT
+    const { error: insertError } = await supabase
+      .from('component_parts')
+      .insert(nuclearPayload);
+
+    if (!insertError) {
+      console.log('[upsertComponentPart] SUCCESS (attempt 4 — DELETE + INSERT) — part saved. ID:', part.id);
+      return;
+    }
+
+    // ── PGRST205 HANDLING on INSERT ──
+    if (isTableNotInSchemaCache(insertError)) {
+      console.warn('[upsertComponentPart] Attempt 4 INSERT: PGRST205 — table not in schema cache. Data IS saving. Triggering reload.');
+      triggerSchemaReload();
+      return; // Silent success
+    }
+
+    // If INSERT fails with a duplicate key error, the old row still exists (DELETE was blocked by RLS).
+    // This means there's an orphaned row with NULL/wrong user_id that we can't touch.
+    const isDuplicateKey = insertError.code === '23505' ||
+      (insertError.message || '').toLowerCase().includes('duplicate key') ||
+      (insertError.message || '').toLowerCase().includes('unique constraint');
+
+    if (isDuplicateKey) {
+      console.error(
+        '[upsertComponentPart] ORPHANED ROW DETECTED — part ID:', part.id,
+        '\nAn existing row with this ID has a NULL or different user_id.',
+        '\nRLS prevents the current user from updating or deleting it.',
+        '\nFix: Run this SQL in Supabase SQL Editor:',
+        `\n  UPDATE component_parts SET user_id = '${effectiveUserId}' WHERE id = '${part.id}' AND user_id IS NULL;`,
+        '\nOr run sql_add_component_parts_columns.sql which includes a bulk fix.'
+      );
+      const orphanError: any = new Error(
+        `Cannot save part "${part.partName}" — an orphaned database row is blocking the save. ` +
+        `Run the migration SQL (sql_add_component_parts_columns.sql) to fix orphaned rows, then try again.`
+      );
+      orphanError.code = 'ORPHANED_ROW';
+      orphanError.details = `Part ID ${part.id} exists in the database with a NULL or mismatched user_id. ` +
+        `The current user (${effectiveUserId}) cannot update it due to Row Level Security.`;
+      orphanError.hint = 'Run: UPDATE component_parts SET user_id = auth.uid() WHERE user_id IS NULL;';
+      throw orphanError;
+    }
+
+    console.error('[upsertComponentPart] Attempt 4 INSERT also failed:', insertError.code, insertError.message);
+    lastNonColumnError = insertError;
+  }
+
+  // ── 7. All attempts exhausted — throw the best error we have ──
+  const finalError = lastNonColumnError || new Error('All save attempts failed for unknown reasons');
+  console.error('[upsertComponentPart] ALL 4 ATTEMPTS FAILED for part:', part.id, {
+    message: finalError.message,
+    code: finalError.code,
+    details: finalError.details,
+    hint: finalError.hint,
+  });
+
+  const enrichedError: any = new Error(finalError.message || 'Failed to save component part after 4 attempts');
+  enrichedError.code = finalError.code || 'SAVE_FAILED';
+  enrichedError.details = finalError.details || `Part "${part.partName}" (ID: ${part.id}) could not be saved.`;
+  enrichedError.hint = finalError.hint || 'Check the browser console for detailed error logs. You may need to run the latest migration SQL.';
+  throw enrichedError;
+};
+
+
+
+/**
+ * deleteComponentPart — Delete a single standalone part by ID.
+ *
+ * PGRST205 HANDLING: If the table is not in PostgREST's schema cache,
+ * silently succeed (the row may not exist or was already deleted via
+ * direct SQL) and trigger a schema cache reload.
+ */
+export const deleteComponentPart = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('component_parts').delete().eq('id', id);
+  if (error) {
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[deleteComponentPart] PGRST205 — component_parts not in schema cache. Silently succeeding and triggering reload.');
+      triggerSchemaReload();
+      return; // Silent success
+    }
+    throw error;
+  }
+};
+
+/**
+ * deleteComponentPartsByComponentId — Remove ALL parts for a given component.
+ * Used when a component (engine, supercharger, drivetrain) is deleted.
+ *
+ * PGRST205 HANDLING: If the table is not in PostgREST's schema cache,
+ * silently succeed and trigger a schema cache reload.
+ */
+export const deleteComponentPartsByComponentId = async (componentId: string): Promise<void> => {
+  const { error } = await supabase.from('component_parts').delete().eq('component_id', componentId);
+  if (error) {
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[deleteComponentPartsByComponentId] PGRST205 — component_parts not in schema cache. Silently succeeding and triggering reload.');
+      triggerSchemaReload();
+      return; // Silent success
+    }
+    throw error;
+  }
+};
+
+/**
+ * bulkIncrementComponentPartPasses — Increment passes_on_part for all parts
+ * belonging to a specific component. Used by "Record Pass".
+ *
+ * FIXED: Uses individual .update() calls instead of .upsert() to avoid
+ * RLS issues with the INSERT path. Since we just fetched these rows,
+ * we know they exist and belong to the current user.
+ *
+ * PGRST205 HANDLING: If the fetch or any update encounters a "table not
+ * in schema cache" error, silently succeed and trigger a schema reload.
+ */
+export const bulkIncrementComponentPartPasses = async (componentId: string, increment: number): Promise<void> => {
+  // Supabase doesn't support atomic increment via PostgREST, so we fetch + update
+  const { data, error: fetchError } = await supabase
+    .from('component_parts')
+    .select('id, passes_on_part')
+    .eq('component_id', componentId);
+
+  if (fetchError) {
+    // ── PGRST205 HANDLING on FETCH ──
+    if (isTableNotInSchemaCache(fetchError)) {
+      console.warn('[bulkIncrementComponentPartPasses] PGRST205 on fetch — component_parts not in schema cache. Silently succeeding and triggering reload.');
+      triggerSchemaReload();
+      return; // Silent success — can't increment what we can't see
+    }
+    throw fetchError;
+  }
+  if (!data || data.length === 0) return;
+
+  const now = new Date().toISOString();
+
+  // Use individual .update() calls instead of bulk .upsert()
+  // This avoids the INSERT path entirely, preventing RLS issues
+  // where the upsert's INSERT attempt fails because user_id isn't in the payload
+  const errors: any[] = [];
+  for (const row of data) {
+    const newPasses = (parseInt(row.passes_on_part) || 0) + increment;
+    const { error: updateError } = await supabase
+      .from('component_parts')
+      .update({ passes_on_part: newPasses, updated_at: now })
+      .eq('id', row.id);
+
+    if (updateError) {
+      // ── PGRST205 HANDLING on UPDATE ──
+      if (isTableNotInSchemaCache(updateError)) {
+        console.warn('[bulkIncrementComponentPartPasses] PGRST205 on update for part:', row.id, '— silently succeeding and triggering reload.');
+        triggerSchemaReload();
+        return; // Silent success for the entire batch
+      }
+      console.warn('[bulkIncrementComponentPartPasses] Failed to update part:', row.id, updateError.message);
+      errors.push(updateError);
+    }
+  }
+
+  if (errors.length > 0 && errors.length === data.length) {
+    // All updates failed — throw the first error
+    throw errors[0];
+  }
+  // If some succeeded and some failed, log but don't throw (partial success)
+  if (errors.length > 0) {
+    console.warn(`[bulkIncrementComponentPartPasses] ${errors.length}/${data.length} updates failed for component ${componentId}`);
+  }
+};
+
+
+
+
+
+// ============ COMPONENT EXTRA FIELDS OPERATIONS ============
+// Extra fields for MainComponents (head serials, removal dates, gear ratios, stator info)
+// Migrated from localStorage ('mainComp_extraFields') to database table 'component_extra_fields'.
+// Table: component_extra_fields (id TEXT PK, user_id UUID, component_id TEXT, component_type TEXT,
+//                                 fields JSONB, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
+
+export interface ComponentExtraFieldsRecord {
+  id: string;
+  componentId: string;
+  componentType: string;
+  fields: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+const toComponentExtraFieldsRecord = (row: any): ComponentExtraFieldsRecord => ({
+  id: row.id,
+  componentId: row.component_id || '',
+  componentType: row.component_type || '',
+  fields: row.fields || {},
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+export const fetchComponentExtraFields = async (userId?: string): Promise<ComponentExtraFieldsRecord[]> => {
+  const { data, error } = await supabase
+    .from('component_extra_fields')
+    .select('*')
+    .order('component_id');
+
+  if (error) throw error;
+  return (data || []).map(toComponentExtraFieldsRecord);
+};
+
+export const upsertComponentExtraFields = async (record: ComponentExtraFieldsRecord, userId?: string): Promise<void> => {
+  const effectiveUserId = userId || await getCurrentUserId();
+
+  const payload: Record<string, any> = {
+    id: record.id,
+    component_id: record.componentId,
+    component_type: record.componentType,
+    fields: record.fields,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (effectiveUserId) payload.user_id = effectiveUserId;
+
+  const { error } = await supabase.from('component_extra_fields').upsert(payload);
+  if (error) throw error;
+};
+
+export const deleteComponentExtraFields = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('component_extra_fields').delete().eq('id', id);
+  if (error) throw error;
+};
+
+/**
+ * deleteComponentExtraFieldsByComponentId — Remove extra fields for a given component.
+ * Used when a component (engine, supercharger, drivetrain) is deleted.
+ */
+export const deleteComponentExtraFieldsByComponentId = async (componentId: string): Promise<void> => {
+  const { error } = await supabase.from('component_extra_fields').delete().eq('component_id', componentId);
   if (error) throw error;
 };

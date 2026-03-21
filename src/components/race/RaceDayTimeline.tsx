@@ -1,13 +1,13 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useApp } from '@/contexts/AppContext';
-import { useCar } from '@/contexts/CarContext';
+
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { parseLocalDateTime, formatLocalDate, getLocalDateString } from '@/lib/utils';
 import { toast } from 'sonner';
 
 import { RaceEvent } from '@/components/race/RaceCalendar';
-import { exportTimelineReport, TimelineReportEntry } from '@/components/race/TimelineReportExport';
+import { exportTimelineReport, exportTimelineCSV, TimelineReportEntry } from '@/components/race/TimelineReportExport';
 
 import {
   Clock,
@@ -17,7 +17,6 @@ import {
   Thermometer,
   Wrench,
   CheckSquare,
-  FileText,
   ChevronDown,
   ChevronUp,
   Timer,
@@ -35,7 +34,6 @@ import {
   Download,
   Printer,
   User,
-  Users,
   Wifi,
   Circle,
   RefreshCw,
@@ -43,11 +41,17 @@ import {
   ArrowDown,
   Package,
   RotateCcw,
-  ClipboardList
+  FileSpreadsheet,
+  Settings2,
+  BarChart3,
+  Target,
+  Milestone
 } from 'lucide-react';
 
+
 // ─── Timeline entry types ───
-type TimelineEntryType = 'pass' | 'weather' | 'maintenance' | 'checklist' | 'workorder' | 'activity';
+type TimelineEntryType = 'pass' | 'weather' | 'maintenance' | 'checklist' | 'activity';
+
 
 interface TimelineEntry {
   id: string;
@@ -65,13 +69,20 @@ interface TimelineEntry {
   raw?: any;
 }
 
+// ─── Export options interface ───
+interface ExportOptions {
+  types: Set<TimelineEntryType>;
+  dateFrom: string;
+  dateTo: string;
+  includeStats: boolean;
+}
+
 // ─── Color config per type ───
 const TYPE_CONFIG: Record<TimelineEntryType, { label: string; color: string; bgColor: string; borderColor: string; iconColor: string; icon: any }> = {
   pass:        { label: 'Passes',      color: 'bg-emerald-500', bgColor: 'bg-emerald-500/10', borderColor: 'border-emerald-500/30', iconColor: 'text-emerald-400', icon: Gauge },
   weather:     { label: 'Weather',     color: 'bg-sky-500',     bgColor: 'bg-sky-500/10',     borderColor: 'border-sky-500/30',     iconColor: 'text-sky-400',     icon: Thermometer },
   maintenance: { label: 'Maintenance', color: 'bg-amber-500',   bgColor: 'bg-amber-500/10',   borderColor: 'border-amber-500/30',   iconColor: 'text-amber-400',   icon: Wrench },
   checklist:   { label: 'Checklists',  color: 'bg-violet-500',  bgColor: 'bg-violet-500/10',  borderColor: 'border-violet-500/30',  iconColor: 'text-violet-400',  icon: CheckSquare },
-  workorder:   { label: 'Work Orders', color: 'bg-rose-500',    bgColor: 'bg-rose-500/10',    borderColor: 'border-rose-500/30',    iconColor: 'text-rose-400',    icon: FileText },
   activity:    { label: 'Activity',    color: 'bg-cyan-500',    bgColor: 'bg-cyan-500/10',    borderColor: 'border-cyan-500/30',    iconColor: 'text-cyan-400',    icon: Activity },
 };
 
@@ -81,7 +92,6 @@ const RaceDayTimeline: React.FC = () => {
   const {
     passLogs,
     maintenanceItems,
-    workOrders,
     preRunChecklist,
     betweenRoundsChecklist,
     postRunChecklist,
@@ -90,18 +100,30 @@ const RaceDayTimeline: React.FC = () => {
     refreshData,
   } = useApp();
 
-  const { selectedCarId } = useCar();
+
+
+
   const { user, profile, effectiveUserId, isDemoMode } = useAuth();
 
   const [selectedEventId, setSelectedEventId] = useState<string>('');
   const [expandedEntryId, setExpandedEntryId] = useState<string | null>(null);
   const [visibleTypes, setVisibleTypes] = useState<Set<TimelineEntryType>>(
-    new Set(['pass', 'weather', 'maintenance', 'checklist', 'workorder', 'activity'])
+    new Set(['pass', 'weather', 'maintenance', 'checklist', 'activity'])
   );
   const [showFilters, setShowFilters] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [isExporting, setIsExporting] = useState(false);
+
+  // Export modal state
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportOptions, setExportOptions] = useState<ExportOptions>({
+    types: new Set(['pass', 'weather', 'maintenance', 'checklist', 'activity']),
+    dateFrom: '',
+    dateTo: '',
+    includeStats: true,
+  });
+
 
   // Realtime state
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
@@ -222,12 +244,20 @@ const RaceDayTimeline: React.FC = () => {
 
     const entries: TimelineEntry[] = [];
     const cfg = TYPE_CONFIG;
-    const carFilter = (carId?: string) => isEmptyCarId(selectedCarId) || carId === selectedCarId;
+    const carFilter = (_carId?: string) => true; // Single-car mode — no filtering needed
+
 
     // 1. PASS LOG ENTRIES
     passLogs
       .filter(p => isDateInEvent(p.date, selectedEvent) && carFilter(p.car_id))
       .forEach(pass => {
+        // Calculate back split for quarter-mile
+        const qmBackSplit = (() => {
+          if (pass.endSplit && pass.endSplit > 0) return pass.endSplit;
+          if ((pass.quarterMileET || 0) > 0 && pass.eighth > 0) return (pass.quarterMileET || 0) - pass.eighth;
+          return 0;
+        })();
+
         entries.push({
           id: `pass-${pass.id}`,
           type: 'pass',
@@ -244,8 +274,10 @@ const RaceDayTimeline: React.FC = () => {
             'RT': pass.reactionTime > 0 ? `${pass.reactionTime.toFixed(3)}s` : undefined,
             'Result': pass.result,
             'Track': pass.track,
-            'Launch RPM': pass.launchRPM > 0 ? pass.launchRPM.toLocaleString() : undefined,
-            'Boost': pass.boostSetting > 0 ? `${pass.boostSetting} PSI` : undefined,
+            // Quarter-mile fields (only shown when values exist)
+            '1/4 ET': (pass.quarterMileET || 0) > 0 ? `${pass.quarterMileET!.toFixed(3)}s` : undefined,
+            '1/4 MPH': (pass.quarterMileMPH || 0) > 0 ? pass.quarterMileMPH!.toFixed(1) : undefined,
+            '1/4 Back Split': qmBackSplit > 0 ? `${qmBackSplit.toFixed(3)}s` : undefined,
           },
           ...cfg.pass,
           raw: pass,
@@ -333,39 +365,8 @@ const RaceDayTimeline: React.FC = () => {
         });
       });
 
-    // 4. WORK ORDERS
-    workOrders
-      .filter(wo => {
-        const created = isDateInEvent(wo.createdDate, selectedEvent);
-        const completed = wo.completedDate ? isDateInEvent(wo.completedDate, selectedEvent) : false;
-        return (created || completed) && carFilter(wo.car_id);
-      })
-      .forEach(wo => {
-        const actor = resolveActor(undefined, undefined, wo.assignedTo);
-        entries.push({
-          id: `wo-${wo.id}`,
-          type: 'workorder',
-          timestamp: parseLocalDateTime(wo.completedDate || wo.createdDate, '09:00'),
-          title: `Work Order — ${wo.title}`,
-          subtitle: `${wo.category} | ${wo.status} | ${wo.priority} Priority`,
-          actor: actor.name || wo.assignedTo || '',
-          actorRole: actor.role || '',
-          details: {
-            'Title': wo.title,
-            'Status': wo.status,
-            'Priority': wo.priority,
-            'Category': wo.category,
-            'Assigned To': wo.assignedTo || '—',
-            'Est. Hours': wo.estimatedHours,
-            'Actual Hours': wo.actualHours || '—',
-            'Due Date': wo.dueDate,
-          },
-          ...cfg.workorder,
-          raw: wo,
-        });
-      });
 
-    // 5. TEAM ACTIVITY FEED entries that fall within the event
+    // 4. TEAM ACTIVITY FEED entries that fall within the event
     activityFeedEntries
       .filter(a => {
         if (!a.created_at) return false;
@@ -399,9 +400,9 @@ const RaceDayTimeline: React.FC = () => {
       ? a.timestamp.getTime() - b.timestamp.getTime()
       : b.timestamp.getTime() - a.timestamp.getTime()
     );
-
     return entries;
-  }, [selectedEvent, passLogs, maintenanceItems, workOrders, preRunChecklist, betweenRoundsChecklist, postRunChecklist, selectedCarId, activityFeedEntries, sortOrder, teamMembers, profile]);
+  }, [selectedEvent, passLogs, maintenanceItems, preRunChecklist, betweenRoundsChecklist, postRunChecklist, activityFeedEntries, sortOrder, teamMembers, profile]);
+
 
   // ─── Filter by visible types + search ───
   const filteredEntries = useMemo(() => {
@@ -447,17 +448,20 @@ const RaceDayTimeline: React.FC = () => {
     const passRaws = passes.map(p => p.raw).filter(Boolean);
     const bestET = passRaws.length > 0 ? Math.min(...passRaws.filter((p: any) => p.eighth > 0).map((p: any) => p.eighth)) : null;
     const bestMPH = passRaws.length > 0 ? Math.max(...passRaws.filter((p: any) => p.mph > 0).map((p: any) => p.mph)) : null;
+    const bestQuarterET = passRaws.length > 0 ? Math.min(...passRaws.filter((p: any) => (p.quarterMileET || 0) > 0).map((p: any) => p.quarterMileET)) : null;
+    const bestQuarterMPH = passRaws.length > 0 ? Math.max(...passRaws.filter((p: any) => (p.quarterMileMPH || 0) > 0).map((p: any) => p.quarterMileMPH)) : null;
 
     return {
       passes: passes.length,
       weather: timelineEntries.filter(e => e.type === 'weather').length,
       maintenance: timelineEntries.filter(e => e.type === 'maintenance').length,
       checklists: timelineEntries.filter(e => e.type === 'checklist').length,
-      workorders: timelineEntries.filter(e => e.type === 'workorder').length,
       activity: timelineEntries.filter(e => e.type === 'activity').length,
       total: timelineEntries.length,
       bestET: bestET && isFinite(bestET) ? bestET : null,
       bestMPH: bestMPH && isFinite(bestMPH) ? bestMPH : null,
+      bestQuarterET: bestQuarterET && isFinite(bestQuarterET) ? bestQuarterET : null,
+      bestQuarterMPH: bestQuarterMPH && isFinite(bestQuarterMPH) ? bestQuarterMPH : null,
     };
   }, [timelineEntries]);
 
@@ -478,13 +482,23 @@ const RaceDayTimeline: React.FC = () => {
     });
   };
 
+  // ─── Toggle export type filter ───
+  const toggleExportType = (type: TimelineEntryType) => {
+    setExportOptions(prev => {
+      const next = new Set(prev.types);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return { ...prev, types: next };
+    });
+  };
+
   // ─── Format time ───
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
-  // ─── PDF Export ───
-  const handleExportPDF = () => {
+  // ─── Open Export Modal ───
+  const openExportModal = () => {
     if (!selectedEvent) {
       toast.error('Select a race event first');
       return;
@@ -493,43 +507,136 @@ const RaceDayTimeline: React.FC = () => {
       toast.error('No timeline entries to export');
       return;
     }
+    // Initialize export options with event date range
+    setExportOptions({
+      types: new Set(['pass', 'weather', 'maintenance', 'checklist', 'activity'] as TimelineEntryType[]),
+      dateFrom: selectedEvent.startDate,
+      dateTo: selectedEvent.endDate || selectedEvent.startDate,
+      includeStats: true,
+    });
+    setShowExportModal(true);
+  };
+
+  // ─── Get filtered entries for export based on export options ───
+  const getExportEntries = (): TimelineEntry[] => {
+    return timelineEntries.filter(entry => {
+      // Type filter
+      if (!exportOptions.types.has(entry.type)) return false;
+      // Date range filter
+      if (exportOptions.dateFrom || exportOptions.dateTo) {
+        const entryDate = getLocalDateString(entry.timestamp);
+        if (exportOptions.dateFrom && entryDate < exportOptions.dateFrom) return false;
+        if (exportOptions.dateTo && entryDate > exportOptions.dateTo) return false;
+      }
+      return true;
+    });
+  };
+
+  // ─── Build report data for export ───
+  const buildReportData = (entries: TimelineEntry[]): {
+    reportEntries: TimelineReportEntry[];
+    reportStats: any;
+  } => {
+    const reportEntries: TimelineReportEntry[] = entries.map(e => ({
+      id: e.id,
+      type: e.type,
+      timestamp: e.timestamp,
+      title: e.title,
+      subtitle: e.subtitle,
+      actor: e.actor,
+      actorRole: e.actorRole,
+      details: e.details,
+    }));
+
+    // Calculate stats from filtered entries
+    const passRaws = entries.filter(e => e.type === 'pass').map(p => p.raw).filter(Boolean);
+    const bestET = passRaws.length > 0 ? Math.min(...passRaws.filter((p: any) => p.eighth > 0).map((p: any) => p.eighth)) : null;
+    const bestMPH = passRaws.length > 0 ? Math.max(...passRaws.filter((p: any) => p.mph > 0).map((p: any) => p.mph)) : null;
+    const bestQuarterET = passRaws.length > 0 ? Math.min(...passRaws.filter((p: any) => (p.quarterMileET || 0) > 0).map((p: any) => p.quarterMileET)) : null;
+    const bestQuarterMPH = passRaws.length > 0 ? Math.max(...passRaws.filter((p: any) => (p.quarterMileMPH || 0) > 0).map((p: any) => p.quarterMileMPH)) : null;
+
+    const reportStats = {
+      totalPasses: entries.filter(e => e.type === 'pass').length,
+      bestET: bestET && isFinite(bestET) ? bestET : null,
+      bestMPH: bestMPH && isFinite(bestMPH) ? bestMPH : null,
+      bestQuarterET: bestQuarterET && isFinite(bestQuarterET) ? bestQuarterET : null,
+      bestQuarterMPH: bestQuarterMPH && isFinite(bestQuarterMPH) ? bestQuarterMPH : null,
+      checklistCompletion: entries.filter(e => e.type === 'checklist').length,
+      maintenanceActions: entries.filter(e => e.type === 'maintenance').length,
+      weatherSnapshots: entries.filter(e => e.type === 'weather').length,
+    };
+
+    return { reportEntries, reportStats };
+  };
+
+
+  // ─── PDF Export ───
+  const handleExportPDF = () => {
+    if (!selectedEvent) return;
+
+    const exportEntries = getExportEntries();
+    if (exportEntries.length === 0) {
+      toast.error('No entries match the selected filters');
+      return;
+    }
 
     setIsExporting(true);
 
     try {
-      const reportEntries: TimelineReportEntry[] = filteredEntries.map(e => ({
-        id: e.id,
-        type: e.type,
-        timestamp: e.timestamp,
-        title: e.title,
-        subtitle: e.subtitle,
-        actor: e.actor,
-        actorRole: e.actorRole,
-        details: e.details,
-      }));
+      const { reportEntries, reportStats } = buildReportData(exportEntries);
 
       exportTimelineReport({
         event: selectedEvent,
         entries: reportEntries,
         teamName: profile?.teamName || 'Race Team',
         generatedBy: profile?.driverName || user?.email?.split('@')[0] || 'User',
-        stats: {
-          totalPasses: stats.passes,
-          bestET: stats.bestET,
-          bestMPH: stats.bestMPH,
-          checklistCompletion: stats.checklists,
-          maintenanceActions: stats.maintenance,
-          workOrdersCompleted: stats.workorders,
-          weatherSnapshots: stats.weather,
-        },
+        stats: reportStats,
+        includeStats: exportOptions.includeStats,
       });
 
       toast.success('Race Day Report opened', {
         description: 'Use your browser\'s Print dialog to save as PDF.',
         duration: 5000,
       });
+      setShowExportModal(false);
     } catch (err) {
       toast.error('Failed to generate report');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // ─── CSV Export ───
+  const handleExportCSV = () => {
+    if (!selectedEvent) return;
+
+    const exportEntries = getExportEntries();
+    if (exportEntries.length === 0) {
+      toast.error('No entries match the selected filters');
+      return;
+    }
+
+    setIsExporting(true);
+
+    try {
+      const { reportEntries, reportStats } = buildReportData(exportEntries);
+
+      exportTimelineCSV({
+        event: selectedEvent,
+        entries: reportEntries,
+        teamName: profile?.teamName || 'Race Team',
+        generatedBy: profile?.driverName || user?.email?.split('@')[0] || 'User',
+        stats: reportStats,
+        includeStats: exportOptions.includeStats,
+      });
+
+      toast.success(`Exported ${exportEntries.length} entries to CSV`, {
+        description: `File: race-day-timeline-${selectedEvent.startDate}.csv`,
+        duration: 4000,
+      });
+      setShowExportModal(false);
+    } catch (err) {
+      toast.error('Failed to generate CSV');
     } finally {
       setIsExporting(false);
     }
@@ -549,10 +656,16 @@ const RaceDayTimeline: React.FC = () => {
       case 'parts_used': return <Package className="w-3.5 h-3.5" />;
       case 'checklist_completed': return <CheckSquare className="w-3.5 h-3.5" />;
       case 'engine_swap': return <RotateCcw className="w-3.5 h-3.5" />;
-      case 'work_order': return <ClipboardList className="w-3.5 h-3.5" />;
       default: return <Activity className="w-3.5 h-3.5" />;
     }
   };
+
+
+  // ─── Export entry count preview ───
+  const exportEntryCount = useMemo(() => {
+    if (!showExportModal) return 0;
+    return getExportEntries().length;
+  }, [showExportModal, exportOptions, timelineEntries]);
 
   return (
     <section className="py-6 px-4">
@@ -617,18 +730,14 @@ const RaceDayTimeline: React.FC = () => {
               )}
             </button>
 
-            {/* Export PDF */}
+            {/* Export Button (opens modal) */}
             <button
-              onClick={handleExportPDF}
-              disabled={isExporting || !selectedEvent || filteredEntries.length === 0}
+              onClick={openExportModal}
+              disabled={!selectedEvent || filteredEntries.length === 0}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-red-600 text-white text-xs font-medium hover:from-orange-600 hover:to-red-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
             >
-              {isExporting ? (
-                <RefreshCw className="w-3 h-3 animate-spin" />
-              ) : (
-                <Printer className="w-3 h-3" />
-              )}
-              Export PDF Report
+              <Download className="w-3 h-3" />
+              Export Report
             </button>
           </div>
         </div>
@@ -712,7 +821,8 @@ const RaceDayTimeline: React.FC = () => {
               <span className="text-sm font-medium text-slate-300">Filter by Activity Type</span>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setVisibleTypes(new Set(['pass', 'weather', 'maintenance', 'checklist', 'workorder', 'activity']))}
+                  onClick={() => setVisibleTypes(new Set(['pass', 'weather', 'maintenance', 'checklist', 'activity'] as TimelineEntryType[]))}
+
                   className="text-[10px] text-slate-500 hover:text-white transition-colors px-2 py-1 rounded bg-slate-800"
                 >
                   Show All
@@ -787,13 +897,25 @@ const RaceDayTimeline: React.FC = () => {
             {stats.bestET && (
               <div className="bg-emerald-500/10 rounded-lg border border-emerald-500/30 p-3 text-center">
                 <p className="text-xl font-bold text-emerald-400 font-mono">{stats.bestET.toFixed(3)}</p>
-                <p className="text-[10px] text-slate-400">Best ET</p>
+                <p className="text-[10px] text-slate-400">Best 1/8 ET</p>
               </div>
             )}
             {stats.bestMPH && (
               <div className="bg-blue-500/10 rounded-lg border border-blue-500/30 p-3 text-center">
                 <p className="text-xl font-bold text-blue-400 font-mono">{stats.bestMPH.toFixed(1)}</p>
-                <p className="text-[10px] text-slate-400">Best MPH</p>
+                <p className="text-[10px] text-slate-400">Best 1/8 MPH</p>
+              </div>
+            )}
+            {stats.bestQuarterET && (
+              <div className="bg-emerald-500/10 rounded-lg border border-emerald-500/30 p-3 text-center">
+                <p className="text-xl font-bold text-emerald-300 font-mono">{stats.bestQuarterET.toFixed(3)}</p>
+                <p className="text-[10px] text-slate-400">Best 1/4 ET</p>
+              </div>
+            )}
+            {stats.bestQuarterMPH && (
+              <div className="bg-blue-500/10 rounded-lg border border-blue-500/30 p-3 text-center">
+                <p className="text-xl font-bold text-blue-300 font-mono">{stats.bestQuarterMPH.toFixed(1)}</p>
+                <p className="text-[10px] text-slate-400">Best 1/4 MPH</p>
               </div>
             )}
           </div>
@@ -805,7 +927,8 @@ const RaceDayTimeline: React.FC = () => {
             <Calendar className="w-16 h-16 mx-auto mb-4 text-slate-600" />
             <h3 className="text-xl font-semibold text-slate-300 mb-2">Select a Race Event</h3>
             <p className="text-slate-500 max-w-md mx-auto">
-              Choose a race event from the dropdown above to view a chronological timeline of all activity — passes, weather, maintenance, checklists, work orders, and team activity.
+              Choose a race event from the dropdown above to view a chronological timeline of all activity — passes, weather, maintenance, checklists, and team activity.
+
             </p>
             {sortedEvents.length === 0 && (
               <p className="text-amber-400/80 text-sm mt-4 flex items-center justify-center gap-2">
@@ -824,9 +947,10 @@ const RaceDayTimeline: React.FC = () => {
               {searchQuery
                 ? `No entries match "${searchQuery}". Try a different search term.`
                 : stats.total === 0
-                ? `No activity was recorded during "${selectedEvent.title}". Pass logs, maintenance actions, checklist completions, and work orders that fall within the event dates will appear here.`
+                ? `No activity was recorded during "${selectedEvent.title}". Pass logs, maintenance actions, and checklist completions that fall within the event dates will appear here.`
                 : 'All entry types are currently hidden. Use the filter buttons above to show them.'
               }
+
             </p>
           </div>
         )}
@@ -936,17 +1060,18 @@ const RaceDayTimeline: React.FC = () => {
                                 {entry.type === 'pass' && entry.raw && (
                                   <div className="mt-3 pt-3 border-t border-white/5">
                                     <div className="flex items-center gap-4 text-xs flex-wrap">
+                                      {/* Eighth-mile metrics */}
                                       {entry.raw.eighth > 0 && (
                                         <div className="flex items-center gap-1.5">
                                           <Timer className="w-3.5 h-3.5 text-emerald-400" />
-                                          <span className="text-slate-400">ET:</span>
+                                          <span className="text-slate-400">1/8 ET:</span>
                                           <span className="text-emerald-400 font-bold font-mono">{entry.raw.eighth.toFixed(3)}s</span>
                                         </div>
                                       )}
                                       {entry.raw.mph > 0 && (
                                         <div className="flex items-center gap-1.5">
                                           <Zap className="w-3.5 h-3.5 text-blue-400" />
-                                          <span className="text-slate-400">MPH:</span>
+                                          <span className="text-slate-400">1/8 MPH:</span>
                                           <span className="text-blue-400 font-bold font-mono">{entry.raw.mph.toFixed(1)}</span>
                                         </div>
                                       )}
@@ -957,6 +1082,35 @@ const RaceDayTimeline: React.FC = () => {
                                           <span className="text-orange-400 font-bold font-mono">{entry.raw.sixtyFoot.toFixed(3)}s</span>
                                         </div>
                                       )}
+                                      {/* Quarter-mile metrics */}
+                                      {(entry.raw.quarterMileET || 0) > 0 && (
+                                        <div className="flex items-center gap-1.5">
+                                          <Milestone className="w-3.5 h-3.5 text-purple-400" />
+                                          <span className="text-slate-400">1/4 ET:</span>
+                                          <span className="text-purple-400 font-bold font-mono">{entry.raw.quarterMileET.toFixed(3)}s</span>
+                                        </div>
+                                      )}
+                                      {(entry.raw.quarterMileMPH || 0) > 0 && (
+                                        <div className="flex items-center gap-1.5">
+                                          <Target className="w-3.5 h-3.5 text-cyan-400" />
+                                          <span className="text-slate-400">1/4 MPH:</span>
+                                          <span className="text-cyan-400 font-bold font-mono">{entry.raw.quarterMileMPH.toFixed(1)}</span>
+                                        </div>
+                                      )}
+                                      {(() => {
+                                        const backSplit = (entry.raw.endSplit && entry.raw.endSplit > 0)
+                                          ? entry.raw.endSplit
+                                          : ((entry.raw.quarterMileET || 0) > 0 && entry.raw.eighth > 0)
+                                            ? (entry.raw.quarterMileET || 0) - entry.raw.eighth
+                                            : 0;
+                                        return backSplit > 0 ? (
+                                          <div className="flex items-center gap-1.5">
+                                            <BarChart3 className="w-3.5 h-3.5 text-pink-400" />
+                                            <span className="text-slate-400">Back Split:</span>
+                                            <span className="text-pink-400 font-bold font-mono">{backSplit.toFixed(3)}s</span>
+                                          </div>
+                                        ) : null;
+                                      })()}
                                       {entry.raw.result === 'Win' && (
                                         <div className="flex items-center gap-1.5">
                                           <Trophy className="w-3.5 h-3.5 text-yellow-400" />
@@ -993,20 +1147,7 @@ const RaceDayTimeline: React.FC = () => {
                                   </div>
                                 )}
 
-                                {/* Work order: parts list */}
-                                {entry.type === 'workorder' && entry.raw?.parts?.length > 0 && (
-                                  <div className="mt-3 pt-3 border-t border-white/5">
-                                    <p className="text-[10px] uppercase tracking-wider text-slate-500 font-medium mb-2">Parts Used</p>
-                                    <div className="space-y-1">
-                                      {entry.raw.parts.map((part: any, pIdx: number) => (
-                                        <div key={pIdx} className="flex items-center justify-between text-xs">
-                                          <span className="text-slate-300">{part.name} ({part.partNumber})</span>
-                                          <span className="text-slate-400">x{part.quantity} — ${part.cost?.toFixed(2)}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
+
                               </div>
                             )}
                           </div>
@@ -1022,15 +1163,219 @@ const RaceDayTimeline: React.FC = () => {
             {filteredEntries.length > 3 && (
               <div className="flex items-center justify-center pt-4 pb-2">
                 <button
-                  onClick={handleExportPDF}
+                  onClick={openExportModal}
                   className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-orange-500/20 to-red-500/20 border border-orange-500/30 text-orange-300 hover:from-orange-500/30 hover:to-red-500/30 transition-all text-sm font-medium"
                 >
                   <Download className="w-4 h-4" />
-                  Export Full Race Day Report as PDF
+                  Export Full Race Day Report
                   <span className="text-xs text-orange-400/60 ml-1">({filteredEntries.length} entries)</span>
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ═══ Export Modal ═══ */}
+        {showExportModal && selectedEvent && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowExportModal(false)}>
+            <div
+              className="bg-slate-800 rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto border border-slate-700 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="p-5 border-b border-slate-700/50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center">
+                      <Settings2 className="w-4.5 h-4.5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-white">Export Race Day Report</h3>
+                      <p className="text-xs text-slate-400 mt-0.5">{selectedEvent.title}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowExportModal(false)}
+                    className="text-slate-400 hover:text-white transition-colors p-1"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-5 space-y-5">
+                {/* Entry Type Filters */}
+                <div>
+                  <div className="flex items-center justify-between mb-2.5">
+                    <label className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                      <Filter className="w-3.5 h-3.5 text-orange-400" />
+                      Include Entry Types
+                    </label>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => setExportOptions(prev => ({
+                          ...prev,
+                          types: new Set(['pass', 'weather', 'maintenance', 'checklist', 'activity'] as TimelineEntryType[]),
+
+                        }))}
+                        className="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                      >
+                        All
+                      </button>
+                      <button
+                        onClick={() => setExportOptions(prev => ({
+                          ...prev,
+                          types: new Set(),
+                        }))}
+                        className="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                      >
+                        None
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {(Object.entries(TYPE_CONFIG) as [TimelineEntryType, typeof TYPE_CONFIG['pass']][]).map(([type, tcfg]) => {
+                      const isActive = exportOptions.types.has(type);
+                      const count = timelineEntries.filter(e => e.type === type).length;
+                      return (
+                        <button
+                          key={type}
+                          onClick={() => toggleExportType(type)}
+                          className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-medium transition-all border ${
+                            isActive
+                              ? `${tcfg.bgColor} ${tcfg.borderColor} ${tcfg.iconColor}`
+                              : 'bg-slate-900/50 border-slate-700/50 text-slate-500'
+                          }`}
+                        >
+                          {isActive ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                          <TypeIcon type={type} className="w-3 h-3" />
+                          <span className="flex-1 text-left">{tcfg.label}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${isActive ? 'bg-white/10' : 'bg-slate-800'}`}>
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Date Range */}
+                <div>
+                  <label className="text-sm font-semibold text-slate-300 flex items-center gap-2 mb-2.5">
+                    <Calendar className="w-3.5 h-3.5 text-orange-400" />
+                    Date Range
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium mb-1 block">From</label>
+                      <input
+                        type="date"
+                        value={exportOptions.dateFrom}
+                        onChange={(e) => setExportOptions(prev => ({ ...prev, dateFrom: e.target.value }))}
+                        min={selectedEvent.startDate}
+                        max={selectedEvent.endDate || selectedEvent.startDate}
+                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-orange-500 focus:ring-1 focus:ring-orange-500/30 transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium mb-1 block">To</label>
+                      <input
+                        type="date"
+                        value={exportOptions.dateTo}
+                        onChange={(e) => setExportOptions(prev => ({ ...prev, dateTo: e.target.value }))}
+                        min={selectedEvent.startDate}
+                        max={selectedEvent.endDate || selectedEvent.startDate}
+                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-orange-500 focus:ring-1 focus:ring-orange-500/30 transition-colors"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1.5">
+                    Event dates: {selectedEvent.startDate}{selectedEvent.endDate && selectedEvent.endDate !== selectedEvent.startDate ? ` to ${selectedEvent.endDate}` : ''}
+                  </p>
+                </div>
+
+                {/* Include Stats Toggle */}
+                <div>
+                  <label className="text-sm font-semibold text-slate-300 flex items-center gap-2 mb-2.5">
+                    <BarChart3 className="w-3.5 h-3.5 text-orange-400" />
+                    Report Options
+                  </label>
+                  <button
+                    onClick={() => setExportOptions(prev => ({ ...prev, includeStats: !prev.includeStats }))}
+                    className={`flex items-center gap-3 w-full px-4 py-3 rounded-lg border transition-all ${
+                      exportOptions.includeStats
+                        ? 'bg-orange-500/10 border-orange-500/30 text-orange-300'
+                        : 'bg-slate-900/50 border-slate-700/50 text-slate-500'
+                    }`}
+                  >
+                    <div className={`w-5 h-5 rounded flex items-center justify-center border-2 transition-colors ${
+                      exportOptions.includeStats
+                        ? 'bg-orange-500 border-orange-500'
+                        : 'border-slate-600'
+                    }`}>
+                      {exportOptions.includeStats && (
+                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                    <div className="flex-1 text-left">
+                      <p className="text-sm font-medium">Include Stats Summary</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Best ET, MPH, quarter-mile data, type counts, and performance overview</p>
+                    </div>
+                  </button>
+                </div>
+
+                {/* Preview count */}
+                <div className="bg-slate-900/50 rounded-lg border border-slate-700/30 p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm text-slate-400">
+                    <Filter className="w-4 h-4 text-slate-500" />
+                    <span>Entries matching filters:</span>
+
+                  </div>
+                  <span className={`text-lg font-bold font-mono ${exportEntryCount > 0 ? 'text-white' : 'text-red-400'}`}>
+                    {exportEntryCount}
+                  </span>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-5 border-t border-slate-700/50 flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={() => setShowExportModal(false)}
+                  className="px-4 py-2.5 text-slate-400 hover:text-white transition-colors text-sm font-medium rounded-lg border border-slate-700 hover:border-slate-600"
+                >
+                  Cancel
+                </button>
+                <div className="flex-1 flex gap-3">
+                  <button
+                    onClick={handleExportCSV}
+                    disabled={isExporting || exportEntryCount === 0}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-700 border border-slate-600 text-white text-sm font-medium hover:bg-slate-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {isExporting ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-green-400" />
+                    )}
+                    Export CSV
+                  </button>
+                  <button
+                    onClick={handleExportPDF}
+                    disabled={isExporting || exportEntryCount === 0}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-orange-500 to-red-600 text-white text-sm font-medium hover:from-orange-600 hover:to-red-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                  >
+                    {isExporting ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Printer className="w-3.5 h-3.5" />
+                    )}
+                    Export PDF
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>

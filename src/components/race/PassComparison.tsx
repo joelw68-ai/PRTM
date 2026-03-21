@@ -1,14 +1,8 @@
 import React, { useMemo } from 'react';
 import { 
   X, 
-  ArrowUp, 
-  ArrowDown, 
   Minus,
   Trophy,
-  Thermometer,
-  Droplets,
-  Gauge,
-  Wind,
   Cloud,
   Clock,
   MapPin,
@@ -20,6 +14,7 @@ import {
   Timer
 } from 'lucide-react';
 import { PassLogEntry, Engine, Supercharger } from '@/data/proModData';
+
 
 interface PassComparisonProps {
   selectedPasses: PassLogEntry[];
@@ -38,7 +33,11 @@ interface MetricComparison {
   lowerIsBetter?: boolean;
   isNumeric?: boolean;
   precision?: number;
+  hideIfZero?: boolean;       // Show "—" instead of 0.000 for optional fields
+  isSectionDivider?: boolean; // Render as a section divider row
+  sectionLabel?: string;      // Label for the section divider
 }
+
 
 const PassComparison: React.FC<PassComparisonProps> = ({
   selectedPasses,
@@ -86,6 +85,55 @@ const PassComparison: React.FC<PassComparisonProps> = ({
     return { deltas, bestIndex, worstIndex };
   };
 
+  // Calculate deltas for optional metrics (skip zero/undefined values)
+  const calculateOptionalMetricComparison = (
+    values: number[],
+    lowerIsBetter: boolean = true,
+    _precision: number = 3
+  ): { deltas: number[]; bestIndex: number; worstIndex: number } => {
+    if (values.length < 2) {
+      return { deltas: [], bestIndex: -1, worstIndex: -1 };
+    }
+
+    // Find first non-zero value as baseline
+    const baselineIndex = values.findIndex(v => v > 0);
+    if (baselineIndex === -1) {
+      // All values are zero — no meaningful comparison
+      return { deltas: values.map(() => 0), bestIndex: -1, worstIndex: -1 };
+    }
+
+    const baseline = values[baselineIndex];
+    const deltas = values.map((v, i) => {
+      if (v <= 0) return 0;           // No data — delta not applicable
+      if (i === baselineIndex) return 0; // Baseline pass
+      return v - baseline;
+    });
+
+    // Find best and worst among non-zero values only
+    let bestIndex = -1;
+    let worstIndex = -1;
+
+    for (let i = 0; i < values.length; i++) {
+      if (values[i] <= 0) continue; // Skip passes with no data
+      if (bestIndex === -1) {
+        bestIndex = i;
+        worstIndex = i;
+        continue;
+      }
+      if (lowerIsBetter) {
+        if (values[i] < values[bestIndex]) bestIndex = i;
+        if (values[i] > values[worstIndex]) worstIndex = i;
+      } else {
+        if (values[i] > values[bestIndex]) bestIndex = i;
+        if (values[i] < values[worstIndex]) worstIndex = i;
+      }
+    }
+
+    return { deltas, bestIndex, worstIndex };
+  };
+
+
+
   // Performance metrics
   const performanceMetrics: MetricComparison[] = useMemo(() => {
     const rtValues = sortedPasses.map(p => p.reactionTime);
@@ -98,7 +146,20 @@ const PassComparison: React.FC<PassComparisonProps> = ({
     const frontSplitValues = sortedPasses.map(p => p.threeThirty - p.sixtyFoot);
     const backSplitValues = sortedPasses.map(p => p.eighth - p.threeThirty);
 
-    return [
+    // Quarter-mile values (optional — may be 0 if not recorded)
+    const qmETValues = sortedPasses.map(p => p.quarterMileET || 0);
+    const qmMPHValues = sortedPasses.map(p => p.quarterMileMPH || 0);
+    const qmBackSplitValues = sortedPasses.map(p => {
+      // Use stored endSplit if available, otherwise calculate from quarterMileET - eighth
+      if (p.endSplit && p.endSplit > 0) return p.endSplit;
+      if ((p.quarterMileET || 0) > 0 && p.eighth > 0) return (p.quarterMileET || 0) - p.eighth;
+      return 0;
+    });
+
+    // Check if any pass has quarter-mile data
+    const hasQuarterMileData = sortedPasses.some(p => (p.quarterMileET || 0) > 0 || (p.quarterMileMPH || 0) > 0);
+
+    const metrics: MetricComparison[] = [
       {
         label: 'Reaction Time',
         values: rtValues,
@@ -136,7 +197,7 @@ const PassComparison: React.FC<PassComparisonProps> = ({
         precision: 3
       },
       {
-        label: 'MPH',
+        label: '1/8 Mile MPH',
         values: mphValues,
         ...calculateMetricComparison(mphValues, false, 1),
         unit: '',
@@ -163,7 +224,53 @@ const PassComparison: React.FC<PassComparisonProps> = ({
         precision: 3
       }
     ];
+
+    // Append quarter-mile section if any pass has data
+    if (hasQuarterMileData) {
+      metrics.push(
+        // Section divider
+        {
+          label: 'Quarter Mile',
+          values: [],
+          isSectionDivider: true,
+          sectionLabel: 'Quarter Mile'
+        },
+        {
+          label: '1/4 Mile ET',
+          values: qmETValues,
+          ...calculateOptionalMetricComparison(qmETValues, true, 3),
+          unit: 's',
+          lowerIsBetter: true,
+          isNumeric: true,
+          precision: 3,
+          hideIfZero: true
+        },
+        {
+          label: '1/4 Mile MPH',
+          values: qmMPHValues,
+          ...calculateOptionalMetricComparison(qmMPHValues, false, 1),
+          unit: '',
+          lowerIsBetter: false,
+          isNumeric: true,
+          precision: 1,
+          hideIfZero: true
+        },
+        {
+          label: "1/4 Back Split (1/4-1/8)",
+          values: qmBackSplitValues,
+          ...calculateOptionalMetricComparison(qmBackSplitValues, true, 3),
+          unit: 's',
+          lowerIsBetter: true,
+          isNumeric: true,
+          precision: 3,
+          hideIfZero: true
+        }
+      );
+    }
+
+    return metrics;
   }, [sortedPasses]);
+
 
   // Weather metrics
   const weatherMetrics: MetricComparison[] = useMemo(() => {
@@ -365,14 +472,32 @@ const PassComparison: React.FC<PassComparisonProps> = ({
 
   // Render metric row
   const renderMetricRow = (metric: MetricComparison, index: number) => {
+    // Section divider row
+    if (metric.isSectionDivider) {
+      return (
+        <tr key={`divider-${index}`} className="border-b border-orange-500/30">
+          <td 
+            colSpan={sortedPasses.length + 1} 
+            className="px-4 py-2 bg-orange-500/5"
+          >
+            <span className="text-xs font-semibold text-orange-400 uppercase tracking-wider">
+              {metric.sectionLabel || metric.label}
+            </span>
+          </td>
+        </tr>
+      );
+    }
+
     return (
       <tr key={index} className="border-b border-slate-700/30 hover:bg-slate-700/20">
         <td className="px-4 py-3 text-sm text-slate-300 font-medium sticky left-0 bg-slate-800/95 z-10">
           {metric.label}
         </td>
         {metric.values.map((value, i) => {
-          const isBest = metric.bestIndex === i && metric.isNumeric;
-          const isWorst = metric.worstIndex === i && metric.isNumeric && metric.bestIndex !== metric.worstIndex;
+          const numValue = value as number;
+          const isZeroOptional = metric.hideIfZero && metric.isNumeric && numValue <= 0;
+          const isBest = metric.bestIndex === i && metric.isNumeric && !isZeroOptional;
+          const isWorst = metric.worstIndex === i && metric.isNumeric && metric.bestIndex !== metric.worstIndex && !isZeroOptional;
           const delta = metric.deltas?.[i];
           
           return (
@@ -382,27 +507,32 @@ const PassComparison: React.FC<PassComparisonProps> = ({
                 isBest ? 'bg-green-500/10' : isWorst ? 'bg-red-500/10' : ''
               }`}
             >
-              <div className="flex flex-col items-center gap-1">
-                <span className={`font-mono ${
-                  isBest ? 'text-green-400 font-bold' : 
-                  isWorst ? 'text-red-400' : 
-                  'text-white'
-                }`}>
-                  {metric.isNumeric 
-                    ? (value as number).toFixed(metric.precision || 3)
-                    : value}
-                  {metric.unit && <span className="text-slate-400 text-xs ml-1">{metric.unit}</span>}
-                </span>
-                {delta !== undefined && metric.isNumeric && (
-                  renderDelta(delta, metric.lowerIsBetter, metric.precision || 3)
-                )}
-              </div>
+              {isZeroOptional ? (
+                <span className="text-slate-600 font-mono">—</span>
+              ) : (
+                <div className="flex flex-col items-center gap-1">
+                  <span className={`font-mono ${
+                    isBest ? 'text-green-400 font-bold' : 
+                    isWorst ? 'text-red-400' : 
+                    'text-white'
+                  }`}>
+                    {metric.isNumeric 
+                      ? (value as number).toFixed(metric.precision || 3)
+                      : value}
+                    {metric.unit && <span className="text-slate-400 text-xs ml-1">{metric.unit}</span>}
+                  </span>
+                  {delta !== undefined && metric.isNumeric && (
+                    renderDelta(delta, metric.lowerIsBetter, metric.precision || 3)
+                  )}
+                </div>
+              )}
             </td>
           );
         })}
       </tr>
     );
   };
+
 
   // Find best pass overall (by 1/8 mile ET)
   const bestPassIndex = useMemo(() => {

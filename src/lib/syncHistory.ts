@@ -73,10 +73,8 @@ const MODULE_LABELS: Record<string, string> = {
   // Pass Logs
   upsertPassLog: 'Pass Log',
   deletePassLog: 'Pass Log',
-  // Work Orders
-  upsertWorkOrder: 'Work Order',
-  deleteWorkOrder: 'Work Order',
   // Engines
+
   upsertEngine: 'Engine',
   deleteEngine: 'Engine',
   // Superchargers

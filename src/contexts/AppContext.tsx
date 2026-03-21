@@ -18,28 +18,30 @@ import {
   CylinderHead,
   MaintenanceItem,
   SFICertification,
-  WorkOrder,
   ChecklistItem,
   EngineSwapLog,
   TrackWeatherHistory,
+  calculateMaintenanceStatus,
   engines as initialEngines,
   superchargers as initialSuperchargers,
   cylinderHeads as initialCylinderHeads,
   maintenanceItems as initialMaintenanceItems,
   sfiCertifications as initialSFICertifications,
   passLogs as initialPassLogs,
-  workOrders as initialWorkOrders,
   engineSwapLogs as initialEngineSwapLogs,
   preRunChecklist as initialPreRunChecklist,
   betweenRoundsChecklist as initialBetweenRoundsChecklist,
   postRunChecklist as initialPostRunChecklist,
   trackWeatherHistory as initialTrackWeatherHistory
 } from '@/data/proModData';
+
+
 import { PartInventoryItem, partsInventory as initialPartsInventory } from '@/data/partsInventory';
 import { RaceEvent } from '@/components/race/RaceCalendar';
 import { TeamMember } from '@/components/race/TeamProfile';
 import * as db from '@/lib/database';
-import { SavedTrack, ToDoItem, TeamNote, LaborEntry, MediaItem, DrivetrainComponent, DrivetrainCategory, DrivetrainSwapLog, VendorRecord, PassHistoryEntry } from '@/lib/database';
+import { SavedTrack, ToDoItem, TeamNote, LaborEntry, MediaItem, DrivetrainComponent, DrivetrainCategory, DrivetrainSwapLog, VendorRecord, PassHistoryEntry, ComponentPart } from '@/lib/database';
+
 
 
 
@@ -84,7 +86,6 @@ interface AppContextType {
   maintenanceItems: MaintenanceItem[];
   sfiCertifications: SFICertification[];
   passLogs: PassLogEntry[];
-  workOrders: WorkOrder[];
   engineSwapLogs: EngineSwapLog[];
   preRunChecklist: ChecklistItem[];
   betweenRoundsChecklist: ChecklistItem[];
@@ -104,19 +105,14 @@ interface AppContextType {
   deleteVendor: (id: string) => Promise<void>;
   refreshVendors: () => Promise<void>;
 
-
-
   
   // Pass Log Actions
   addPassLog: (pass: PassLogEntry) => Promise<void>;
   updatePassLog: (id: string, pass: Partial<PassLogEntry>) => Promise<void>;
   deletePassLog: (id: string) => Promise<void>;
   
-  // Work Order Actions
-  addWorkOrder: (order: WorkOrder) => Promise<void>;
-  updateWorkOrder: (id: string, order: Partial<WorkOrder>) => Promise<void>;
-  deleteWorkOrder: (id: string) => Promise<void>;
-  
+  // Engine Actions
+
   // Engine Actions
   addEngine: (engine: Engine) => Promise<void>;
   performEngineSwap: (previousEngineId: string, newEngineId: string, reason: string, performedBy: string, notes: string) => Promise<void>;
@@ -217,7 +213,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [maintenanceItems, setMaintenanceItems] = useState<MaintenanceItem[]>(initialMaintenanceItems);
   const [sfiCertifications, setSFICertifications] = useState<SFICertification[]>(initialSFICertifications);
   const [passLogs, setPassLogs] = useState<PassLogEntry[]>(initialPassLogs);
-  const [workOrders, setWorkOrders] = useState<WorkOrder[]>(initialWorkOrders);
+
+
   const [engineSwapLogs, setEngineSwapLogs] = useState<EngineSwapLog[]>(initialEngineSwapLogs);
   const [preRunChecklist, setPreRunChecklist] = useState<ChecklistItem[]>(initialPreRunChecklist);
   const [betweenRoundsChecklist, setBetweenRoundsChecklist] = useState<ChecklistItem[]>(initialBetweenRoundsChecklist);
@@ -258,12 +255,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     toastId: string | number;
   }>>(new Map());
 
-  // ============ UNDO DELETE: PENDING WORK ORDER DELETES ============
-  const pendingWorkOrderDeletesRef = useRef<Map<string, {
-    item: WorkOrder;
-    timeoutId: ReturnType<typeof setTimeout>;
-    toastId: string | number;
-  }>>(new Map());
+
+
 
   // ============ UNDO DELETE: PENDING MAINTENANCE ITEM DELETES ============
   const pendingMaintenanceDeletesRef = useRef<Map<string, {
@@ -405,10 +398,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const allPendingRefs = [
         pendingPartDeletesRef,
         pendingEngineDeletesRef,
-        pendingWorkOrderDeletesRef,
         pendingMaintenanceDeletesRef,
         pendingPassLogDeletesRef,
       ];
+
       for (const ref of allPendingRefs) {
         ref.current.forEach((pending) => {
           clearTimeout(pending.timeoutId);
@@ -491,7 +484,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       const [
         dbEngines, dbSuperchargers, dbCylinderHeads, dbMaintenanceItems,
-        dbSFICertifications, dbPassLogs, dbWorkOrders, dbEngineSwapLogs,
+        dbSFICertifications, dbPassLogs, dbEngineSwapLogs,
         dbChecklists, dbPartsInventory, dbTrackWeatherHistory,
         dbRaceEvents, dbTeamMembers, dbSavedTracks
       ] = await Promise.all([
@@ -501,7 +494,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         safeFetch(db.fetchMaintenanceItems(userId), [] as MaintenanceItem[], 'maintenance_items'),
         safeFetch(db.fetchSFICertifications(userId), [] as SFICertification[], 'sfi_certifications'),
         safeFetch(db.fetchPassLogs(userId), [] as PassLogEntry[], 'pass_logs'),
-        safeFetch(db.fetchWorkOrders(userId), [] as WorkOrder[], 'work_orders'),
         safeFetch(db.fetchEngineSwapLogs(userId), [] as EngineSwapLog[], 'engine_swap_logs'),
         safeFetch(db.fetchChecklists(userId), emptyChecklists, 'checklists'),
         safeFetch(db.fetchPartsInventory(userId), [] as PartInventoryItem[], 'parts_inventory'),
@@ -510,6 +502,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         safeFetch(db.fetchTeamMembers(userId), [] as TeamMember[], 'team_members'),
         safeFetch(db.fetchSavedTracks(userId), [] as SavedTrack[], 'saved_tracks')
       ]);
+
       
       if (!mountedRef.current) return;
       
@@ -523,7 +516,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setMaintenanceItems(dbMaintenanceItems.length > 0 ? dbMaintenanceItems : []);
         setSFICertifications(dbSFICertifications.length > 0 ? dbSFICertifications : []);
         setPassLogs(dbPassLogs.length > 0 ? dbPassLogs : []);
-        setWorkOrders(dbWorkOrders.length > 0 ? dbWorkOrders : []);
+
+
         setEngineSwapLogs(dbEngineSwapLogs.length > 0 ? dbEngineSwapLogs : []);
         setPreRunChecklist(dbChecklists.preRun.length > 0 ? dbChecklists.preRun : []);
         setBetweenRoundsChecklist(dbChecklists.betweenRounds.length > 0 ? dbChecklists.betweenRounds : []);
@@ -538,7 +532,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (dbMaintenanceItems.length > 0) setMaintenanceItems(dbMaintenanceItems);
         if (dbSFICertifications.length > 0) setSFICertifications(dbSFICertifications);
         if (dbPassLogs.length > 0) setPassLogs(dbPassLogs);
-        if (dbWorkOrders.length > 0) setWorkOrders(dbWorkOrders);
+
+
         if (dbEngineSwapLogs.length > 0) setEngineSwapLogs(dbEngineSwapLogs);
         if (dbChecklists.preRun.length > 0) setPreRunChecklist(dbChecklists.preRun);
         if (dbChecklists.betweenRounds.length > 0) setBetweenRoundsChecklist(dbChecklists.betweenRounds);
@@ -559,7 +554,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         maintenanceItems: dbMaintenanceItems.length,
         sfiCertifications: dbSFICertifications.length,
         passLogs: dbPassLogs.length,
-        workOrders: dbWorkOrders.length,
+
+
         engineSwapLogs: dbEngineSwapLogs.length,
         partsInventory: dbPartsInventory.length,
         trackWeatherHistory: dbTrackWeatherHistory.length,
@@ -631,7 +627,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       const [
         dbEngines, dbSuperchargers, dbCylinderHeads, dbMaintenanceItems,
-        dbSFICertifications, dbPassLogs, dbWorkOrders, dbEngineSwapLogs,
+        dbSFICertifications, dbPassLogs, dbEngineSwapLogs,
         dbChecklists, dbPartsInventory, dbTrackWeatherHistory,
         dbRaceEvents, dbTeamMembers, dbSavedTracks
       ] = await Promise.all([
@@ -641,7 +637,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         safeFetch(db.fetchMaintenanceItems(userId), [] as MaintenanceItem[], 'maintenance_items'),
         safeFetch(db.fetchSFICertifications(userId), [] as SFICertification[], 'sfi_certifications'),
         safeFetch(db.fetchPassLogs(userId), [] as PassLogEntry[], 'pass_logs'),
-        safeFetch(db.fetchWorkOrders(userId), [] as WorkOrder[], 'work_orders'),
         safeFetch(db.fetchEngineSwapLogs(userId), [] as EngineSwapLog[], 'engine_swap_logs'),
         safeFetch(db.fetchChecklists(userId), emptyChecklists, 'checklists'),
         safeFetch(db.fetchPartsInventory(userId), [] as PartInventoryItem[], 'parts_inventory'),
@@ -650,6 +645,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         safeFetch(db.fetchTeamMembers(userId), [] as TeamMember[], 'team_members'),
         safeFetch(db.fetchSavedTracks(userId), [] as SavedTrack[], 'saved_tracks')
       ]);
+
       
       if (dbEngines.length > 0) setEngines(dbEngines);
       if (dbSuperchargers.length > 0) setSuperchargers(dbSuperchargers);
@@ -657,7 +653,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (dbMaintenanceItems.length > 0) setMaintenanceItems(dbMaintenanceItems);
       if (dbSFICertifications.length > 0) setSFICertifications(dbSFICertifications);
       if (dbPassLogs.length > 0) setPassLogs(dbPassLogs);
-      if (dbWorkOrders.length > 0) setWorkOrders(dbWorkOrders);
+
+
       if (dbEngineSwapLogs.length > 0) setEngineSwapLogs(dbEngineSwapLogs);
       if (dbChecklists.preRun.length > 0) setPreRunChecklist(dbChecklists.preRun);
       if (dbChecklists.betweenRounds.length > 0) setBetweenRoundsChecklist(dbChecklists.betweenRounds);
@@ -795,19 +792,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
 
     // 6. Update maintenance items (filter by car_id when present)
+    //    Use the canonical calculateMaintenanceStatus function so status is always
+    //    consistent: Overdue / Due / Due Soon / Good based on remaining vs interval.
     const updatedMaintenanceItems = maintenanceItems.map(m => {
       if (!carId || matchesCar(m)) {
         const newPasses = m.currentPasses + 1;
-        return {
+        const updatedItem: MaintenanceItem = {
           ...m,
           currentPasses: newPasses,
-          status: (newPasses >= m.nextServicePasses ? 'Due' : 
-                  newPasses >= m.nextServicePasses - (m.passInterval * 0.25) ? 'Due Soon' : 'Good') as MaintenanceItem['status']
         };
+        updatedItem.status = calculateMaintenanceStatus(updatedItem);
+        return updatedItem;
       }
       return m;
     });
     setMaintenanceItems(updatedMaintenanceItems);
+
 
     // 7. Count what was updated and collect flagged sub-components for toast
     const totalUpdated = enginesToPersist.length + scsToPersist.length + headsToPersist.length + dtToPersist.length;
@@ -944,60 +944,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [trackSave]);
 
 
-  // Work Order actions
-  const addWorkOrder = useCallback(async (order: WorkOrder) => {
-    setWorkOrders(prev => [order, ...prev]);
-    await trackSave(() => db.upsertWorkOrder(order, user?.id), 'addWorkOrder', { type: 'upsertWorkOrder', data: order });
-  }, [user?.id, trackSave]);
 
-  const updateWorkOrder = useCallback(async (id: string, order: Partial<WorkOrder>) => {
-    let mergedItem: WorkOrder | null = null;
-    setWorkOrders(prev => prev.map(w => {
-      if (w.id === id) { mergedItem = { ...w, ...order }; return mergedItem; }
-      return w;
-    }));
-    if (mergedItem) await trackSave(() => db.upsertWorkOrder(mergedItem!, user?.id), 'updateWorkOrder', { type: 'upsertWorkOrder', data: mergedItem });
-  }, [user?.id, trackSave]);
-
-  // ============ SOFT-DELETE WITH UNDO FOR WORK ORDERS ============
-  const deleteWorkOrderAction = useCallback(async (id: string) => {
-    let itemToDelete: WorkOrder | null = null;
-    setWorkOrders(prev => {
-      itemToDelete = prev.find(w => w.id === id) || null;
-      return prev.filter(w => w.id !== id);
-    });
-    if (!itemToDelete) return;
-    const captured = { ...itemToDelete } as WorkOrder;
-
-    const existing = pendingWorkOrderDeletesRef.current.get(id);
-    if (existing) { clearTimeout(existing.timeoutId); toast.dismiss(existing.toastId); pendingWorkOrderDeletesRef.current.delete(id); }
-
-    const timeoutId = setTimeout(() => {
-      const pending = pendingWorkOrderDeletesRef.current.get(id);
-      if (!pending) return;
-      pendingWorkOrderDeletesRef.current.delete(id);
-      trackSave(() => db.deleteWorkOrder(id), 'deleteWorkOrder', { type: 'deleteWorkOrder', data: id });
-      console.log(`[deleteWorkOrder] Hard delete executed for work order ${id}`);
-    }, UNDO_DELETE_WINDOW_MS);
-
-    const toastId = toast(`Work order "${captured.title}" deleted`, {
-      description: `${captured.id} [${captured.priority}] — click Undo within 10s to restore`,
-      duration: UNDO_DELETE_WINDOW_MS + 500,
-      action: {
-        label: 'Undo',
-        onClick: () => {
-          const pending = pendingWorkOrderDeletesRef.current.get(id);
-          if (pending) {
-            clearTimeout(pending.timeoutId);
-            pendingWorkOrderDeletesRef.current.delete(id);
-            setWorkOrders(prev => prev.some(w => w.id === id) ? prev : [captured, ...prev]);
-            toast.success('Work order restored', { description: `"${captured.title}" has been restored`, duration: 3000 });
-          }
-        },
-      },
-    });
-    pendingWorkOrderDeletesRef.current.set(id, { item: captured, timeoutId, toastId: toastId as string | number });
-  }, [trackSave]);
 
 
 
@@ -1555,10 +1502,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const expiredCerts = sfiCertifications.filter(c => c.daysUntilExpiration <= 0).length;
     const expiringSoonCerts = sfiCertifications.filter(c => c.daysUntilExpiration > 0 && c.daysUntilExpiration <= 60).length;
     const dueMaintenance = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Overdue').length;
-    const criticalWorkOrders = workOrders.filter(w => w.priority === 'Critical' && w.status !== 'Completed').length;
     const lowStockParts = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock').length;
-    return expiredCerts + expiringSoonCerts + dueMaintenance + criticalWorkOrders + lowStockParts;
-  }, [sfiCertifications, maintenanceItems, workOrders, partsInventory]);
+    return expiredCerts + expiringSoonCerts + dueMaintenance + lowStockParts;
+  }, [sfiCertifications, maintenanceItems, partsInventory]);
+
 
   const getLowStockCount = useCallback(() => {
     return partsInventory.filter(p => 
@@ -1589,7 +1536,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       maintenanceItems,
       sfiCertifications,
       passLogs,
-      workOrders,
+
+
       engineSwapLogs,
       preRunChecklist,
       betweenRoundsChecklist,
@@ -1608,13 +1556,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       refreshVendors,
 
 
+
       addPassLog,
       updatePassLog,
       deletePassLog: deletePassLogAction,
-      addWorkOrder,
-      updateWorkOrder,
-      deleteWorkOrder: deleteWorkOrderAction,
       addEngine,
+
       performEngineSwap,
       updateEngine,
       deleteEngine,

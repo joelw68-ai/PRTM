@@ -24,7 +24,6 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({ onNavigate, collapsed }) =>
   const {
     partsInventory,
     maintenanceItems,
-    workOrders,
     vendors,
     raceEvents,
     passLogs,
@@ -32,6 +31,7 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({ onNavigate, collapsed }) =>
     betweenRoundsChecklist,
     postRunChecklist,
   } = useApp();
+
   const { colors } = useThemeColor();
   const styles = useAccentStyles();
 
@@ -112,23 +112,8 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({ onNavigate, collapsed }) =>
       }
     }
 
-    // Search Work Orders
-    count = 0;
-    for (const wo of workOrders) {
-      if (count >= MAX_PER_CATEGORY) break;
-      const searchable = `${wo.title} ${wo.description} ${wo.category} ${wo.assignedTo} ${wo.notes} ${wo.status}`.toLowerCase();
-      if (searchable.includes(q)) {
-        matches.push({
-          id: wo.id,
-          title: wo.title,
-          subtitle: `${wo.status} — ${wo.priority} priority — ${wo.assignedTo || 'Unassigned'}`,
-          category: 'Work Orders',
-          categoryIcon: FileText,
-          section: 'workorders',
-        });
-        count++;
-      }
-    }
+
+
 
     // Search Vendors
     count = 0;
@@ -208,7 +193,8 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({ onNavigate, collapsed }) =>
     }
 
     return matches;
-  }, [query, partsInventory, maintenanceItems, workOrders, vendors, raceEvents, passLogs, preRunChecklist, betweenRoundsChecklist, postRunChecklist]);
+  }, [query, partsInventory, maintenanceItems, vendors, raceEvents, passLogs, preRunChecklist, betweenRoundsChecklist, postRunChecklist]);
+
 
   // Group results by category
   const groupedResults = useMemo(() => {
@@ -305,7 +291,8 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({ onNavigate, collapsed }) =>
               <Search className="w-8 h-8 text-slate-600 mx-auto mb-2" />
               <p className="text-slate-400 text-sm">No results for "{query}"</p>
               <p className="text-slate-500 text-xs mt-1">
-                Try searching for parts, maintenance items, work orders, vendors, events, passes, or checklists
+                Try searching for parts, maintenance items, vendors, events, passes, or checklists
+
               </p>
             </div>
           ) : (

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { useCar } from '@/contexts/CarContext';
+
 import { useThemeColor } from '@/contexts/ThemeColorContext';
 import DateInputDark from '@/components/ui/DateInputDark';
 import { PassLogEntry } from '@/data/proModData';
@@ -61,7 +61,7 @@ const PassLogAdvancedSearch: React.FC<PassLogAdvancedSearchProps> = ({
   onFilteredResults,
   onExportCSV,
 }) => {
-  const { cars, getCarLabel } = useCar();
+
   const { colors } = useThemeColor();
 
   const [isExpanded, setIsExpanded] = useState(false);
@@ -329,27 +329,8 @@ const PassLogAdvancedSearch: React.FC<PassLogAdvancedSearchProps> = ({
                 ))}
               </datalist>
             </div>
-
-            {/* Car Dropdown */}
-            <div>
-              <label className={labelClass}>
-                <Car className="w-3 h-3 inline mr-1" />
-                Car
-              </label>
-              <select
-                value={filters.carId}
-                onChange={(e) => updateFilter('carId', e.target.value)}
-                className={inputClass}
-              >
-                <option value="">All Cars</option>
-                {cars.map(car => (
-                  <option key={car.id} value={car.id}>
-                    {getCarLabel(car.id)}
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
+
 
           {/* Row 2: ET Range + MPH Range + Round + Result */}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-4">

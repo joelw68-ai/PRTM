@@ -38,6 +38,35 @@ import {
 } from 'lucide-react';
 
 
+// ─── Resilient Column Helper ─────────────────────────────────────────
+// The `linked_inventory_id` and `inventory_adjusted` columns may not exist
+// in the live database if the user hasn't run the latest migration
+// (sql_master_create_all_tables.sql). This helper detects PostgREST
+
+// "unknown column" errors so we can retry without those fields.
+const isUnknownColumnError = (error: any): boolean => {
+  if (!error) return false;
+  const msg = (error.message || '').toLowerCase();
+  const code = error.code || '';
+  const hint = (error.hint || '').toLowerCase();
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    msg.includes('could not find') ||
+    (msg.includes('column') && (msg.includes('does not exist') || msg.includes('not found') || msg.includes('schema cache'))) ||
+    hint.includes('column') ||
+    msg.includes('undefined_column')
+  );
+};
+
+/** Strip linked_inventory_id and inventory_adjusted from a payload object */
+const stripInventoryColumns = (payload: Record<string, any>): Record<string, any> => {
+  const stripped = { ...payload };
+  delete stripped.linked_inventory_id;
+  delete stripped.inventory_adjusted;
+  return stripped;
+};
+
 
 // ─── Types ───────────────────────────────────────────────────────────
 interface BorrowedLoanedPart {
@@ -251,6 +280,12 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
   };
 
   // ─── CRUD ────────────────────────────────────────────────────────
+  // RESILIENT COLUMN HANDLING:
+  // The `linked_inventory_id` and `inventory_adjusted` columns may not exist
+  // in the live database. Strategy: try with all columns first, and if
+  // PostgREST returns an unknown column error, retry WITHOUT those fields.
+  // This matches the pattern used in database.ts for pass_logs, race_events, etc.
+
   const handleSave = async () => {
     if (!userId) return;
     if (!formData.part_name.trim() || !formData.person_name.trim()) return;
@@ -293,23 +328,51 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
       }
 
       if (editingPart) {
-        // Update
+        // ── UPDATE ──
+        // Attempt 1: Try with all columns (including linked_inventory_id)
         const { error } = await supabase
           .from('borrowed_loaned_parts')
           .update(payload)
           .eq('id', editingPart.id);
 
         if (error) {
-          console.error('[BorrowedLoaned] Update error:', error.message);
-          alert('Failed to update: ' + error.message);
+          if (isUnknownColumnError(error)) {
+            // Attempt 2: Retry without linked_inventory_id / inventory_adjusted
+            console.warn('[BorrowedLoaned] Update: linked_inventory_id/inventory_adjusted columns not found — retrying without them.');
+            const strippedPayload = stripInventoryColumns(payload);
+            const { error: retryError } = await supabase
+              .from('borrowed_loaned_parts')
+              .update(strippedPayload)
+              .eq('id', editingPart.id);
+
+            if (retryError) {
+              console.error('[BorrowedLoaned] Update retry error:', retryError.message);
+              alert('Failed to update: ' + retryError.message);
+            } else {
+              // Success on retry — update local state (without inventory link fields)
+              setParts((prev) =>
+                prev.map((p) =>
+                  p.id === editingPart.id ? { ...p, ...strippedPayload } : p
+                )
+              );
+              closeModal();
+            }
+          } else {
+            console.error('[BorrowedLoaned] Update error:', error.message);
+            alert('Failed to update: ' + error.message);
+          }
         } else {
-          // Handle inventory adjustments for edits
-          // If returning and linked, restore inventory
+          // Success — handle inventory adjustments for edits
           if (payload.status === 'returned' && editingPart.status !== 'returned' && linkedId && editingPart.transaction_type === 'loaned') {
             if (editingPart.inventory_adjusted) {
               await adjustInventory(linkedId, payload.quantity);
-              payload.inventory_adjusted = false;
-              await supabase.from('borrowed_loaned_parts').update({ inventory_adjusted: false }).eq('id', editingPart.id);
+              // Try to update inventory_adjusted flag — silently ignore if column doesn't exist
+              try {
+                const { error: adjError } = await supabase.from('borrowed_loaned_parts').update({ inventory_adjusted: false }).eq('id', editingPart.id);
+                if (adjError && isUnknownColumnError(adjError)) {
+                  console.warn('[BorrowedLoaned] inventory_adjusted column not found — skipping flag update');
+                }
+              } catch { /* silent */ }
             }
           }
           setParts((prev) =>
@@ -320,7 +383,7 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
           closeModal();
         }
       } else {
-        // Insert
+        // ── INSERT ──
         payload.created_at = new Date().toISOString();
         payload.inventory_adjusted = false;
 
@@ -330,6 +393,7 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
           payload.inventory_adjusted = true;
         }
 
+        // Attempt 1: Try with all columns
         const { data, error } = await supabase
           .from('borrowed_loaned_parts')
           .insert(payload)
@@ -337,11 +401,34 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
           .single();
 
         if (error) {
-          console.error('[BorrowedLoaned] Insert error:', error.message);
-          alert('Failed to save: ' + error.message);
-          // Rollback inventory if insert failed
-          if (activeTab === 'loaned' && linkedId && payload.inventory_adjusted) {
-            await adjustInventory(linkedId, payload.quantity);
+          if (isUnknownColumnError(error)) {
+            // Attempt 2: Retry without linked_inventory_id / inventory_adjusted
+            console.warn('[BorrowedLoaned] Insert: linked_inventory_id/inventory_adjusted columns not found — retrying without them.');
+            const strippedPayload = stripInventoryColumns(payload);
+            const { data: retryData, error: retryError } = await supabase
+              .from('borrowed_loaned_parts')
+              .insert(strippedPayload)
+              .select()
+              .single();
+
+            if (retryError) {
+              console.error('[BorrowedLoaned] Insert retry error:', retryError.message);
+              alert('Failed to save: ' + retryError.message);
+              // Rollback inventory if insert failed
+              if (activeTab === 'loaned' && linkedId && payload.inventory_adjusted) {
+                await adjustInventory(linkedId, payload.quantity);
+              }
+            } else if (retryData) {
+              setParts((prev) => [retryData, ...prev]);
+              closeModal();
+            }
+          } else {
+            console.error('[BorrowedLoaned] Insert error:', error.message);
+            alert('Failed to save: ' + error.message);
+            // Rollback inventory if insert failed
+            if (activeTab === 'loaned' && linkedId && payload.inventory_adjusted) {
+              await adjustInventory(linkedId, payload.quantity);
+            }
           }
         } else if (data) {
           setParts((prev) => [data, ...prev]);
@@ -383,7 +470,8 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
     if (!userId) return;
     const now = today;
     try {
-      const updatePayload: any = {
+      // Build the update payload — include inventory_adjusted only if applicable
+      const fullUpdatePayload: any = {
         status: 'returned',
         actual_return_date: now,
         updated_at: new Date().toISOString(),
@@ -392,15 +480,40 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
       // If loaned with linked inventory and was adjusted, restore inventory
       if (part.transaction_type === 'loaned' && part.linked_inventory_id && part.inventory_adjusted) {
         await adjustInventory(part.linked_inventory_id, part.quantity);
-        updatePayload.inventory_adjusted = false;
+        fullUpdatePayload.inventory_adjusted = false;
       }
 
+      // Attempt 1: Try with all columns
       const { error } = await supabase
         .from('borrowed_loaned_parts')
-        .update(updatePayload)
+        .update(fullUpdatePayload)
         .eq('id', part.id);
 
-      if (!error) {
+      if (error) {
+        if (isUnknownColumnError(error)) {
+          // Attempt 2: Retry without inventory_adjusted
+          console.warn('[BorrowedLoaned] Mark returned: inventory_adjusted column not found — retrying without it.');
+          const strippedPayload = stripInventoryColumns(fullUpdatePayload);
+          const { error: retryError } = await supabase
+            .from('borrowed_loaned_parts')
+            .update(strippedPayload)
+            .eq('id', part.id);
+
+          if (!retryError) {
+            setParts((prev) =>
+              prev.map((p) =>
+                p.id === part.id
+                  ? { ...p, status: 'returned' as const, actual_return_date: now, inventory_adjusted: false }
+                  : p
+              )
+            );
+          } else {
+            console.error('[BorrowedLoaned] Mark returned retry error:', retryError.message);
+          }
+        } else {
+          console.error('[BorrowedLoaned] Mark returned error:', error.message);
+        }
+      } else {
         setParts((prev) =>
           prev.map((p) =>
             p.id === part.id
@@ -413,6 +526,8 @@ const BorrowedLoanedParts: React.FC<BorrowedLoanedPartsProps> = ({ onNavigate })
       console.error('[BorrowedLoaned] Mark returned error:', err);
     }
   };
+
+
 
   // ─── Modal Helpers ───────────────────────────────────────────────
   const openCreateModal = () => {

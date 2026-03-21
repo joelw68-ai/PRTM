@@ -37,7 +37,8 @@ interface SeasonSummaryProps {
 }
 
 const SeasonSummary: React.FC<SeasonSummaryProps> = ({ currentRole = 'Crew' }) => {
-  const { raceEvents, passLogs, maintenanceItems, partsInventory, workOrders } = useApp();
+  const { raceEvents, passLogs, maintenanceItems, partsInventory } = useApp();
+
   const { user } = useAuth();
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState(currentYear);
@@ -108,16 +109,12 @@ const SeasonSummary: React.FC<SeasonSummaryProps> = ({ currentRole = 'Crew' }) =
     [laborEntries, selectedYear]
   );
 
-  const yearWorkOrders = useMemo(() =>
-    workOrders.filter(w => w.createdDate && parseLocalDate(w.createdDate).getFullYear() === selectedYear),
-
-    [workOrders, selectedYear]
-  );
 
   // ============ COMPUTED METRICS ============
 
   const totalEvents = yearEvents.length;
   const completedEvents = yearEvents.filter(e => e.status === 'Completed').length;
+
 
   // Win/Loss from event results
   const wins = yearEvents.filter(e => e.result?.toLowerCase().includes('win') || e.result?.toLowerCase().includes('1st')).length;
@@ -147,19 +144,10 @@ const SeasonSummary: React.FC<SeasonSummaryProps> = ({ currentRole = 'Crew' }) =
   const totalSpent = totalEntryFees + totalPartsCost + totalLaborCost;
   const netResult = totalPurseWinnings - totalSpent;
 
-  // Maintenance
-  const maintenanceDone = yearWorkOrders.filter(w => w.status === 'Completed').length;
-  const maintenanceOpen = yearWorkOrders.filter(w => w.status !== 'Completed').length;
+  // Maintenance status from maintenanceItems
+  const maintenanceDue = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Overdue').length;
+  const maintenanceGood = maintenanceItems.filter(m => m.status === 'Good').length;
 
-  // Most common maintenance categories
-  const maintenanceCounts: Record<string, number> = {};
-  yearWorkOrders.forEach(w => {
-    const cat = w.category || 'Other';
-    maintenanceCounts[cat] = (maintenanceCounts[cat] || 0) + 1;
-  });
-  const topMaintenance = Object.entries(maintenanceCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
 
   // Pass count by month
   const monthlyPasses: Record<string, number> = {};
@@ -217,9 +205,10 @@ const SeasonSummary: React.FC<SeasonSummaryProps> = ({ currentRole = 'Crew' }) =
       ['Net Result', `$${netResult.toFixed(2)}`],
       [''],
       ['MAINTENANCE'],
-      ['Work Orders Completed', maintenanceDone.toString()],
-      ['Work Orders Open', maintenanceOpen.toString()],
+      ['Items Due/Overdue', maintenanceDue.toString()],
+      ['Items Good', maintenanceGood.toString()],
       [''],
+
       ['PASS LOG DETAIL'],
       ['Date', 'Track', 'Session', 'ET', 'MPH', 'Reaction', '60ft', 'Result', 'Aborted'],
       ...yearPasses.map(p => [
@@ -538,29 +527,28 @@ const SeasonSummary: React.FC<SeasonSummaryProps> = ({ currentRole = 'Crew' }) =
           )}
         </div>
 
-        {/* Top Maintenance */}
+        {/* Maintenance Status */}
         <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6">
           <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
             <Wrench className="w-4 h-4 text-yellow-400" />
-            Maintenance Categories
+            Maintenance Status
           </h3>
-          {topMaintenance.length > 0 ? (
-            <div className="space-y-2">
-              {topMaintenance.map(([cat, count]) => (
-                <div key={cat} className="flex items-center justify-between p-2 bg-slate-900/50 rounded-lg">
-                  <span className="text-white text-sm">{cat}</span>
-                  <span className="text-slate-400 text-sm">{count} orders</span>
-                </div>
-              ))}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between p-2 bg-slate-900/50 rounded-lg">
+              <span className="text-white text-sm">Total Items</span>
+              <span className="text-slate-400 text-sm">{maintenanceItems.length}</span>
             </div>
-          ) : (
-            <p className="text-slate-500 text-sm">No maintenance data</p>
-          )}
-          <div className="mt-4 pt-3 border-t border-slate-700/50 flex justify-between text-xs">
-            <span className="text-slate-400">Completed: {maintenanceDone}</span>
-            <span className="text-yellow-400">Open: {maintenanceOpen}</span>
+            <div className="flex items-center justify-between p-2 bg-slate-900/50 rounded-lg">
+              <span className="text-green-400 text-sm">Good</span>
+              <span className="text-green-400 text-sm font-medium">{maintenanceGood}</span>
+            </div>
+            <div className="flex items-center justify-between p-2 bg-slate-900/50 rounded-lg">
+              <span className="text-yellow-400 text-sm">Due / Overdue</span>
+              <span className="text-yellow-400 text-sm font-medium">{maintenanceDue}</span>
+            </div>
           </div>
         </div>
+
       </div>
     </div>
   );

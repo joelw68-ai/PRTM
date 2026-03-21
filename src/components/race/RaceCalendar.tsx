@@ -914,10 +914,13 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
                       <option value="NHRA">NHRA</option>
                       <option value="PDRA">PDRA</option>
                       <option value="IHRA">IHRA</option>
+                      <option value="Radial Outlaws">Radial Outlaws</option>
+                      <option value="No Time">No Time</option>
                       <option value="DI Winter Series">DI Winter Series</option>
                       <option value="Other">Other</option>
                     </select>
                   </div>
+
 
 
 

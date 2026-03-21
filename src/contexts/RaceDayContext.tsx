@@ -303,13 +303,8 @@ export const RaceDayProvider: React.FC<{ children: ReactNode }> = ({ children })
                 duration: 5000,
               });
               break;
-            case 'work_order_updated':
-              toast.info(`${actorName}${roleLabel} updated a work order`, {
-                description: description || 'Work order status changed',
-                duration: 4000,
-              });
-              break;
             case 'weather_alert':
+
               toast.warning(`Weather Alert`, {
                 description: description || 'Weather conditions have changed',
                 duration: 8000,

@@ -13,8 +13,7 @@ import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { isConnectivityError } from '@/lib/offlineQueue';
 
 import { useAuth } from '@/contexts/AuthContext';
-import { useCar } from '@/contexts/CarContext';
-import CarDropdown from './CarDropdown';
+
 import { CrewRole } from '@/lib/permissions';
 import { fetchWeatherData, calculateDewPoint, calculateVaporPressure, calculateWaterGrains, calculateWetBulb, calculateSTDCorrection } from '@/lib/weather';
 
@@ -93,8 +92,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     incrementTrackVisit
   } = useApp();
   const { profile } = useAuth();
-  const { selectedCarId, cars, getCarLabel } = useCar();
   const { queueOperation, reportConnectivityError, reportSuccess } = useOfflineSync();
+
 
 
   const autoFetchTriggered = useRef(false);
@@ -194,8 +193,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       notes: '',
       crewChief: '',
       aborted: false,
-      car_id: selectedCarId || '',
     };
+
   };
 
 
@@ -333,6 +332,9 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       threeThirty: pass.threeThirty,
       eighth: pass.eighth,
       mph: pass.mph,
+      quarterMileET: pass.quarterMileET,
+      quarterMileMPH: pass.quarterMileMPH,
+      endSplit: pass.endSplit,
       weather: { ...pass.weather },
       saeCorrection: pass.saeCorrection,
       densityAltitude: pass.densityAltitude,
@@ -355,6 +357,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     setTrackState(parsed.state);
     setShowModal(true);
   };
+
 
   // Handle saved track selection — uses ref to reset the native <select> after picking
   const handleTrackSelect = (trackId: string) => {
@@ -637,13 +640,6 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
 
   const filteredPasses = passLogs.filter(pass => {
-    // Multi-car filter: when no car selected show ALL; when car selected show matching + legacy (no car_id)
-    const carId = pass.car_id;
-    const matchesCar = !selectedCarId || selectedCarId === '' || carId === selectedCarId || !carId || carId === '';
-
-
-
-
     const matchesSearch = 
       pass.track.toLowerCase().includes(searchTerm.toLowerCase()) ||
       pass.notes.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -651,8 +647,9 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     
     const matchesFilter = filterType === 'all' || pass.sessionType === filterType;
     
-    return matchesCar && matchesSearch && matchesFilter;
+    return matchesSearch && matchesFilter;
   });
+
 
 
   const exportToCSV = () => {
@@ -1065,14 +1062,6 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                                 </h4>
                                 <div className="space-y-2 text-sm">
                                   <div className="flex justify-between">
-                                    <span className="text-slate-400">Launch RPM</span>
-                                    <span className="text-white">{pass.launchRPM}</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-slate-400">Boost</span>
-                                    <span className="text-white">{pass.boostSetting} psi</span>
-                                  </div>
-                                  <div className="flex justify-between">
                                     <span className="text-slate-400">Wheelie Bar</span>
                                     <span className="text-white">{pass.wheelieBarSetting}"</span>
                                   </div>
@@ -1086,6 +1075,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                                   </div>
                                 </div>
                               </div>
+
                               
                               {/* Equipment */}
                               <div>
@@ -1103,10 +1093,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                                     <span className="text-slate-400">Lane</span>
                                     <span className="text-white">{pass.lane}</span>
                                   </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-slate-400">Crew Chief</span>
-                                    <span className="text-white">{pass.crewChief}</span>
-                                  </div>
+
+
                                   {pass.aborted && (
                                     <div className="flex items-center gap-2 mt-2 p-2 bg-orange-500/10 border border-orange-500/30 rounded">
                                       <AlertCircle className="w-4 h-4 text-orange-400" />
@@ -1135,6 +1123,19 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                                       {(pass.eighth - pass.threeThirty).toFixed(3)}
                                     </span>
                                   </div>
+                                  {pass.quarterMileET && pass.quarterMileET > 0 && pass.eighth > 0 && (
+                                    <div className="flex justify-between items-center p-2 bg-slate-800/50 rounded">
+                                      <span className="text-xs text-slate-400">1/4 Mile Back Split (1/4 ET - 1/8 ET)</span>
+                                      <span className="text-green-400 font-mono font-bold text-sm">
+                                        {(pass.endSplit && pass.endSplit > 0)
+                                          ? pass.endSplit.toFixed(3)
+                                          : (pass.quarterMileET - pass.eighth).toFixed(3)}
+                                      </span>
+                                    </div>
+                                  )}
+
+
+
                                 </div>
                                 
                                 {/* Action Buttons */}
@@ -1206,13 +1207,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                 <div className="space-y-4">
                   <h4 className="font-medium text-white border-b border-slate-700 pb-2">Basic Info</h4>
 
-                  {/* Car Assignment Dropdown */}
-                  <CarDropdown
-                    value={formData.car_id || ''}
-                    onChange={(carId) => setFormData({...formData, car_id: carId})}
-                    label="Assign to Car"
-                  />
-                  
+
+
 
                   
                   <div className="grid grid-cols-2 gap-3">
@@ -1493,9 +1489,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                       </div>
                     </div>
                   </div>
-                  
                   <div>
-                    <label className="block text-sm text-slate-400 mb-1">MPH</label>
+                    <label className="block text-sm text-slate-400 mb-1">1/8 Mile MPH</label>
                     <input
                       type="number"
                       step="0.1"
@@ -1504,30 +1499,54 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                       className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono"
                     />
                   </div>
-                  
-                  <h4 className="font-medium text-white border-b border-slate-700 pb-2 pt-2">Car Setup</h4>
 
-                  
+                  {/* Quarter Mile Fields */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-sm text-slate-400 mb-1">Launch RPM</label>
+                      <label className="block text-sm text-slate-400 mb-1">1/4 Mile ET</label>
                       <input
                         type="number"
-                        value={formData.launchRPM}
-                        onChange={(e) => setFormData({...formData, launchRPM: parseInt(e.target.value) || 0})}
-                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                        step="0.001"
+                        value={formData.quarterMileET || ''}
+                        onChange={(e) => {
+                          const qmET = parseFloat(e.target.value) || 0;
+                          const endSplit = qmET > 0 && (formData.eighth || 0) > 0 ? qmET - (formData.eighth || 0) : 0;
+                          setFormData({...formData, quarterMileET: qmET, endSplit: endSplit > 0 ? Math.round(endSplit * 1000) / 1000 : 0});
+                        }}
+                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono"
+                        placeholder="0.000"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm text-slate-400 mb-1">Boost (psi)</label>
+                      <label className="block text-sm text-slate-400 mb-1">1/4 Mile MPH</label>
                       <input
                         type="number"
-                        value={formData.boostSetting}
-                        onChange={(e) => setFormData({...formData, boostSetting: parseInt(e.target.value) || 0})}
-                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                        step="0.1"
+                        value={formData.quarterMileMPH || ''}
+                        onChange={(e) => setFormData({...formData, quarterMileMPH: parseFloat(e.target.value) || 0})}
+                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono"
+                        placeholder="0.0"
                       />
                     </div>
                   </div>
+
+                  {/* 1/4 Mile Back Split - always visible, matches Front/Back Split styling */}
+                  <div className="p-2 bg-slate-900/70 border border-green-500/30 rounded-lg">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-slate-400">1/4 Mile Back Split</span>
+                      <span className="text-green-400 font-mono font-bold text-sm">
+                        {((formData.quarterMileET || 0) - (formData.eighth || 0)).toFixed(3)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">1/4 ET - 1/8 ET</p>
+                  </div>
+
+
+
+
+                  <h4 className="font-medium text-white border-b border-slate-700 pb-2 pt-2">Car Setup</h4>
+
+
                   
                   <div className="grid grid-cols-3 gap-3">
                     <div>
@@ -1879,15 +1898,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
 
                   
-                  <div>
-                    <label className="block text-sm text-slate-400 mb-1">Crew Chief</label>
-                    <input
-                      type="text"
-                      value={formData.crewChief}
-                      onChange={(e) => setFormData({...formData, crewChief: e.target.value})}
-                      className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                    />
-                  </div>
+
+
                   
                   <div>
                     <label className="block text-sm text-slate-400 mb-1">Notes</label>

@@ -19,6 +19,11 @@ export interface PassLogEntry {
   threeThirty: number;
   eighth: number;
   mph: number;
+
+  // Quarter Mile Data (MODULE 4 additions)
+  quarterMileET?: number;
+  quarterMileMPH?: number;
+  endSplit?: number; // Difference between 1/8 Mile ET and Quarter Mile ET
   
   // Weather & Conditions (snapshot stored with each pass)
   weather: {
@@ -56,6 +61,7 @@ export interface PassLogEntry {
   // Multi-car support
   car_id?: string;
 }
+
 
 
 
@@ -165,14 +171,17 @@ export interface MaintenanceItem {
   passInterval: number;
   currentPasses: number;
   lastService: string;
+  lastServiceTime?: string;
   nextServicePasses: number;
   status: 'Good' | 'Due Soon' | 'Due' | 'Overdue';
   priority: 'Low' | 'Medium' | 'High' | 'Critical';
   notes: string;
   estimatedCost?: number;
+  threshold?: number; // Alert threshold - number of passes remaining before alert triggers
   // Multi-car support
   car_id?: string;
 }
+
 
 
 export interface SFICertification {
@@ -191,25 +200,8 @@ export interface SFICertification {
 }
 
 
-export interface WorkOrder {
-  id: string;
-  title: string;
-  description: string;
-  category: string;
-  priority: 'Low' | 'Medium' | 'High' | 'Critical';
-  status: 'Open' | 'In Progress' | 'Pending Parts' | 'Completed' | 'Cancelled';
-  createdDate: string;
-  dueDate: string;
-  completedDate?: string;
-  assignedTo: string;
-  estimatedHours: number;
-  actualHours?: number;
-  parts: { name: string; partNumber: string; quantity: number; cost: number }[];
-  relatedComponent?: string;
-  notes: string;
-  // Multi-car support
-  car_id?: string;
-}
+
+
 
 
 export interface ChecklistItem {
@@ -337,9 +329,8 @@ export const sfiCertifications: SFICertification[] = [];
 
 export const passLogs: PassLogEntry[] = [];
 
-export const workOrders: WorkOrder[] = [];
-
 export const engineSwapLogs: EngineSwapLog[] = [];
+
 
 // Checklists
 export const preRunChecklist: ChecklistItem[] = [];
@@ -361,8 +352,7 @@ export const getExpiredCertifications = () => sfiCertifications.filter(c => c.st
 export const getExpiringSoonCertifications = () => sfiCertifications.filter(c => c.daysUntilExpiration <= 60 && c.daysUntilExpiration > 0);
 export const getOverdueMaintenanceItems = () => maintenanceItems.filter(m => m.status === 'Overdue' || m.status === 'Due');
 export const getDueSoonMaintenanceItems = () => maintenanceItems.filter(m => m.status === 'Due Soon');
-export const getOpenWorkOrders = () => workOrders.filter(w => w.status === 'Open' || w.status === 'In Progress' || w.status === 'Pending Parts');
-export const getCriticalWorkOrders = () => workOrders.filter(w => w.priority === 'Critical' && w.status !== 'Completed');
+
 
 export const calculateMaintenanceStatus = (item: MaintenanceItem): MaintenanceItem['status'] => {
   const remaining = item.nextServicePasses - item.currentPasses;

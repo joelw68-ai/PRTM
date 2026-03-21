@@ -3,7 +3,6 @@ import { getLocalDateString, parseLocalDate } from '@/lib/utils';
 
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { useCar } from '@/contexts/CarContext';
 import { supabase } from '@/lib/supabase';
 import { parseRows } from '@/lib/validatedQuery';
 import { BorrowedLoanedPartRowSchema } from '@/lib/validators';
@@ -11,9 +10,11 @@ import {
 
   Gauge, AlertTriangle, Clock, Zap, Wind, TrendingUp, Calendar, Wrench,
   Shield, RefreshCw, Camera, Edit2, Package, ArrowLeftRight,
-  Bell, ArrowDownToLine, ArrowUpFromLine, Cog, Car, FileText,
+  Bell, ArrowDownToLine, ArrowUpFromLine, Cog, FileText,
   SlidersHorizontal, ChevronRight, BarChart3, MapPin, Building2
 } from 'lucide-react';
+
+
 
 
 import {
@@ -22,8 +23,8 @@ import {
   Supercharger,
   MaintenanceItem,
   SFICertification,
-  WorkOrder,
 } from '@/data/proModData';
+
 import { PartInventoryItem } from '@/data/partsInventory';
 import { VendorRecord, DrivetrainComponent } from '@/lib/database';
 import { RaceEvent } from '@/components/race/RaceCalendar';
@@ -32,7 +33,9 @@ import ImageEditor from './ImageEditor';
 import OnboardingProgressBar from './OnboardingProgressBar';
 import EmptyState from './EmptyState';
 import WeatherWidget from './WeatherWidget';
+import FetchWeatherCard from './FetchWeatherCard';
 import * as db from '@/lib/database';
+
 
 
 interface DashboardProps {
@@ -52,7 +55,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     passLogs,
     maintenanceItems,
     sfiCertifications,
-    workOrders,
     partsInventory,
     drivetrainComponents,
     raceEvents,
@@ -64,84 +66,20 @@ const Dashboard: React.FC<DashboardProps> = ({
     isLoading
   } = useApp();
 
-
-  const { selectedCarId, cars, getCarLabel } = useCar();
   const { user, isDemoMode, effectiveUserId } = useAuth();
 
-
-  // ─── DEBUG: Log raw data counts from AppContext ─────────────
-  useEffect(() => {
-    console.log('[Dashboard] Raw data from AppContext:', {
-      engines: engines.length,
-      superchargers: superchargers.length,
-      passLogs: passLogs.length,
-      maintenanceItems: maintenanceItems.length,
-      sfiCertifications: sfiCertifications.length,
-      workOrders: workOrders.length,
-      partsInventory: partsInventory.length,
-      drivetrainComponents: drivetrainComponents.length,
-      raceEvents: raceEvents.length,
-      savedTracks: savedTracks.length,
-      vendors: vendors.length,
-      selectedCarId,
-      carsCount: cars.length,
-    });
-  }, [engines, superchargers, passLogs, maintenanceItems, sfiCertifications, workOrders, partsInventory, drivetrainComponents, raceEvents, savedTracks, vendors, selectedCarId, cars]);
-
-  // ─── Car-Filtered Data ─────────────────────────────────────
-  const isEmptyCarId = (id: string | null | undefined): boolean => !id || id === '';
-
-  const carPassLogs = useMemo(() =>
-    (selectedCarId && selectedCarId !== '') ? passLogs.filter((p: PassLogEntry) => p.car_id === selectedCarId || isEmptyCarId(p.car_id)) : passLogs,
-    [passLogs, selectedCarId]
-  );
-  const carMaintenanceItems = useMemo(() =>
-    (selectedCarId && selectedCarId !== '') ? maintenanceItems.filter((m: MaintenanceItem) => m.car_id === selectedCarId || isEmptyCarId(m.car_id)) : maintenanceItems,
-    [maintenanceItems, selectedCarId]
-  );
-  const carWorkOrders = useMemo(() =>
-    (selectedCarId && selectedCarId !== '') ? workOrders.filter((w: WorkOrder) => w.car_id === selectedCarId || isEmptyCarId(w.car_id)) : workOrders,
-    [workOrders, selectedCarId]
-  );
-  const carEngines = useMemo(() =>
-    (selectedCarId && selectedCarId !== '') ? engines.filter((e: Engine) => e.car_id === selectedCarId || isEmptyCarId(e.car_id)) : engines,
-    [engines, selectedCarId]
-  );
-  const carSuperchargers = useMemo(() =>
-    (selectedCarId && selectedCarId !== '') ? superchargers.filter((s: Supercharger) => s.car_id === selectedCarId || isEmptyCarId(s.car_id)) : superchargers,
-    [superchargers, selectedCarId]
-  );
-  const carDrivetrainComponents = useMemo(() =>
-    (selectedCarId && selectedCarId !== '') ? drivetrainComponents.filter((c: DrivetrainComponent) => c.car_id === selectedCarId || isEmptyCarId(c.car_id)) : drivetrainComponents,
-    [drivetrainComponents, selectedCarId]
-  );
-  const carSfiCertifications = useMemo(() =>
-    (selectedCarId && selectedCarId !== '') ? sfiCertifications.filter((c: SFICertification) => c.car_id === selectedCarId || isEmptyCarId(c.car_id)) : sfiCertifications,
-    [sfiCertifications, selectedCarId]
-  );
-  const carPartsInventory = useMemo(() =>
-    (selectedCarId && selectedCarId !== '') ? partsInventory.filter((p: PartInventoryItem) => p.car_id === selectedCarId || isEmptyCarId(p.car_id)) : partsInventory,
-    [partsInventory, selectedCarId]
-  );
+  // Use data directly (no car filtering — single-car app)
+  const carPassLogs = passLogs;
+  const carMaintenanceItems = maintenanceItems;
+  const carEngines = engines;
+  const carSuperchargers = superchargers;
+  const carDrivetrainComponents = drivetrainComponents;
+  const carSfiCertifications = sfiCertifications;
+  const carPartsInventory = partsInventory;
 
   // Vendors from AppContext (filtered to active only)
   const activeVendors = useMemo(() => vendors.filter((v: VendorRecord) => v.isActive), [vendors]);
 
-
-  // ─── DEBUG: Log filtered data counts ─────────────────────
-  useEffect(() => {
-    console.log('[Dashboard] Filtered data (car:', selectedCarId || 'ALL', '):', {
-      carEngines: carEngines.length,
-      carSuperchargers: carSuperchargers.length,
-      carDrivetrainComponents: carDrivetrainComponents.length,
-      carPartsInventory: carPartsInventory.length,
-      activeVendors: activeVendors.length,
-      carPassLogs: carPassLogs.length,
-      carMaintenanceItems: carMaintenanceItems.length,
-      carWorkOrders: carWorkOrders.length,
-      carSfiCertifications: carSfiCertifications.length,
-    });
-  }, [carEngines, carSuperchargers, carDrivetrainComponents, carPartsInventory, activeVendors, carPassLogs, carMaintenanceItems, carWorkOrders, carSfiCertifications, selectedCarId]);
 
 
 
@@ -240,10 +178,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const expiredCerts = carSfiCertifications.filter(c => c.daysUntilExpiration <= 0);
   const expiringSoonCerts = carSfiCertifications.filter(c => c.daysUntilExpiration > 0 && c.daysUntilExpiration <= 60);
   const dueMaintenance = carMaintenanceItems.filter(m => m.status === 'Due' || m.status === 'Due Soon' || m.status === 'Overdue');
-  const criticalWorkOrders = carWorkOrders.filter(w => w.priority === 'Critical' && w.status !== 'Completed');
-  const openWorkOrders = carWorkOrders.filter(w => w.status !== 'Completed' && w.status !== 'Cancelled');
   const availableEngines = carEngines.filter(e => !e.currentlyInstalled && e.status === 'Ready');
   const lowStockParts = carPartsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
+
 
   // Upcoming race events — use local date (not UTC) to match todayStr
   const upcomingEvents = useMemo(() => {
@@ -342,14 +279,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         <OnboardingProgressBar onNavigate={onNavigate} />
 
         {/* Critical Alert Banner */}
-        {(expiredCerts.length > 0 || criticalWorkOrders.length > 0) && <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-4 mb-6">
+        {expiredCerts.length > 0 && <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-4 mb-6">
             <div className="flex items-center gap-3">
               <AlertTriangle className="w-6 h-6 text-red-400 flex-shrink-0" />
               <div className="flex-1">
                 <h3 className="font-semibold text-red-400">Critical Alerts</h3>
                 <div className="text-sm text-red-300 mt-1">
                   {expiredCerts.map(cert => <p key={cert.id} data-mixed-content="true">• {cert.item} - SFI EXPIRED</p>)}
-                  {criticalWorkOrders.map(wo => <p key={wo.id} data-mixed-content="true">• {wo.title} - CRITICAL WORK ORDER</p>)}
                 </div>
               </div>
               <button onClick={() => onNavigate('maintenance')} className="px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-colors">
@@ -358,15 +294,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>}
 
-        {/* Car Indicator */}
-        {cars.length > 1 && (
-          <div className="flex items-center gap-2 mb-4 px-1">
-            <Car className="w-4 h-4 text-orange-400" />
-            <span className="text-sm text-slate-400">
-              Showing data for: <span className="text-orange-400 font-semibold">{getCarLabel(selectedCarId)}</span>
-            </span>
-          </div>
-        )}
+
+
 
         {/* ═══════════════════════════════════════════════════════════
             SECTION 1: QUICK STATS
@@ -427,8 +356,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         {/* ═══════════════════════════════════════════════════════════
+            FETCH WEATHER — Quick GPS-based local weather
+        ═══════════════════════════════════════════════════════════ */}
+        <div className="mb-6">
+          <FetchWeatherCard />
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════
             SECTION 2: PASS LOG SUMMARY
         ═══════════════════════════════════════════════════════════ */}
+
         <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6 mb-6">
           <SectionHeader icon={Gauge} title="Pass Log" iconColor="text-green-400" navTarget="passlog" count={carPassLogs.length} />
           {latestPass ? (
@@ -861,50 +798,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
 
-        {/* ═══════════════════════════════════════════════════════════
-            SECTION 8: WORK ORDERS
-        ═══════════════════════════════════════════════════════════ */}
-        <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6 mb-6">
-          <SectionHeader icon={FileText} title="Work Orders" iconColor="text-amber-400" navTarget="workorders" count={openWorkOrders.length} />
-          {carWorkOrders.length === 0 ? (
-            <div className="text-center py-4">
-              <FileText className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">No work orders created yet</p>
-              <button onClick={() => onNavigate('workorders')} className="mt-2 text-sm text-orange-400 hover:text-orange-300">
-                Create a work order →
-              </button>
-            </div>
-          ) : openWorkOrders.length === 0 ? (
-            <div className="text-center py-4">
-              <p className="text-green-400 font-medium">All work orders completed!</p>
-              <p className="text-slate-500 text-sm">{carWorkOrders.length} total work orders</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {openWorkOrders.slice(0, 5).map(wo => (
-                <div key={wo.id} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700/30">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-white font-medium text-sm truncate">{wo.title}</p>
-                    <p className="text-slate-500 text-xs">{wo.status} · Assigned: {wo.assignedTo || 'Unassigned'}</p>
-                  </div>
-                  <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium flex-shrink-0 ${
-                    wo.priority === 'Critical' ? 'bg-red-500/20 text-red-400' :
-                    wo.priority === 'High' ? 'bg-orange-500/20 text-orange-400' :
-                    wo.priority === 'Medium' ? 'bg-yellow-500/20 text-yellow-400' :
-                    'bg-slate-500/20 text-slate-400'
-                  }`}>
-                    {wo.priority}
-                  </span>
-                </div>
-              ))}
-              {openWorkOrders.length > 5 && (
-                <button onClick={() => onNavigate('workorders')} className="w-full text-center py-2 text-sm text-orange-400 hover:text-orange-300">
-                  +{openWorkOrders.length - 5} more open work orders →
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+
 
         {/* ═══════════════════════════════════════════════════════════
             SECTION 9: PARTS INVENTORY & LOW STOCK ALERTS
@@ -1128,71 +1022,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           <WeatherWidget onNavigate={onNavigate} />
         </div>
 
-        {/* ═══════════════════════════════════════════════════════════
-            SECTION 13: PER-CAR SUMMARY (Bottom, when All Cars selected)
-        ═══════════════════════════════════════════════════════════ */}
-        {!selectedCarId && cars.length > 1 && (
-          <div className="mb-8">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <Car className="w-5 h-5 text-orange-400" />
-              Per-Car Summary
-            </h2>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {cars.map(car => {
-                const cPasses = passLogs.filter((p: PassLogEntry) => p.car_id === car.id);
-                const cMaint = maintenanceItems.filter((m: MaintenanceItem) => m.car_id === car.id);
-                const cWO = workOrders.filter((w: WorkOrder) => w.car_id === car.id);
 
-                const cDueMaint = cMaint.filter(m => m.status === 'Due' || m.status === 'Due Soon' || m.status === 'Overdue');
-                const cCritWO = cWO.filter(w => w.priority === 'Critical' && w.status !== 'Completed');
-                const bestET = cPasses.length > 0 ? Math.min(...cPasses.map(p => p.eighth)) : null;
-                const bestMPH = cPasses.length > 0 ? Math.max(...cPasses.map(p => p.mph)) : null;
-                const carLabel = getCarLabel(car.id);
 
-                return (
-                  <div key={car.id} className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-5 hover:border-orange-500/40 transition-colors">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Car className="w-4 h-4 text-orange-400 flex-shrink-0" />
-                      <h3 className="text-white font-semibold truncate">{carLabel}</h3>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <p className="text-slate-500 text-xs">Passes</p>
-                        <p className="text-white font-bold">{cPasses.length}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500 text-xs">Best ET</p>
-                        <p className="text-green-400 font-bold">{bestET ? bestET.toFixed(3) : '-.---'}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500 text-xs">Best MPH</p>
-                        <p className="text-blue-400 font-bold">{bestMPH ? bestMPH.toFixed(1) : '---.-'}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500 text-xs">Work Orders</p>
-                        <p className="text-white font-bold">{cWO.length}</p>
-                      </div>
-                    </div>
-                    {(cDueMaint.length > 0 || cCritWO.length > 0) && (
-                      <div className="mt-3 pt-3 border-t border-slate-700/50 space-y-1">
-                        {cDueMaint.length > 0 && (
-                          <p className="text-xs text-yellow-400 flex items-center gap-1">
-                            <Wrench className="w-3 h-3" /> {cDueMaint.length} maintenance due
-                          </p>
-                        )}
-                        {cCritWO.length > 0 && (
-                          <p className="text-xs text-red-400 flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3" /> {cCritWO.length} critical work order{cCritWO.length !== 1 ? 's' : ''}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Engine Swap Modal */}

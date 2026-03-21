@@ -20,11 +20,13 @@ export interface PartInventoryItem {
   status: 'In Stock' | 'Low Stock' | 'Out of Stock' | 'On Order';
   reorderStatus: 'OK' | 'Reorder' | 'Critical' | 'On Order';
   relatedDrivetrainComponentId?: string;
+  threshold?: number; // Alert threshold for low stock notification
   // Multi-car support
   car_id?: string;
   // Part name alias (used by some components)
   name?: string;
 }
+
 
 
 

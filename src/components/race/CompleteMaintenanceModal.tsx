@@ -3,7 +3,8 @@ import { getLocalDateString } from '@/lib/utils';
 import DateInputDark from '@/components/ui/DateInputDark';
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { useCar } from '@/contexts/CarContext';
+
+
 import { MaintenanceItem } from '@/data/proModData';
 import { PartInventoryItem } from '@/data/partsInventory';
 import { addPartsUsageRecord, PartUsageRecord } from '@/data/partsUsageData';
@@ -87,11 +88,10 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
     authIsDemoMode = auth.isDemoMode;
   } catch { /* auth context may not be available */ }
 
-  let carGetLabel: (id: string | null) => string = () => 'Unknown Car';
-  try {
-    const carCtx = useCar();
-    carGetLabel = carCtx.getCarLabel;
-  } catch { /* car context may not be available */ }
+  // Single-car mode — no car label lookup needed
+  const carGetLabel = (_id: string | null) => 'Race Car';
+
+
 
   // Form state
   const [dateCompleted, setDateCompleted] = useState(getLocalDateString());

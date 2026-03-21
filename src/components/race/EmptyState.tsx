@@ -67,16 +67,8 @@ const emptyStateConfigs: Record<string, EmptyStateConfig> = {
     actionLabel: 'Add Maintenance Item',
     tips: ['Set pass-based service intervals', 'Get alerts when service is due', 'Track maintenance history']
   },
-  workorders: {
-    icon: FileText,
-    iconColor: 'text-cyan-400',
-    bgGradient: 'from-cyan-500/10 to-blue-500/10',
-    title: 'No work orders created',
-    description: 'Create work orders to track repairs, upgrades, and tasks for your team.',
-    actionLabel: 'Create First Work Order',
-    tips: ['Assign tasks to team members', 'Set priority levels (Critical, High, Normal)', 'Track completion status']
-  },
   checklists: {
+
     icon: CheckSquare,
     iconColor: 'text-teal-400',
     bgGradient: 'from-teal-500/10 to-green-500/10',
@@ -153,7 +145,8 @@ const emptyStateConfigs: Record<string, EmptyStateConfig> = {
     iconColor: 'text-emerald-400',
     bgGradient: 'from-emerald-500/10 to-green-500/10',
     title: 'No cost data available',
-    description: 'Cost analytics will populate as you add parts, work orders, and invoices.',
+    description: 'Cost analytics will populate as you add parts, invoices, and maintenance records.',
+
     actionLabel: 'Go to Parts Inventory',
     tips: ['Track spending by category', 'Monitor cost per pass', 'Generate expense reports']
   },

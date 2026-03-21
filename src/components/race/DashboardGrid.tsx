@@ -1,7 +1,8 @@
 import React, { useMemo, useEffect, useState } from 'react';
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { useCar } from '@/contexts/CarContext';
+
+
 import { getLocalDateString, parseLocalDate } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { parseRows } from '@/lib/validatedQuery';
@@ -20,12 +21,14 @@ interface DashboardGridProps {
 
 const DashboardGrid: React.FC<DashboardGridProps> = ({ onNavigate }) => {
   const {
-    passLogs, maintenanceItems, workOrders, partsInventory,
+    passLogs, maintenanceItems, partsInventory,
     engines, superchargers, drivetrainComponents, raceEvents,
     sfiCertifications, vendors
   } = useApp();
+
   const { user, isDemoMode, effectiveUserId } = useAuth();
-  const { cars, selectedCarId } = useCar();
+
+
 
   const todayStr = getLocalDateString();
 
@@ -57,8 +60,8 @@ const DashboardGrid: React.FC<DashboardGridProps> = ({ onNavigate }) => {
   }, [effectiveUserId, user?.id, isDemoMode]);
 
   const dueMaintenance = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Due Soon' || m.status === 'Overdue');
-  const openWorkOrders = workOrders.filter(w => w.status !== 'Completed' && w.status !== 'Cancelled');
   const lowStockParts = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
+
   const upcomingEvents = useMemo(() => {
     return (raceEvents || [])
       .filter(e => e.startDate >= todayStr && e.status !== 'Cancelled')
@@ -68,17 +71,7 @@ const DashboardGrid: React.FC<DashboardGridProps> = ({ onNavigate }) => {
   const expiredCerts = sfiCertifications.filter(c => c.daysUntilExpiration <= 0);
   const bestET = passLogs.length > 0 ? Math.min(...passLogs.map(p => p.eighth)).toFixed(3) : null;
   const bestMPH = passLogs.length > 0 ? Math.max(...passLogs.map(p => p.mph)).toFixed(1) : null;
-
   const cards = [
-    {
-      id: 'cars',
-      label: 'Race Cars',
-      icon: Car,
-      color: 'from-cyan-500 to-blue-600',
-      bgColor: 'bg-cyan-500/10 border-cyan-500/20',
-      preview: `${cars.length} car${cars.length !== 1 ? 's' : ''} registered`,
-      alert: null,
-    },
     {
       id: 'passlog',
       label: 'Pass Log',
@@ -90,6 +83,8 @@ const DashboardGrid: React.FC<DashboardGridProps> = ({ onNavigate }) => {
         : 'No passes logged yet',
       alert: null,
     },
+
+
     {
       id: 'analytics',
       label: 'Analytics',
@@ -142,20 +137,8 @@ const DashboardGrid: React.FC<DashboardGridProps> = ({ onNavigate }) => {
       alert: null,
     },
     {
-      id: 'workorders',
-      label: 'Work Orders',
-      icon: FileText,
-      color: 'from-amber-500 to-yellow-600',
-      bgColor: 'bg-amber-500/10 border-amber-500/20',
-      preview: openWorkOrders.length > 0
-        ? `${openWorkOrders.length} open work order${openWorkOrders.length !== 1 ? 's' : ''}`
-        : 'No open work orders',
-      alert: openWorkOrders.filter(w => w.priority === 'Critical').length > 0
-        ? openWorkOrders.filter(w => w.priority === 'Critical').length
-        : null,
-    },
-    {
       id: 'vendors',
+
       label: 'Vendors',
       icon: Users,
       color: 'from-violet-500 to-purple-600',

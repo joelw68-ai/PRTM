@@ -9,9 +9,8 @@ import { uploadWithFallback, getStorageErrorMessage } from '@/lib/storageUpload'
 import DateInputDark from '@/components/ui/DateInputDark';
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { useCar } from '@/contexts/CarContext';
-import CarDropdown from '@/components/race/CarDropdown';
-import ReceiptScanner, { ScannedData } from '@/components/race/ReceiptScanner';
+
+
 import ExpenseExportModal from '@/components/race/ExpenseExportModal';
 
 import {
@@ -107,7 +106,6 @@ const CATEGORY_COLORS: Record<string, string> = {
 const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
   const { raceEvents, teamMembers } = useApp();
   const { user } = useAuth();
-  const { selectedCarId } = useCar();
 
   // Data state
   const [expenses, setExpenses] = useState<MiscExpense[]>([]);
@@ -142,23 +140,16 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
     custom_description: '',
     amount: '',
     expense_date: getLocalDateString(),
-
     paid_by: '',
     payment_method: '',
     notes: '',
     race_event_id: '',
     add_to_cost_report: true,
-    car_id: selectedCarId || '',
   });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Filter expenses by selected car — when no car selected show ALL; when car selected show matching + legacy (no car_id)
-  const carFilteredExpenses = useMemo(() => {
-    if (!selectedCarId || selectedCarId === '') return expenses;
-    return expenses.filter(e => e.car_id === selectedCarId || !e.car_id || e.car_id === '');
-  }, [expenses, selectedCarId]);
 
   // Helper: look up event name from raceEvents by race_event_id
   const getEventName = useCallback((eventId: string | null | undefined): string | null => {
@@ -245,14 +236,13 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
       custom_description: '',
       amount: '',
       expense_date: getLocalDateString(),
-
       paid_by: '',
       payment_method: '',
       notes: '',
       race_event_id: '',
       add_to_cost_report: true,
-      car_id: selectedCarId || '',
     });
+
 
     setSelectedFile(null);
     setEditingExpense(null);
@@ -297,11 +287,11 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
       notes: expense.notes || '',
       race_event_id: expense.race_event_id || '',
       add_to_cost_report: expense.add_to_cost_report,
-      car_id: expense.car_id || '',
     });
     setShowFormModal(true);
     setActionMenuId(null);
   };
+
 
 
   const handleSave = async () => {
@@ -342,7 +332,7 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
         race_event_id: formData.race_event_id || null,
         linked_event_name: linkedEventName || null,
         add_to_cost_report: formData.add_to_cost_report,
-        car_id: formData.car_id || null,
+
         updated_at: new Date().toISOString(),
       };
 
@@ -488,7 +478,7 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
 
   // ===== FILTERING & SORTING =====
   const filteredExpenses = useMemo(() => {
-    let result = carFilteredExpenses.filter(exp => {
+    let result = expenses.filter(exp => {
       const eventName = getEventName(exp.race_event_id) || '';
       const matchesSearch =
         exp.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -506,18 +496,17 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
       let cmp = 0;
       switch (sortBy) {
         case 'date': cmp = parseLocalDate(a.expense_date).getTime() - parseLocalDate(b.expense_date).getTime(); break;
-
         case 'amount': cmp = a.amount - b.amount; break;
         case 'category': cmp = a.category.localeCompare(b.category); break;
       }
       return sortDir === 'desc' ? -cmp : cmp;
     });
     return result;
-  }, [carFilteredExpenses, searchTerm, categoryFilter, paymentFilter, eventFilter, sortBy, sortDir, getEventName]);
+  }, [expenses, searchTerm, categoryFilter, paymentFilter, eventFilter, sortBy, sortDir, getEventName]);
 
   // ===== SUMMARY DATA =====
   const summaryData = useMemo(() => {
-    let filtered = carFilteredExpenses;
+    let filtered = [...expenses];
     if (summaryStartDate) filtered = filtered.filter(e => e.expense_date >= summaryStartDate);
     if (summaryEndDate) filtered = filtered.filter(e => e.expense_date <= summaryEndDate);
 
@@ -561,31 +550,31 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
       .sort((a, b) => b.total - a.total);
 
     return { totalAmount, count: filtered.length, categoryBreakdown, byPayment, eventBreakdown, paidByBreakdown };
-  }, [carFilteredExpenses, summaryStartDate, summaryEndDate, getEventName]);
+  }, [expenses, summaryStartDate, summaryEndDate, getEventName]);
 
   // ===== STATS =====
   const stats = useMemo(() => {
-    const base = carFilteredExpenses;
     const now = new Date();
-    const thisMonth = base.filter(e => {
+    const thisMonth = expenses.filter(e => {
       const d = parseLocalDate(e.expense_date);
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     });
-    const lastMonth = base.filter(e => {
+    const lastMonth = expenses.filter(e => {
       const d = parseLocalDate(e.expense_date);
       const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       return d.getMonth() === lm.getMonth() && d.getFullYear() === lm.getFullYear();
     });
 
     return {
-      total: base.reduce((s, e) => s + Number(e.amount), 0),
-      count: base.length,
+      total: expenses.reduce((s, e) => s + Number(e.amount), 0),
+      count: expenses.length,
       thisMonthTotal: thisMonth.reduce((s, e) => s + Number(e.amount), 0),
       thisMonthCount: thisMonth.length,
       lastMonthTotal: lastMonth.reduce((s, e) => s + Number(e.amount), 0),
-      avgPerExpense: base.length > 0 ? base.reduce((s, e) => s + Number(e.amount), 0) / base.length : 0,
+      avgPerExpense: expenses.length > 0 ? expenses.reduce((s, e) => s + Number(e.amount), 0) / expenses.length : 0,
     };
-  }, [carFilteredExpenses]);
+  }, [expenses]);
+
 
 
   // ===== HELPERS =====
@@ -1139,12 +1128,6 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
               )}
 
               <div className="space-y-4">
-                {/* Car Assignment */}
-                <CarDropdown
-                  value={formData.car_id}
-                  onChange={(val) => setFormData(prev => ({ ...prev, car_id: val }))}
-                  label="Assign to Car"
-                />
 
 
                 {/* Category */}

@@ -4,8 +4,9 @@
 export interface DbLogEntry {
   id: number;
   timestamp: Date;
-  operation: string; // e.g. 'upsertPassLog', 'fetchEngines', 'deleteWorkOrder'
+  operation: string; // e.g. 'upsertPassLog', 'fetchEngines', 'deletePart'
   type: 'read' | 'write' | 'delete' | 'test' | 'sync';
+
   table?: string;
   status: 'pending' | 'success' | 'error';
   errorMessage?: string;

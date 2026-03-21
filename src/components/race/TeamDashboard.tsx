@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useApp } from '@/contexts/AppContext';
-import { useCar } from '@/contexts/CarContext';
+
 import { useThemeColor } from '@/contexts/ThemeColorContext';
 import { CrewRole, getRoleColor } from '@/lib/permissions';
 import WeatherWidget from '@/components/race/WeatherWidget';
@@ -45,11 +45,14 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
   const { user, profile, isAuthenticated, isDemoMode, effectiveUserId } = useAuth();
   const {
     passLogs, engines, superchargers, cylinderHeads, drivetrainComponents,
-    maintenanceItems, sfiCertifications, workOrders, partsInventory,
+    maintenanceItems, sfiCertifications, partsInventory,
     preRunChecklist, betweenRoundsChecklist, postRunChecklist,
     teamMembers, refreshData
   } = useApp();
-  const { selectedCarId, getCarLabel } = useCar();
+
+  // Single-car mode — no car selection needed
+  const selectedCarId: string | null = null;
+
   const { colors } = useThemeColor();
 
   const [connectedMembers, setConnectedMembers] = useState<ConnectedMember[]>([]);
@@ -271,7 +274,6 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
     const dueMaintenance = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Overdue');
     const expiredCerts = sfiCertifications.filter(c => c.daysUntilExpiration <= 0);
     const lowStockParts = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
-    const criticalWOs = workOrders.filter(w => w.priority === 'Critical' && w.status !== 'Completed');
 
     return {
       installedEngines,
@@ -281,10 +283,11 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
       dueMaintenance,
       expiredCerts,
       lowStockParts,
-      criticalWOs,
-      totalAlerts: dueMaintenance.length + expiredCerts.length + lowStockParts.length + criticalWOs.length
+      totalAlerts: dueMaintenance.length + expiredCerts.length + lowStockParts.length
     };
-  }, [engines, superchargers, cylinderHeads, drivetrainComponents, maintenanceItems, sfiCertifications, partsInventory, workOrders]);
+
+  }, [engines, superchargers, cylinderHeads, drivetrainComponents, maintenanceItems, sfiCertifications, partsInventory]);
+
 
   const displayedActivity = useMemo(() => {
     return showAllActivity ? activityFeed.slice(0, 30) : activityFeed.slice(0, 8);
@@ -315,7 +318,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
       case 'checklist_completed': return <CheckSquare className="w-4 h-4 text-emerald-400" />;
       case 'engine_swap': return <RotateCcw className="w-4 h-4 text-purple-400" />;
       case 'service_reset': return <RefreshCw className="w-4 h-4 text-cyan-400" />;
-      case 'work_order': return <ClipboardList className="w-4 h-4 text-yellow-400" />;
+
+
       case 'view': return <Eye className="w-4 h-4 text-slate-400" />;
       default: return <Activity className="w-4 h-4 text-slate-400" />;
     }
@@ -456,16 +460,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             <p className="text-[10px] text-slate-500 mt-1">items due</p>
           </button>
 
-          <button onClick={() => onNavigate('workorders')} className="bg-slate-800/60 rounded-xl border border-slate-700/50 p-4 hover:bg-slate-800 transition-colors text-left">
-            <div className="flex items-center gap-2 mb-2">
-              <ClipboardList className="w-4 h-4 text-yellow-400" />
-              <span className="text-xs text-slate-400">Work Orders</span>
-            </div>
-            <p className={`text-2xl font-bold ${componentStatus.criticalWOs.length > 0 ? 'text-yellow-400' : 'text-white'}`}>
-              {componentStatus.criticalWOs.length}
-            </p>
-            <p className="text-[10px] text-slate-500 mt-1">critical open</p>
-          </button>
+
+
 
           <button onClick={() => onNavigate('parts')} className="bg-slate-800/60 rounded-xl border border-slate-700/50 p-4 hover:bg-slate-800 transition-colors text-left">
             <div className="flex items-center gap-2 mb-2">
@@ -933,13 +929,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                   <Wrench className="w-4 h-4" />
                   Maintenance
                 </button>
-                <button
-                  onClick={() => onNavigate('workorders')}
-                  className="flex items-center gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 hover:bg-yellow-500/20 transition-colors text-xs font-medium"
-                >
-                  <ClipboardList className="w-4 h-4" />
-                  Work Orders
-                </button>
+
+
                 <button
                   onClick={() => onNavigate('engines')}
                   className="flex items-center gap-2 p-3 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400 hover:bg-orange-500/20 transition-colors text-xs font-medium"

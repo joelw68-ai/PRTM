@@ -52,6 +52,9 @@ export const PassLogRowSchema = z.object({
   three_thirty: nullableNumeric,
   eighth: nullableNumeric,
   mph: nullableNumeric,
+  quarter_mile_et: nullableNumeric,
+  quarter_mile_mph: nullableNumeric,
+  quarter_back_split: nullableNumeric,
   weather: nj,
   sae_correction: nullableNumeric,
   density_altitude: nullableNumeric,
@@ -67,8 +70,9 @@ export const PassLogRowSchema = z.object({
   notes: ns,
   crew_chief: ns,
   aborted: nb,
-  car_id: ns,
+
 }).passthrough();
+
 
 // ─── Engines ──────────────────────────────────────────────────
 
@@ -134,7 +138,7 @@ export const MaintenanceItemRowSchema = z.object({
   priority: ns,
   notes: ns,
   estimated_cost: nullableNumeric,
-  car_id: ns,
+
 }).passthrough();
 
 // ─── SFI Certifications ──────────────────────────────────────
@@ -150,29 +154,11 @@ export const SFICertificationRowSchema = z.object({
   status: ns,
   days_until_expiration: nullableNumeric,
   notes: ns,
-  car_id: ns,
+
 }).passthrough();
 
-// ─── Work Orders ──────────────────────────────────────────────
 
-export const WorkOrderRowSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  description: ns,
-  category: ns,
-  priority: ns,
-  status: ns,
-  created_date: ns,
-  due_date: ns,
-  completed_date: ns,
-  assigned_to: ns,
-  estimated_hours: nullableNumeric,
-  actual_hours: nullableNumeric,
-  parts: nj,
-  related_component: ns,
-  notes: ns,
-  car_id: ns,
-}).passthrough();
+
 
 // ─── Engine Swap Logs ─────────────────────────────────────────
 
@@ -440,12 +426,11 @@ export const DrivetrainSwapLogRowSchema = z.object({
 }).passthrough();
 
 // ─── Pass History ─────────────────────────────────────────────
+// Single-car mode: car_id and car_name columns removed (always empty/constant).
 
 export const PassHistoryRowSchema = z.object({
   id: z.string(),
   user_id: ns,
-  car_id: ns,
-  car_name: ns,
   pass_count: nullableNumeric,
   components_updated: nullableNumeric,
   flagged_count: nullableNumeric,
@@ -457,6 +442,7 @@ export const PassHistoryRowSchema = z.object({
   notes: ns,
   created_at: ns,
 }).passthrough();
+
 
 
 // ─── Vendor Invoices ──────────────────────────────────────────
@@ -484,9 +470,8 @@ export const VendorInvoiceRowSchema = z.object({
   paid_date: ns,
   receipt_url: ns,
   linked_event_id: ns,
-  linked_event_name: ns,
-  linked_work_order_id: ns,
-  linked_work_order_title: ns,
+
+
   car_id: ns,
   user_id: ns,
   created_at: ns,
@@ -535,7 +520,7 @@ export const InvoiceLineItemRowSchema = z.object({
 export const MiscExpenseRowSchema = z.object({
   id: z.string(),
   user_id: ns,
-  car_id: ns,
+
   category: z.string(),
   custom_description: ns,
   amount: numericField,
@@ -620,7 +605,6 @@ export const ChassisSetupRowSchema = z.object({
   notes: ns,
   is_favorite: nb,
   user_id: ns,
-  car_id: ns,
   created_at: ns,
   updated_at: ns,
 }).passthrough();
@@ -638,33 +622,6 @@ export const UserProfileRowSchema = z.object({
   updated_at: ns,
 }).passthrough();
 
-// ─── Race Cars ────────────────────────────────────────────────
-//
-// Actual DB columns (from CarContext insert): id, user_id, car_number,
-// nickname, class, year, make, model, color, is_active, notes,
-// created_at, updated_at.  We also accept name / class_type for
-// forward-compat if the schema ever adds them.
-
-export const RaceCarRowSchema = z.object({
-  id: z.string(),
-  user_id: ns,
-  car_number: ns,
-  nickname: ns,
-  name: ns,            // alias — some views may use "name" instead of "nickname"
-  class: ns,
-  class_type: ns,      // alias — kept for forward-compat
-  year: nullableNumeric,
-  make: ns,
-  model: ns,
-  color: ns,
-  vin: ns,
-  weight: nullableNumeric,
-  photo_url: ns,
-  is_active: nb,
-  notes: ns,
-  created_at: ns,
-  updated_at: ns,
-}).passthrough();
 
 // ─── Audit Logs ───────────────────────────────────────────────
 //
@@ -755,7 +712,8 @@ export const TeamMembershipRowSchema = z.object({
 
 export const TeamInviteRowSchema = z.object({
   id: z.string(),
-  team_owner_id: z.string(),
+  user_id: z.string(),
+
   email: z.string(),
   role: ns,
   permissions: nj,

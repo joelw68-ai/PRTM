@@ -32,7 +32,6 @@ export type AuditCategory =
   | 'maintenance'
   | 'sfi'
   | 'parts'
-  | 'workorder'
   | 'team'
   | 'settings'
   | 'calendar'
@@ -40,6 +39,7 @@ export type AuditCategory =
   | 'auth'
   | 'media'
   | 'todo';
+
 
 
 
@@ -54,7 +54,6 @@ export type AuditEntityType =
   | 'maintenance_item'
   | 'sfi_certification'
   | 'part'
-  | 'work_order'
   | 'team_member'
   | 'team_profile'
   | 'race_event'
@@ -64,6 +63,7 @@ export type AuditEntityType =
   | 'photo'
   | 'video'
   | 'todo_item';
+
 
 
 
@@ -631,13 +631,11 @@ export const categoryLabels: Record<AuditCategory, string> = {
   checklist: 'Checklists',
   passlog: 'Pass Logs',
   engine: 'Main Components',
-
   supercharger: 'Superchargers',
   cylinderhead: 'Cylinder Heads',
   maintenance: 'Maintenance',
   sfi: 'SFI Certs',
   parts: 'Parts Inventory',
-  workorder: 'Work Orders',
   team: 'Team',
   settings: 'Settings',
   calendar: 'Calendar',
@@ -646,6 +644,7 @@ export const categoryLabels: Record<AuditCategory, string> = {
   media: 'Media Gallery',
   todo: 'To Do List'
 };
+
 
 
 // Action type labels for display

@@ -124,10 +124,12 @@ const getStorageErrorMessage = (error: any): string => {
   const msg = error?.message || error?.error || String(error);
   
   if (msg.includes('Bucket not found') || msg.includes('bucket') || msg.includes('not found')) {
-    return 'Storage bucket "media" not found. Run the sql_storage_fix.sql migration in the Supabase SQL Editor to create it.';
+    return 'Storage bucket "media" not found. Run sql_master_create_all_tables.sql in the Supabase SQL Editor to create it.';
+
   }
   if (msg.includes('row-level security') || msg.includes('RLS') || msg.includes('policy')) {
-    return 'Storage upload blocked by security policy. Run the sql_storage_fix.sql migration to fix storage permissions.';
+    return 'Storage upload blocked by security policy. Run sql_master_create_all_tables.sql to fix storage permissions.';
+
   }
   if (msg.includes('Payload too large') || msg.includes('file size')) {
     return 'Image file is too large. Please choose a smaller image (max 50MB).';
@@ -762,15 +764,14 @@ const ImageEditor: React.FC<ImageEditorProps> = ({
           )}
         </div>
 
-        {/* Error Message */}
         {uploadError && (
           <div className="mx-4 mb-2 p-3 bg-red-500/20 border border-red-500/50 rounded-lg flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
               <p className="text-sm text-red-300">{uploadError}</p>
-              {uploadError.includes('sql_storage_fix') && (
+              {uploadError.includes('sql_master') && (
                 <p className="text-xs text-red-400/70 mt-1">
-                  Go to Supabase Dashboard &gt; SQL Editor &gt; paste and run sql_storage_fix.sql
+                  Go to Supabase Dashboard &gt; SQL Editor &gt; paste and run sql_master_create_all_tables.sql
                 </p>
               )}
             </div>
@@ -786,11 +787,12 @@ const ImageEditor: React.FC<ImageEditorProps> = ({
             <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
               <p className="text-sm text-yellow-300">
-                Image saved locally (cloud upload unavailable). Run sql_storage_fix.sql for cloud storage.
+                Image saved locally (cloud upload unavailable). Run sql_master_create_all_tables.sql for cloud storage.
               </p>
             </div>
           </div>
         )}
+
 
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 p-4 border-t border-slate-700 bg-slate-800/50">

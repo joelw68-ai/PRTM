@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { 
   HelpCircle, 
   Book, 
-  FileText, 
   ChevronDown, 
   ChevronUp,
   Search,
@@ -31,8 +30,7 @@ const HeroSection: React.FC = () => {
         },
         {
           title: 'Navigation',
-          text: 'Use the navigation bar at the top to switch between sections: Dashboard (overview), Pass Log (run data), Main Components (engine/drivetrain management), Maintenance (service schedules), Safety (SFI certifications), Work Orders (task management), Checklists (pre/post run), and Help (this section).'
-
+          text: 'Use the navigation bar at the top to switch between sections: Dashboard (overview), Pass Log (run data), Main Components (engine/drivetrain management), Maintenance (service schedules), Safety (SFI certifications), Checklists (pre/post run), and Help (this section).'
         },
         {
           title: 'First Steps',
@@ -66,7 +64,6 @@ const HeroSection: React.FC = () => {
     {
       id: 'engine-management',
       title: 'Main Components',
-
       icon: Settings,
       content: [
         {
@@ -103,10 +100,6 @@ const HeroSection: React.FC = () => {
         {
           title: 'Status Indicators',
           text: 'OVERDUE (red) - past service interval, DUE (orange) - at service interval, DUE SOON (yellow) - within 25% of interval, GOOD (green) - within normal range.'
-        },
-        {
-          title: 'Creating Work Orders',
-          text: 'Click the document icon next to any maintenance item to automatically create a work order with the component details pre-filled.'
         }
       ]
     },
@@ -130,29 +123,6 @@ const HeroSection: React.FC = () => {
         {
           title: 'Critical Alerts',
           text: 'Expired certifications appear as critical alerts on the Dashboard. These must be addressed before the car can compete.'
-        }
-      ]
-    },
-    {
-      id: 'work-orders',
-      title: 'Work Orders',
-      icon: FileText,
-      content: [
-        {
-          title: 'Creating Work Orders',
-          text: 'Click "New Work Order" to create a task. Assign a title, description, category, priority level, due date, and crew member.'
-        },
-        {
-          title: 'Priority Levels',
-          text: 'CRITICAL - Safety or race-critical items requiring immediate attention. HIGH - Important items to complete before next event. MEDIUM - Standard maintenance tasks. LOW - Items that can wait.'
-        },
-        {
-          title: 'Status Workflow',
-          text: 'Work orders progress through: Open → In Progress → Completed. Use "Pending Parts" status when waiting for parts to arrive.'
-        },
-        {
-          title: 'Parts Tracking',
-          text: 'Add parts to work orders with part numbers, quantities, and costs for inventory and expense tracking.'
         }
       ]
     },
@@ -331,7 +301,7 @@ const HeroSection: React.FC = () => {
               <div className="w-6 h-6 rounded-full bg-orange-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
                 <span className="text-orange-400 font-bold">4</span>
               </div>
-              <p className="text-slate-300">Create work orders immediately when issues are found - don't rely on memory between events.</p>
+              <p className="text-slate-300">Log issues in the To-Do list immediately when found at the track - don't rely on memory between events.</p>
             </div>
           </div>
         </div>

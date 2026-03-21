@@ -13,7 +13,10 @@ echo "Creating backup: ${BACKUP_NAME}"
 zip -r "${BACKUP_NAME}" \
   src/ \
   public/ \
-  sql_*.sql \
+  sql_master_create_all_tables.sql \
+  sql_migration_incremental.sql \
+  sql_diagnostic_check.sql \
+  sql_add_component_parts_columns.sql \
   supabase_schema.sql \
   index.html \
   package.json \
@@ -28,6 +31,7 @@ zip -r "${BACKUP_NAME}" \
   README.md \
   .gitignore \
   -x "node_modules/*" "dist/*" ".git/*" "*.log"
+
 
 echo ""
 echo "Backup complete: ${BACKUP_NAME}"

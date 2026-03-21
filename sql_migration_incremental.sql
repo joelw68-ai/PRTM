@@ -74,42 +74,57 @@ ALTER TABLE public.superchargers
   ADD COLUMN IF NOT EXISTS car_id TEXT;
 
 
+
 -- ============================================================
--- 4. pass_logs — add car_id
+-- 4. pass_logs — add quarter_mile_et, quarter_mile_mph, quarter_back_split
 -- ============================================================
 ALTER TABLE public.pass_logs
-  ADD COLUMN IF NOT EXISTS car_id TEXT;
+  ADD COLUMN IF NOT EXISTS quarter_mile_et NUMERIC;
+
+ALTER TABLE public.pass_logs
+  ADD COLUMN IF NOT EXISTS quarter_mile_mph NUMERIC;
+
+ALTER TABLE public.pass_logs
+  ADD COLUMN IF NOT EXISTS quarter_back_split NUMERIC;
+
+
 
 
 -- ============================================================
--- 5. maintenance_items — add car_id
+-- 8. checklists — add checklist_type, checked_by, checked_at
 -- ============================================================
-ALTER TABLE public.maintenance_items
-  ADD COLUMN IF NOT EXISTS car_id TEXT;
+-- checklist_type is referenced by RLS policies and indexes later
+-- in this script, so it MUST exist before those statements run.
+ALTER TABLE public.checklists
+  ADD COLUMN IF NOT EXISTS checklist_type TEXT NOT NULL DEFAULT 'pre_race';
 
-
--- ============================================================
--- 6. sfi_certifications — add car_id
--- ============================================================
-ALTER TABLE public.sfi_certifications
-  ADD COLUMN IF NOT EXISTS car_id TEXT;
-
-
--- ============================================================
--- 7. work_orders — add car_id
--- ============================================================
-ALTER TABLE public.work_orders
-  ADD COLUMN IF NOT EXISTS car_id TEXT;
-
-
--- ============================================================
--- 8. checklists — add checked_by, checked_at
--- ============================================================
 ALTER TABLE public.checklists
   ADD COLUMN IF NOT EXISTS checked_by TEXT;
 
 ALTER TABLE public.checklists
   ADD COLUMN IF NOT EXISTS checked_at TEXT;
+
+
+-- ============================================================
+-- 8b. team_memberships — add team_owner_id if table exists
+--     without it (pre-flight for policies + indexes below)
+-- ============================================================
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'team_memberships'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'team_memberships' AND column_name = 'team_owner_id'
+  ) THEN
+    ALTER TABLE public.team_memberships
+      ADD COLUMN team_owner_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+    RAISE NOTICE 'Added missing column team_memberships.team_owner_id';
+  END IF;
+END $$;
+
+
 
 
 -- ============================================================
@@ -135,11 +150,8 @@ ALTER TABLE public.race_events
   ADD COLUMN IF NOT EXISTS track_zip TEXT;
 
 
--- ============================================================
--- 11. chassis_setups — add car_id
--- ============================================================
-ALTER TABLE public.chassis_setups
-  ADD COLUMN IF NOT EXISTS car_id TEXT;
+
+
 
 
 -- ============================================================
@@ -179,11 +191,10 @@ ALTER TABLE public.vendor_invoices
 ALTER TABLE public.vendor_invoices
   ADD COLUMN IF NOT EXISTS linked_event_name TEXT;
 
-ALTER TABLE public.vendor_invoices
-  ADD COLUMN IF NOT EXISTS linked_work_order_id TEXT;
+-- (work_orders table has been dropped; linked_work_order columns are no longer needed)
 
-ALTER TABLE public.vendor_invoices
-  ADD COLUMN IF NOT EXISTS linked_work_order_title TEXT;
+
+
 
 ALTER TABLE public.vendor_invoices
   ADD COLUMN IF NOT EXISTS car_id TEXT;
@@ -225,6 +236,19 @@ ALTER TABLE public.beta_feedback
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 
+
+-- ============================================================
+-- 17. audit_logs — add "timestamp" column
+-- ============================================================
+-- The audit_logs table may have been created without the
+-- "timestamp" column.  The index idx_audit_logs_timestamp and
+-- the app's .order('timestamp', …) queries both require it.
+-- NOTE: "timestamp" is a reserved word so we double-quote it.
+ALTER TABLE public.audit_logs
+  ADD COLUMN IF NOT EXISTS "timestamp" TIMESTAMPTZ DEFAULT NOW();
+
+
+
 -- ############################################################
 -- PART 2: SET DEFAULT auth.uid() ON ALL user_id COLUMNS
 -- ############################################################
@@ -239,7 +263,8 @@ DO $$ BEGIN
   BEGIN ALTER TABLE public.pass_logs           ALTER COLUMN user_id SET DEFAULT auth.uid(); EXCEPTION WHEN others THEN NULL; END;
   BEGIN ALTER TABLE public.maintenance_items   ALTER COLUMN user_id SET DEFAULT auth.uid(); EXCEPTION WHEN others THEN NULL; END;
   BEGIN ALTER TABLE public.sfi_certifications  ALTER COLUMN user_id SET DEFAULT auth.uid(); EXCEPTION WHEN others THEN NULL; END;
-  BEGIN ALTER TABLE public.work_orders         ALTER COLUMN user_id SET DEFAULT auth.uid(); EXCEPTION WHEN others THEN NULL; END;
+  -- (deprecated table removed — this ALTER is harmless if table doesn't exist)
+
   BEGIN ALTER TABLE public.engine_swap_logs    ALTER COLUMN user_id SET DEFAULT auth.uid(); EXCEPTION WHEN others THEN NULL; END;
   BEGIN ALTER TABLE public.checklists          ALTER COLUMN user_id SET DEFAULT auth.uid(); EXCEPTION WHEN others THEN NULL; END;
   BEGIN ALTER TABLE public.parts_inventory     ALTER COLUMN user_id SET DEFAULT auth.uid(); EXCEPTION WHEN others THEN NULL; END;
@@ -393,7 +418,7 @@ END $$;
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.team_invites (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  team_owner_id   UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_id         UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   email           TEXT NOT NULL,
   role            TEXT DEFAULT 'Crew',
   permissions     JSONB DEFAULT '["view"]'::jsonb,
@@ -409,16 +434,17 @@ CREATE TABLE IF NOT EXISTS public.team_invites (
 ALTER TABLE public.team_invites ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Owners manage own team_invites' AND tablename = 'team_invites') THEN
-    CREATE POLICY "Owners manage own team_invites" ON public.team_invites FOR ALL USING (auth.uid() = team_owner_id) WITH CHECK (auth.uid() = team_owner_id);
+    CREATE POLICY "Owners manage own team_invites" ON public.team_invites FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
   END IF;
 END $$;
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can view invites sent to them' AND tablename = 'team_invites') THEN
     CREATE POLICY "Users can view invites sent to them" ON public.team_invites FOR SELECT
-      USING (auth.uid() = team_owner_id OR email = (SELECT email FROM auth.users WHERE id = auth.uid()));
+      USING (auth.uid() = user_id OR email = (SELECT email FROM auth.users WHERE id = auth.uid()));
   END IF;
 END $$;
+
 
 
 -- ============================================================
@@ -477,7 +503,8 @@ CREATE TABLE IF NOT EXISTS public.parts_usage_log (
   unit_cost        NUMERIC DEFAULT 0,
   total_cost       NUMERIC DEFAULT 0,
   usage_date       TEXT NOT NULL,
-  usage_type       TEXT DEFAULT 'work_order',
+  usage_type       TEXT DEFAULT 'maintenance',
+
   related_id       TEXT,
   related_title    TEXT,
   notes            TEXT,
@@ -501,7 +528,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS public.misc_expenses (
   id                  TEXT PRIMARY KEY,
   user_id             UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
-  car_id              TEXT,
+
   category            TEXT NOT NULL,
   custom_description  TEXT,
   amount              NUMERIC NOT NULL,
@@ -598,18 +625,15 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id    ON public.user_profiles(user_id);
 CREATE INDEX IF NOT EXISTS idx_pass_logs_user_id        ON public.pass_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_pass_logs_date           ON public.pass_logs(date DESC);
-CREATE INDEX IF NOT EXISTS idx_pass_logs_car_id         ON public.pass_logs(car_id);
 CREATE INDEX IF NOT EXISTS idx_engines_user_id          ON public.engines(user_id);
 CREATE INDEX IF NOT EXISTS idx_engines_car_id           ON public.engines(car_id);
 CREATE INDEX IF NOT EXISTS idx_superchargers_user_id    ON public.superchargers(user_id);
 CREATE INDEX IF NOT EXISTS idx_superchargers_car_id     ON public.superchargers(car_id);
 CREATE INDEX IF NOT EXISTS idx_cylinder_heads_user_id   ON public.cylinder_heads(user_id);
 CREATE INDEX IF NOT EXISTS idx_maintenance_user_id      ON public.maintenance_items(user_id);
-CREATE INDEX IF NOT EXISTS idx_maintenance_car_id       ON public.maintenance_items(car_id);
-CREATE INDEX IF NOT EXISTS idx_sfi_certs_user_id        ON public.sfi_certifications(user_id);
-CREATE INDEX IF NOT EXISTS idx_sfi_certs_car_id         ON public.sfi_certifications(car_id);
-CREATE INDEX IF NOT EXISTS idx_work_orders_user_id      ON public.work_orders(user_id);
-CREATE INDEX IF NOT EXISTS idx_work_orders_car_id       ON public.work_orders(car_id);
+-- idx_work_orders_user_id removed — work_orders table has been dropped
+
+
 CREATE INDEX IF NOT EXISTS idx_checklists_user_id       ON public.checklists(user_id);
 CREATE INDEX IF NOT EXISTS idx_checklists_type          ON public.checklists(checklist_type);
 CREATE INDEX IF NOT EXISTS idx_parts_inv_user_id        ON public.parts_inventory(user_id);
@@ -625,7 +649,7 @@ CREATE INDEX IF NOT EXISTS idx_saved_tracks_user_id     ON public.saved_tracks(u
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id       ON public.audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp     ON public.audit_logs(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_chassis_setups_user_id   ON public.chassis_setups(user_id);
-CREATE INDEX IF NOT EXISTS idx_chassis_setups_car_id    ON public.chassis_setups(car_id);
+
 CREATE INDEX IF NOT EXISTS idx_transmissions_user_id    ON public.transmissions(user_id);
 CREATE INDEX IF NOT EXISTS idx_setup_vendors_user_id    ON public.setup_vendors(user_id);
 CREATE INDEX IF NOT EXISTS idx_vendor_invoices_user_id  ON public.vendor_invoices(user_id);
@@ -650,7 +674,8 @@ CREATE INDEX IF NOT EXISTS idx_drivetrain_swap_user_id  ON public.drivetrain_swa
 CREATE INDEX IF NOT EXISTS idx_fuel_log_user_id         ON public.fuel_log_entries(user_id);
 CREATE INDEX IF NOT EXISTS idx_fuel_log_team_id         ON public.fuel_log_entries(team_id);
 CREATE INDEX IF NOT EXISTS idx_fuel_log_date            ON public.fuel_log_entries(date DESC);
-CREATE INDEX IF NOT EXISTS idx_team_invites_owner       ON public.team_invites(team_owner_id);
+CREATE INDEX IF NOT EXISTS idx_team_invites_owner       ON public.team_invites(user_id);
+
 CREATE INDEX IF NOT EXISTS idx_team_invites_token       ON public.team_invites(token);
 CREATE INDEX IF NOT EXISTS idx_team_invites_email       ON public.team_invites(email);
 CREATE INDEX IF NOT EXISTS idx_team_invites_status      ON public.team_invites(status);
@@ -664,7 +689,8 @@ CREATE INDEX IF NOT EXISTS idx_parts_usage_type         ON public.parts_usage_lo
 CREATE INDEX IF NOT EXISTS idx_parts_usage_related      ON public.parts_usage_log(related_id);
 CREATE INDEX IF NOT EXISTS idx_misc_expenses_user_id    ON public.misc_expenses(user_id);
 CREATE INDEX IF NOT EXISTS idx_misc_expenses_date       ON public.misc_expenses(expense_date DESC);
-CREATE INDEX IF NOT EXISTS idx_misc_expenses_car_id     ON public.misc_expenses(car_id);
+
+
 CREATE INDEX IF NOT EXISTS idx_borrowed_parts_user_id   ON public.borrowed_loaned_parts(user_id);
 CREATE INDEX IF NOT EXISTS idx_borrowed_parts_status    ON public.borrowed_loaned_parts(status);
 CREATE INDEX IF NOT EXISTS idx_chassis_presets_user_id  ON public.chassis_setup_user_presets(user_id);
@@ -771,29 +797,24 @@ CREATE POLICY "Users can delete own media files" ON storage.objects FOR DELETE T
 -- ############################################################
 -- DONE!
 -- ############################################################
--- 
 -- SUMMARY OF CHANGES:
 --
--- PART 1 — Added 38 missing columns to 16 existing tables:
+-- PART 1 — Added missing columns to existing tables:
 --   1.  user_profiles:       + user_id
 --   2.  engines:             + displacement, car_id
 --   3.  superchargers:       + car_id
---   4.  pass_logs:           + car_id
---   5.  maintenance_items:   + car_id
---   6.  sfi_certifications:  + car_id
---   7.  work_orders:         + car_id
+--   4.  pass_logs:           + quarter_mile_et, quarter_mile_mph, quarter_back_split
 --   8.  checklists:          + checked_by, checked_at
 --   9.  parts_inventory:     + name, related_drivetrain_component_id, car_id
 --  10.  race_events:         + track_address, track_zip
---  11.  chassis_setups:      + car_id
---  12.  setup_vendors:       + discount_percent, lead_time_days, minimum_order,
---                              shipping_method, is_active, created_date
---  13.  vendor_invoices:     + paid_date, receipt_url, linked_event_id,
---                              linked_event_name, linked_work_order_id,
---                              linked_work_order_title, car_id
+--                              linked_event_name, car_id
 --  14.  invoice_line_items:  + auto_created_inventory_id
 --  15.  todo_items:          + is_archived, archived_at, archived_by
---  16.  beta_feedback:       + title, priority, updated_at
+--
+-- NOTE: car_id was removed from pass_logs, maintenance_items,
+--   sfi_certifications, misc_expenses, and chassis_setups
+--   in a previous migration (2026-03-19). This migration no
+--   longer adds car_id to those tables.
 --
 
 -- PART 2 — Set DEFAULT auth.uid() on 21 tables' user_id columns
@@ -805,7 +826,7 @@ CREATE POLICY "Users can delete own media files" ON storage.objects FOR DELETE T
 --  32. fuel_log_entries        37. borrowed_loaned_parts
 --  33. team_invites            38. chassis_setup_user_presets
 --
--- PART 4 — Created 70+ performance indexes
+-- PART 4 — Created 60+ performance indexes
 --
 -- PART 5 — Created/updated:
 --   • increment_track_visit RPC function

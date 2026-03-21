@@ -14,14 +14,15 @@ import {
   AlertCircle,
   Loader2,
   ArrowDown,
-  Wrench,
-  FileText
+  Wrench
+
 } from 'lucide-react';
 
 interface PartsUsageModalProps {
   isOpen: boolean;
   onClose: () => void;
-  usageType: 'work_order' | 'maintenance';
+  usageType: 'maintenance';
+
   relatedId?: string;
   relatedTitle?: string;
   onComplete?: () => void;
@@ -171,10 +172,11 @@ const PartsUsageModal: React.FC<PartsUsageModalProps> = ({
               </h3>
               {relatedTitle && (
                 <p className="text-slate-400 text-sm mt-1 flex items-center gap-1">
-                  {usageType === 'work_order' ? <FileText className="w-3.5 h-3.5" /> : <Wrench className="w-3.5 h-3.5" />}
-                  {usageType === 'work_order' ? 'Work Order' : 'Maintenance'}: {relatedTitle}
+                  <Wrench className="w-3.5 h-3.5" />
+                  Maintenance: {relatedTitle}
                 </p>
               )}
+
             </div>
             <button onClick={onClose} className="text-slate-400 hover:text-white">
               <X className="w-6 h-6" />

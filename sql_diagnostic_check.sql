@@ -118,7 +118,8 @@ BEGIN
 
   -- 5. pass_logs
   _table_name := 'pass_logs';
-  _cols := ARRAY['id','user_id','date','time','track','location','session_type','round','lane','result','reaction_time','sixty_foot','three_thirty','eighth','mph','weather','sae_correction','density_altitude','corrected_hp','engine_id','supercharger_id','tire_pressure_front','tire_pressure_rear_left','tire_pressure_rear_right','wheelie_bar_setting','launch_rpm','boost_setting','notes','crew_chief','aborted','created_at','updated_at'];
+  _cols := ARRAY['id','user_id','date','time','track','location','session_type','round','lane','result','reaction_time','sixty_foot','three_thirty','eighth','mph','quarter_mile_et','quarter_mile_mph','quarter_back_split','weather','sae_correction','density_altitude','corrected_hp','engine_id','supercharger_id','tire_pressure_front','tire_pressure_rear_left','tire_pressure_rear_right','wheelie_bar_setting','launch_rpm','boost_setting','notes','crew_chief','aborted','created_at','updated_at'];
+
   _total_tables := _total_tables + 1;
   SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=_table_name) INTO _exists;
   IF NOT _exists THEN RAISE NOTICE '[FAIL] % — TABLE DOES NOT EXIST', _table_name; _fail_count := _fail_count + 1;
@@ -164,21 +165,9 @@ BEGIN
     END IF;
   END IF;
 
-  -- 8. work_orders
-  _table_name := 'work_orders';
-  _cols := ARRAY['id','user_id','title','description','category','priority','status','created_date','due_date','completed_date','assigned_to','estimated_hours','actual_hours','parts','related_component','notes','created_at','updated_at'];
-  _total_tables := _total_tables + 1;
-  SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=_table_name) INTO _exists;
-  IF NOT _exists THEN RAISE NOTICE '[FAIL] % — TABLE DOES NOT EXIST', _table_name; _fail_count := _fail_count + 1;
-  ELSE
-    SELECT ARRAY_AGG(column_name::TEXT) INTO _actual_cols FROM information_schema.columns WHERE table_schema='public' AND table_name=_table_name;
-    _missing_cols := ARRAY(SELECT unnest(_cols) EXCEPT SELECT unnest(_actual_cols));
-    SELECT relrowsecurity INTO _rls_enabled FROM pg_class WHERE relname=_table_name AND relnamespace='public'::regnamespace;
-    IF array_length(_missing_cols, 1) > 0 THEN RAISE NOTICE '[FAIL] % — Missing: %', _table_name, array_to_string(_missing_cols, ', '); _fail_count := _fail_count + 1;
-    ELSIF NOT _rls_enabled THEN RAISE NOTICE '[WARN] % — RLS DISABLED', _table_name; _warn_count := _warn_count + 1;
-    ELSE RAISE NOTICE '[PASS] % — All % cols, RLS on', _table_name, array_length(_cols, 1); _pass_count := _pass_count + 1;
-    END IF;
-  END IF;
+  -- 8. (DEPRECATED — table has been dropped, skipping check)
+
+
 
   -- 9. engine_swap_logs
   _table_name := 'engine_swap_logs';
@@ -470,7 +459,8 @@ BEGIN
 
   -- 27. team_invites (NEW)
   _table_name := 'team_invites';
-  _cols := ARRAY['id','team_owner_id','email','role','permissions','token','status','invited_by_name','team_name','created_at','expires_at','accepted_at'];
+  _cols := ARRAY['id','user_id','email','role','permissions','token','status','invited_by_name','team_name','created_at','expires_at','accepted_at'];
+
   _total_tables := _total_tables + 1;
   SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=_table_name) INTO _exists;
   IF NOT _exists THEN RAISE NOTICE '[FAIL] % — TABLE DOES NOT EXIST', _table_name; _fail_count := _fail_count + 1;
@@ -515,6 +505,23 @@ BEGIN
     ELSE RAISE NOTICE '[PASS] % — All % cols, RLS on', _table_name, array_length(_cols, 1); _pass_count := _pass_count + 1;
     END IF;
   END IF;
+
+  -- 30. misc_expenses
+  _table_name := 'misc_expenses';
+  _cols := ARRAY['id','user_id','category','custom_description','amount','expense_date','paid_by','payment_method','receipt_url','receipt_file_name','receipt_file_type','receipt_file_size','notes','race_event_id','linked_event_name','add_to_cost_report','created_at','updated_at'];
+  _total_tables := _total_tables + 1;
+  SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=_table_name) INTO _exists;
+  IF NOT _exists THEN RAISE NOTICE '[FAIL] % — TABLE DOES NOT EXIST', _table_name; _fail_count := _fail_count + 1;
+  ELSE
+    SELECT ARRAY_AGG(column_name::TEXT) INTO _actual_cols FROM information_schema.columns WHERE table_schema='public' AND table_name=_table_name;
+    _missing_cols := ARRAY(SELECT unnest(_cols) EXCEPT SELECT unnest(_actual_cols));
+    SELECT relrowsecurity INTO _rls_enabled FROM pg_class WHERE relname=_table_name AND relnamespace='public'::regnamespace;
+    IF array_length(_missing_cols, 1) > 0 THEN RAISE NOTICE '[FAIL] % — Missing: %', _table_name, array_to_string(_missing_cols, ', '); _fail_count := _fail_count + 1;
+    ELSIF NOT _rls_enabled THEN RAISE NOTICE '[WARN] % — RLS DISABLED', _table_name; _warn_count := _warn_count + 1;
+    ELSE RAISE NOTICE '[PASS] % — All % cols, RLS on', _table_name, array_length(_cols, 1); _pass_count := _pass_count + 1;
+    END IF;
+  END IF;
+
 
   -- ============================================================
   -- SUMMARY

@@ -68,12 +68,6 @@ export type Permission =
   | 'parts.edit'
   | 'parts.delete'
   
-  // Work order permissions
-  | 'workorder.view'
-  | 'workorder.add'
-  | 'workorder.edit'
-  | 'workorder.delete'
-  
   // Team management permissions
   | 'team.view'
   | 'team.add'
@@ -119,7 +113,6 @@ export const rolePermissions: Record<CrewRole, Permission[]> = {
     'maintenance.view', 'maintenance.add', 'maintenance.edit', 'maintenance.delete',
     'sfi.view', 'sfi.add', 'sfi.edit', 'sfi.delete',
     'parts.view', 'parts.add', 'parts.edit', 'parts.delete',
-    'workorder.view', 'workorder.add', 'workorder.edit', 'workorder.delete',
     'team.view', 'team.add', 'team.edit', 'team.delete', 'team.manage_roles',
     'settings.view', 'settings.edit', 'settings.admin',
     'calendar.view', 'calendar.add', 'calendar.edit', 'calendar.delete',
@@ -138,7 +131,6 @@ export const rolePermissions: Record<CrewRole, Permission[]> = {
     'maintenance.view', 'maintenance.add', 'maintenance.edit', 'maintenance.delete',
     'sfi.view', 'sfi.add', 'sfi.edit', 'sfi.delete',
     'parts.view', 'parts.add', 'parts.edit', 'parts.delete',
-    'workorder.view', 'workorder.add', 'workorder.edit', 'workorder.delete',
     'team.view', 'team.add', 'team.edit', 'team.delete', 'team.manage_roles',
     'settings.view', 'settings.edit',
     'calendar.view', 'calendar.add', 'calendar.edit', 'calendar.delete',
@@ -156,7 +148,6 @@ export const rolePermissions: Record<CrewRole, Permission[]> = {
     'maintenance.view', 'maintenance.add', 'maintenance.edit', 'maintenance.delete',
     'sfi.view', 'sfi.add', 'sfi.edit',
     'parts.view', 'parts.add', 'parts.edit',
-    'workorder.view', 'workorder.add', 'workorder.edit',
     'team.view', 'team.add', 'team.edit',
     'settings.view', 'settings.edit',
     'calendar.view', 'calendar.add', 'calendar.edit',
@@ -174,7 +165,6 @@ export const rolePermissions: Record<CrewRole, Permission[]> = {
     'maintenance.view',
     'sfi.view',
     'parts.view',
-    'workorder.view', 'workorder.add',
     'team.view',
     'settings.view',
     'calendar.view', 'calendar.add',
@@ -192,7 +182,6 @@ export const rolePermissions: Record<CrewRole, Permission[]> = {
     'maintenance.view', 'maintenance.edit',
     'sfi.view',
     'parts.view', 'parts.edit',
-    'workorder.view', 'workorder.add',
     'team.view',
     'settings.view',
     'calendar.view',
@@ -210,7 +199,6 @@ export const rolePermissions: Record<CrewRole, Permission[]> = {
     'maintenance.view', 'maintenance.add', 'maintenance.edit',
     'sfi.view', 'sfi.edit',
     'parts.view', 'parts.add', 'parts.edit',
-    'workorder.view', 'workorder.add', 'workorder.edit',
     'team.view',
     'settings.view',
     'calendar.view',
@@ -222,7 +210,7 @@ export const rolePermissions: Record<CrewRole, Permission[]> = {
     'checklist.view', 'checklist.check',
     'passlog.view', 'passlog.add',
     'engine.view', 'supercharger.view', 'cylinderhead.view',
-    'maintenance.view', 'sfi.view', 'parts.view', 'workorder.view',
+    'maintenance.view', 'sfi.view', 'parts.view',
     'team.view', 'settings.view', 'calendar.view', 'analytics.view',
     'todo.view', 'todo.add', 'todo.edit', 'todo.complete'
   ],
@@ -230,19 +218,20 @@ export const rolePermissions: Record<CrewRole, Permission[]> = {
   Viewer: [
     'checklist.view', 'passlog.view', 'engine.view', 'supercharger.view',
     'cylinderhead.view', 'maintenance.view', 'sfi.view', 'parts.view',
-    'workorder.view', 'team.view', 'calendar.view', 'analytics.view', 'todo.view'
+    'team.view', 'calendar.view', 'analytics.view', 'todo.view'
   ],
 
   Sponsor: [
     'checklist.view', 'passlog.view', 'engine.view', 'supercharger.view',
     'cylinderhead.view', 'maintenance.view', 'sfi.view', 'parts.view',
-    'workorder.view', 'team.view', 'calendar.view', 'analytics.view', 'todo.view'
+    'team.view', 'calendar.view', 'analytics.view', 'todo.view'
   ],
 
   Guest: [
     'checklist.view', 'passlog.view', 'calendar.view', 'todo.view'
   ]
 };
+
 
 
 
@@ -348,7 +337,7 @@ export function getRoleDescription(role: CrewRole): string {
     case 'Crew Chief': return 'Can edit most data, manage maintenance, and reset checklists. Cannot delete critical items.';
     case 'Driver': return 'Can view all data, add pass logs, and check items on checklists.';
     case 'Tuner': return 'Focus on engine and setup data. Can edit performance-related items.';
-    case 'Mechanic': return 'Focus on maintenance and parts. Can manage work orders and inventory.';
+    case 'Mechanic': return 'Focus on maintenance and parts. Can manage inventory and service items.';
     case 'Crew': return 'Can view all data and check items on checklists. Cannot edit settings.';
     case 'Sponsor': return 'View-only access to team data and analytics.';
     case 'Guest': return 'Limited view-only access to basic information.';
@@ -434,15 +423,7 @@ export const permissionCategories = {
       { id: 'parts.delete', label: 'Delete parts' }
     ]
   },
-  workOrders: {
-    label: 'Work Orders',
-    permissions: [
-      { id: 'workorder.view', label: 'View work orders' },
-      { id: 'workorder.add', label: 'Create work orders' },
-      { id: 'workorder.edit', label: 'Edit work orders' },
-      { id: 'workorder.delete', label: 'Delete work orders' }
-    ]
-  },
+
   team: {
     label: 'Team Management',
     permissions: [

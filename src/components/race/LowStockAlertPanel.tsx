@@ -35,15 +35,15 @@ const LowStockAlertPanel: React.FC<LowStockAlertPanelProps> = ({ onNavigate, onO
 
 
 
+
   // ============ REAL-TIME REACTIVE COMPUTATIONS ============
   // These are computed directly from partsInventory (no useMemo) to ensure
   // they ALWAYS reflect the latest state from the shared AppContext.
-  // When any component calls updatePartInventory(), the context state updates,
-  // this component re-renders, and these values recalculate immediately.
 
-  // Filter low stock parts - recomputed on every render to ensure real-time accuracy
+  // Filter low stock parts - includes threshold-based alerts
   const lowStockParts = partsInventory.filter(p =>
-    (p.onHand <= p.minQuantity || p.status === 'Low Stock' || p.status === 'Out of Stock') &&
+    (p.onHand <= p.minQuantity || p.status === 'Low Stock' || p.status === 'Out of Stock' ||
+     (p.threshold != null && p.threshold > 0 && p.onHand <= p.threshold)) &&
     !dismissed.has(p.id)
   );
 
@@ -51,12 +51,20 @@ const LowStockAlertPanel: React.FC<LowStockAlertPanelProps> = ({ onNavigate, onO
 
   const warningParts = lowStockParts.filter(p => p.onHand > 0 && p.onHand <= p.minQuantity && p.reorderStatus !== 'Critical');
 
+  // Threshold Alert parts: onHand <= threshold, but NOT already captured by Low Stock or Out of Stock
+  const thresholdAlertParts = partsInventory.filter(p =>
+    p.threshold != null && p.threshold > 0 && p.onHand <= p.threshold &&
+    p.onHand > 0 && p.onHand > p.minQuantity && // not already low stock or out of stock
+    !dismissed.has(p.id)
+  );
+
   const onOrderParts = partsInventory.filter(p => p.reorderStatus === 'On Order');
 
   const estimatedReorderCost = lowStockParts.reduce((sum, p) => {
     const qtyNeeded = Math.max(p.maxQuantity - p.onHand, p.minQuantity);
     return sum + (qtyNeeded * p.unitCost);
   }, 0);
+
 
   // Group low stock parts by vendor for quick summary
   const vendorGroups = (() => {
@@ -372,6 +380,56 @@ const LowStockAlertPanel: React.FC<LowStockAlertPanelProps> = ({ onNavigate, onO
                     className="mt-2 text-sm text-orange-400 hover:text-orange-300 flex items-center gap-1"
                   >
                     View all {warningParts.length} low stock items
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Threshold Alert Items (amber) — distinct from Low Stock */}
+            {thresholdAlertParts.length > 0 && (
+              <div className="mt-4">
+                <h4 className="text-sm font-medium text-slate-400 mb-3 flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-amber-400" />
+                  Threshold Alerts
+                  <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded text-xs font-bold">
+                    {thresholdAlertParts.length}
+                  </span>
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {thresholdAlertParts.slice(0, 8).map(part => (
+                    <div key={part.id} className="flex items-center justify-between p-2.5 bg-amber-500/5 rounded-lg border border-amber-500/15 transition-all duration-300">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-sm text-white truncate">{part.partNumber}</p>
+                          <p className="text-xs text-slate-400 truncate">{part.description}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                        <span className="text-amber-400 font-mono text-sm font-bold">
+                          {part.onHand}/{part.threshold}
+                        </span>
+                        <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded text-[10px] font-bold">
+                          THRESHOLD
+                        </span>
+                        <button
+                          onClick={() => setDismissed(prev => new Set([...prev, part.id]))}
+                          className="p-1 text-slate-500 hover:text-slate-300 transition-colors"
+                          title="Dismiss"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {thresholdAlertParts.length > 8 && (
+                  <button
+                    onClick={() => onNavigate('parts')}
+                    className="mt-2 text-sm text-amber-400 hover:text-amber-300 flex items-center gap-1"
+                  >
+                    View all {thresholdAlertParts.length} threshold alerts
                     <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 )}

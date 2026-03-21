@@ -25,8 +25,12 @@ import {
   Table2,
   BookOpen,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  ServerCrash,
+  ShieldCheck,
+  Layers
 } from 'lucide-react';
+
 
 
 // ============ ERROR BOUNDARY ============
@@ -245,7 +249,7 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
   const maintenanceItems = safeArray(appContext?.maintenanceItems);
   const sfiCertifications = safeArray(appContext?.sfiCertifications);
   const passLogs = safeArray(appContext?.passLogs);
-  const workOrders = safeArray(appContext?.workOrders);
+
   const preRunChecklist = safeArray(appContext?.preRunChecklist);
   const betweenRoundsChecklist = safeArray(appContext?.betweenRoundsChecklist);
   const postRunChecklist = safeArray(appContext?.postRunChecklist);
@@ -263,7 +267,7 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
   const addMaintenanceItem = appContext?.addMaintenanceItem || (async () => {});
   const addSFICertification = appContext?.addSFICertification || (async () => {});
   const addPassLog = appContext?.addPassLog || (async () => {});
-  const addWorkOrder = appContext?.addWorkOrder || (async () => {});
+
   const addChecklistItem = appContext?.addChecklistItem || (async () => {});
   const addPartInventory = appContext?.addPartInventory || (async () => {});
   const addRaceEvent = appContext?.addRaceEvent || (async () => {});
@@ -288,6 +292,82 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
   const [showInstructions, setShowInstructions] = useState(false);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, table: '' });
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ============ FULL DATABASE BACKUP (Edge Function) ============
+  const [isFullBackupRunning, setIsFullBackupRunning] = useState(false);
+  const [fullBackupStatus, setFullBackupStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [fullBackupMessage, setFullBackupMessage] = useState('');
+  const [fullBackupResult, setFullBackupResult] = useState<{ tableCounts: Record<string, number>; totalRecords: number; errors?: string[] } | null>(null);
+  const [showFullBackupDetails, setShowFullBackupDetails] = useState(false);
+  const [lastFullBackupTime, setLastFullBackupTime] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('promod_last_full_backup_time');
+    } catch {
+      return null;
+    }
+  });
+
+  const handleFullDatabaseBackup = async () => {
+    setIsFullBackupRunning(true);
+    setFullBackupStatus('idle');
+    setFullBackupMessage('');
+    setFullBackupResult(null);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('backup-all-tables', {
+        body: {}
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Edge function returned an error');
+      }
+
+      if (data?.error) {
+        throw new Error(data.error);
+      }
+
+      // Download the backup as a JSON file
+      const jsonStr = JSON.stringify(data, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const dateStr = getLocalDateString();
+      a.download = `pro-mod-full-db-backup-${dateStr}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      // Store result metadata
+      const meta = data?._meta || {};
+      const tableCounts = meta.tableCounts || {};
+      const totalRecords = meta.totalRecords || 0;
+      const backupErrors = meta.errors || [];
+
+      setFullBackupResult({ tableCounts, totalRecords, errors: backupErrors.length > 0 ? backupErrors : undefined });
+
+      const now = new Date().toISOString();
+      try { localStorage.setItem('promod_last_full_backup_time', now); } catch {}
+      try { localStorage.setItem('promod_last_backup_time', now); } catch {}
+      setLastFullBackupTime(now);
+      setLastBackupTime(now);
+
+      setFullBackupStatus('success');
+      const tablesWithData = Object.values(tableCounts).filter((c: any) => c > 0).length;
+      setFullBackupMessage(
+        `Full database backup complete: ${totalRecords.toLocaleString()} records across ${tablesWithData} tables (39 tables queried).` +
+        (backupErrors.length > 0 ? ` ${backupErrors.length} table(s) had warnings.` : '')
+      );
+    } catch (error) {
+      console.error('Full database backup error:', error);
+      setFullBackupStatus('error');
+      setFullBackupMessage(`Full backup failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsFullBackupRunning(false);
+    }
+  };
+
 
   // Gather all data for export
   const gatherAllData = useCallback(async () => {
@@ -319,7 +399,7 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
       cylinderHeads: safeArray(cylinderHeads),
       maintenanceItems: safeArray(maintenanceItems),
       sfiCertifications: safeArray(sfiCertifications),
-      workOrders: safeArray(workOrders),
+
       checklists: {
         preRun: safeArray(preRunChecklist),
         betweenRounds: safeArray(betweenRoundsChecklist),
@@ -335,7 +415,8 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
     };
   }, [
     passLogs, engines, superchargers, cylinderHeads, maintenanceItems,
-    sfiCertifications, workOrders, preRunChecklist, betweenRoundsChecklist,
+    sfiCertifications, preRunChecklist, betweenRoundsChecklist,
+
     postRunChecklist, partsInventory, raceEvents, teamMembers, savedTracks,
     drivetrainComponents, drivetrainSwapLogs, user
   ]);
@@ -346,10 +427,11 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
     let total = 0;
     const countable = [
       'passLogs', 'engines', 'superchargers', 'cylinderHeads',
-      'maintenanceItems', 'sfiCertifications', 'workOrders',
+      'maintenanceItems', 'sfiCertifications',
       'partsInventory', 'raceEvents', 'teamMembers', 'chassisSetups', 'savedTracks',
       'drivetrainComponents', 'drivetrainSwapLogs'
     ];
+
 
     for (const key of countable) {
       if (Array.isArray(data?.[key])) total += data[key].length;
@@ -423,7 +505,7 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
       addCSV('cylinder_heads', safeArray(data.cylinderHeads));
       addCSV('maintenance_items', safeArray(data.maintenanceItems));
       addCSV('sfi_certifications', safeArray(data.sfiCertifications));
-      addCSV('work_orders', safeArray(data.workOrders));
+
       addCSV('parts_inventory', safeArray(data.partsInventory));
       addCSV('race_events', safeArray(data.raceEvents));
       addCSV('team_members', safeArray(data.teamMembers));
@@ -544,7 +626,7 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
         { key: 'maintenanceItems', items: safeArray(data.maintenanceItems), addFn: addMaintenanceItem, label: 'Maintenance Items', existingIds: new Set(maintenanceItems.map((m: any) => m.id)) },
         { key: 'sfiCertifications', items: safeArray(data.sfiCertifications), addFn: addSFICertification, label: 'SFI Certifications', existingIds: new Set(sfiCertifications.map((c: any) => c.id)) },
         { key: 'passLogs', items: safeArray(data.passLogs), addFn: addPassLog, label: 'Pass Logs', existingIds: new Set(passLogs.map((p: any) => p.id)) },
-        { key: 'workOrders', items: safeArray(data.workOrders), addFn: addWorkOrder, label: 'Work Orders', existingIds: new Set(workOrders.map((w: any) => w.id)) },
+
         { key: 'partsInventory', items: safeArray(data.partsInventory), addFn: addPartInventory, label: 'Parts Inventory', existingIds: new Set(partsInventory.map((p: any) => p.id)) },
         { key: 'raceEvents', items: safeArray(data.raceEvents), addFn: addRaceEvent, label: 'Race Events', existingIds: new Set(raceEvents.map((e: any) => e.id)) },
         { key: 'teamMembers', items: safeArray(data.teamMembers), addFn: addTeamMember, label: 'Team Members', existingIds: new Set(teamMembers.map((m: any) => m.id)) },
@@ -718,7 +800,7 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
     { label: 'Drivetrain Components', count: drivetrainComponents.length, icon: Database },
     { label: 'Maintenance Items', count: maintenanceItems.length, icon: Database },
     { label: 'SFI Certifications', count: sfiCertifications.length, icon: Shield },
-    { label: 'Work Orders', count: workOrders.length, icon: FileText },
+
     { label: 'Checklist Items', count: preRunChecklist.length + betweenRoundsChecklist.length + postRunChecklist.length, icon: Database },
     { label: 'Parts Inventory', count: partsInventory.length, icon: Database },
     { label: 'Race Events', count: raceEvents.length, icon: Database },
@@ -837,11 +919,12 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
                   </h4>
                   <ul className="text-sm text-yellow-300/80 space-y-1 ml-4 list-disc">
                     <li>Only <strong>JSON</strong> files can be used for restore. CSV exports are for viewing/analysis only.</li>
+                    <li>Backup files include: pass logs, engines, superchargers, cylinder heads, drivetrain components (transmissions, torque converters, 3rd members, ring and pinions), maintenance items, SFI certs, checklists, parts inventory, race events, team members, chassis setups, and saved tracks.</li>
                     <li>Importing does NOT delete or overwrite existing data — it only adds missing records.</li>
                     <li>If you need to fully reset and restore, contact support to clear your database first.</li>
-                    <li>Backup files include: pass logs, engines, superchargers, cylinder heads, drivetrain components (transmissions, torque converters, 3rd members, ring and pinions), maintenance items, SFI certs, work orders, checklists, parts inventory, race events, team members, chassis setups, and saved tracks.</li>
                   </ul>
                 </div>
+
 
                 {/* General App Usage Tips */}
                 <div>
@@ -886,7 +969,187 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
           </div>
         </div>
 
+        {/* ============ FULL DATABASE BACKUP (Server-Side) ============ */}
+        <div className="bg-gradient-to-r from-purple-500/10 via-indigo-500/10 to-cyan-500/10 rounded-xl border-2 border-purple-500/40 p-6 relative overflow-hidden">
+          {/* Decorative background pattern */}
+          <div className="absolute inset-0 opacity-5">
+            <div className="absolute top-2 right-2 w-32 h-32 bg-purple-500 rounded-full blur-3xl" />
+            <div className="absolute bottom-2 left-2 w-24 h-24 bg-cyan-500 rounded-full blur-3xl" />
+          </div>
+
+          <div className="relative">
+            <div className="flex items-start gap-4 mb-4">
+              <div className="w-14 h-14 bg-gradient-to-br from-purple-500 via-indigo-500 to-cyan-500 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-purple-500/20">
+                <Layers className="w-7 h-7 text-white" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-1">
+                  <h3 className="text-xl font-bold text-white">Full Database Backup</h3>
+                  <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 text-xs font-semibold rounded-full border border-purple-500/30">
+                    ALL 39 TABLES
+                  </span>
+                </div>
+                <p className="text-slate-400 text-sm">
+                  Server-side backup that queries <strong className="text-white">every table</strong> in the database directly via edge function.
+                  Use this <strong className="text-white">before making schema changes</strong> as a complete safety net.
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <ShieldCheck className="w-3.5 h-3.5 text-green-400" />
+                    <span>RLS-protected (your data only)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <Database className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Includes tables not in AppContext</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <Clock className="w-3.5 h-3.5 text-orange-400" />
+                    {lastFullBackupTime ? (
+                      <span>Last: <span className="text-green-400 font-medium">{formatBackupTime(lastFullBackupTime).relative}</span></span>
+                    ) : (
+                      <span className="text-yellow-400">Never run</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Tables covered info */}
+            <div className="bg-slate-900/40 rounded-lg p-3 mb-4 border border-slate-700/50">
+              <p className="text-xs text-slate-400 mb-2 font-medium">Tables backed up (39 total):</p>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  'user_profiles', 'engines', 'superchargers', 'cylinder_heads', 'pass_logs',
+                  'maintenance_items', 'sfi_certifications', 'engine_swap_logs', 'checklists',
+                  'parts_inventory', 'track_weather_history', 'race_events', 'team_notes',
+                  'team_members', 'media_gallery', 'saved_tracks', 'audit_logs', 'beta_feedback',
+                  'chassis_setups', 'transmissions', 'setup_vendors', 'vendor_invoices',
+                  'invoice_line_items', 'cost_reports', 'todo_items', 'user_settings',
+                  'labor_entries', 'race_cars', 'drivetrain_components', 'drivetrain_swap_logs',
+                  'fuel_log_entries', 'chassis_setup_user_presets', 'team_invites',
+                  'team_memberships', 'parts_usage_log', 'misc_expenses', 'borrowed_loaned_parts',
+                  'component_parts', 'component_extra_fields'
+                ].map(table => (
+                  <span key={table} className="px-1.5 py-0.5 bg-slate-800/80 text-slate-400 text-[10px] rounded font-mono border border-slate-700/50">
+                    {table}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Backup Button */}
+            <button
+              onClick={handleFullDatabaseBackup}
+              disabled={isFullBackupRunning || isDemoMode || !user}
+              className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:from-purple-500 hover:via-indigo-500 hover:to-cyan-500 disabled:from-slate-600 disabled:via-slate-600 disabled:to-slate-600 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-all shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 text-lg"
+            >
+              {isFullBackupRunning ? (
+                <>
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                  <span>Backing up all 39 tables...</span>
+                </>
+              ) : (
+                <>
+                  <Layers className="w-6 h-6" />
+                  <span>Run Full Database Backup</span>
+                </>
+              )}
+            </button>
+
+            {!user && !isDemoMode && (
+              <p className="text-xs text-yellow-400 mt-2 flex items-center gap-1 justify-center">
+                <AlertTriangle className="w-3 h-3" />
+                Sign in to run a full database backup.
+              </p>
+            )}
+            {isDemoMode && (
+              <p className="text-xs text-yellow-400 mt-2 flex items-center gap-1 justify-center">
+                <AlertTriangle className="w-3 h-3" />
+                Full database backup is disabled in demo mode.
+              </p>
+            )}
+
+            {/* Full Backup Status Messages */}
+            {fullBackupStatus === 'success' && (
+              <div className="mt-4 bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-green-400 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-green-300 font-medium">Full Database Backup Successful</p>
+                    <p className="text-green-300/80 text-sm mt-1">{fullBackupMessage}</p>
+
+                    {/* Expandable table counts */}
+                    {fullBackupResult && (
+                      <div className="mt-3">
+                        <button
+                          onClick={() => setShowFullBackupDetails(!showFullBackupDetails)}
+                          className="flex items-center gap-2 text-xs text-green-400 hover:text-green-300 transition-colors"
+                        >
+                          {showFullBackupDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                          {showFullBackupDetails ? 'Hide' : 'Show'} table-by-table breakdown
+                        </button>
+
+                        {showFullBackupDetails && (
+                          <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-1">
+                            {Object.entries(fullBackupResult.tableCounts)
+                              .sort(([, a], [, b]) => (b as number) - (a as number))
+                              .map(([table, count]) => (
+                                <div key={table} className="flex items-center justify-between bg-slate-900/50 rounded px-2 py-1">
+                                  <span className="text-[10px] text-slate-400 font-mono truncate mr-2">{table}</span>
+                                  <span className={`text-xs font-bold flex-shrink-0 ${(count as number) > 0 ? 'text-green-400' : 'text-slate-600'}`}>
+                                    {(count as number).toLocaleString()}
+                                  </span>
+                                </div>
+                              ))}
+                          </div>
+                        )}
+
+                        {/* Show warnings if any */}
+                        {fullBackupResult.errors && fullBackupResult.errors.length > 0 && (
+                          <div className="mt-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                            <p className="text-xs text-yellow-400 font-medium mb-1 flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3" />
+                              {fullBackupResult.errors.length} table warning(s):
+                            </p>
+                            <div className="space-y-0.5">
+                              {fullBackupResult.errors.map((err, i) => (
+                                <p key={i} className="text-[10px] text-yellow-300/70 font-mono">{err}</p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={() => setFullBackupStatus('idle')} className="text-green-400 hover:text-green-300 flex-shrink-0">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {fullBackupStatus === 'error' && (
+              <div className="mt-4 bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <ServerCrash className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-red-300 font-medium">Full Backup Failed</p>
+                    <p className="text-red-300/80 text-sm mt-1">{fullBackupMessage}</p>
+                    <p className="text-xs text-slate-500 mt-2">
+                      Make sure you are signed in and have a stable internet connection. The edge function requires authentication.
+                    </p>
+                  </div>
+                  <button onClick={() => setFullBackupStatus('idle')} className="text-red-400 hover:text-red-300 flex-shrink-0">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Export Buttons */}
+
         <div className="grid md:grid-cols-2 gap-4">
           {/* JSON Export */}
           <div className="bg-slate-800/50 rounded-xl border border-green-500/30 p-5">
@@ -1072,11 +1335,11 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
                     { label: 'Engines', count: safeArray(importPreview.engines).length },
                     { label: 'Superchargers', count: safeArray(importPreview.superchargers).length },
                     { label: 'Cylinder Heads', count: safeArray(importPreview.cylinderHeads).length },
+
                     { label: 'Drivetrain Components', count: safeArray(importPreview.drivetrainComponents).length },
                     { label: 'Maintenance', count: safeArray(importPreview.maintenanceItems).length },
                     { label: 'SFI Certs', count: safeArray(importPreview.sfiCertifications).length },
-                    { label: 'Work Orders', count: safeArray(importPreview.workOrders).length },
-                    { label: 'Checklists', count: safeArray(importPreview.checklists?.preRun).length + safeArray(importPreview.checklists?.betweenRounds).length + safeArray(importPreview.checklists?.postRun).length },
+
                     { label: 'Parts Inventory', count: safeArray(importPreview.partsInventory).length },
                     { label: 'Race Events', count: safeArray(importPreview.raceEvents).length },
                     { label: 'Team Members', count: safeArray(importPreview.teamMembers).length },

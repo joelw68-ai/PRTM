@@ -234,36 +234,14 @@ DO $$ BEGIN
 END $$;
 
 -- ============================================================
--- 8. WORK ORDERS
+-- 8. (DEPRECATED — TABLE DROPPED)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS public.work_orders (
-  id                 TEXT PRIMARY KEY,
-  user_id            UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  title              TEXT NOT NULL,
-  description        TEXT,
-  category           TEXT,
-  priority           TEXT DEFAULT 'Medium',
-  status             TEXT DEFAULT 'Open',
-  created_date       TEXT,
-  due_date           TEXT,
-  completed_date     TEXT,
-  assigned_to        TEXT,
-  estimated_hours    NUMERIC,
-  actual_hours       NUMERIC,
-  parts              JSONB DEFAULT '[]'::jsonb,
-  related_component  TEXT,
-  notes              TEXT,
-  created_at         TIMESTAMPTZ DEFAULT NOW(),
-  updated_at         TIMESTAMPTZ DEFAULT NOW()
-);
+-- This table has been removed from the application.
+-- The DROP TABLE migration has been executed.
+-- DO NOT recreate this table. Section retained for numbering continuity.
+-- ============================================================
 
-ALTER TABLE public.work_orders ENABLE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage own work_orders' AND tablename = 'work_orders') THEN
-    CREATE POLICY "Users manage own work_orders" ON public.work_orders FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-  END IF;
-END $$;
 
 -- ============================================================
 -- 9. ENGINE SWAP LOGS
@@ -915,7 +893,8 @@ CREATE INDEX IF NOT EXISTS idx_superchargers_user_id  ON public.superchargers(us
 CREATE INDEX IF NOT EXISTS idx_cylinder_heads_user_id ON public.cylinder_heads(user_id);
 CREATE INDEX IF NOT EXISTS idx_maintenance_user_id    ON public.maintenance_items(user_id);
 CREATE INDEX IF NOT EXISTS idx_sfi_certs_user_id      ON public.sfi_certifications(user_id);
-CREATE INDEX IF NOT EXISTS idx_work_orders_user_id    ON public.work_orders(user_id);
+-- idx_work_orders removed — table has been dropped
+
 CREATE INDEX IF NOT EXISTS idx_checklists_user_id     ON public.checklists(user_id);
 CREATE INDEX IF NOT EXISTS idx_checklists_type        ON public.checklists(checklist_type);
 CREATE INDEX IF NOT EXISTS idx_parts_inv_user_id      ON public.parts_inventory(user_id);

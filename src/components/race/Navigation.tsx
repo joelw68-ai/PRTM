@@ -5,14 +5,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { CrewRole, hasPermission, isAdminRole, getRoleColor } from '@/lib/permissions';
 import SaveStatusIndicator from '@/components/race/SaveStatusIndicator';
 import { checkMaintenanceAlerts, loadAlertSettings } from '@/lib/maintenanceAlerts';
-import CarSelector from '@/components/race/CarSelector';
 
 import {
   Gauge,
   ClipboardList,
   Wrench,
   Shield,
-  FileText,
   Settings,
   Menu,
   X,
@@ -31,7 +29,6 @@ import {
   History,
   SlidersHorizontal,
   ChevronRight,
-  DollarSign,
   CheckSquare,
   ListTodo,
   Cog,
@@ -41,11 +38,10 @@ import {
   WifiOff,
   CloudUpload,
   HardDrive,
-  Receipt,
-  Fuel,
-  Car,
   Activity
 } from 'lucide-react';
+
+
 
 
 interface NavigationProps {
@@ -65,7 +61,8 @@ interface NavItem {
 const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOpenAuth, currentRole = 'Crew' }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const { getAlertCount, sfiCertifications, maintenanceItems, workOrders, partsInventory, isSyncing, lastSyncTime, syncError, refreshData, saveStatus, lastSaveTime, lastSaveError, retrySave, isOnline, pendingOfflineCount, hasConnectivityIssue, isOfflineSyncing, offlineSyncProgress, syncOfflineQueue } = useApp();
+  const { getAlertCount, sfiCertifications, maintenanceItems, partsInventory, isSyncing, lastSyncTime, syncError, refreshData, saveStatus, lastSaveTime, lastSaveError, retrySave, isOnline, pendingOfflineCount, hasConnectivityIssue, isOfflineSyncing, offlineSyncProgress, syncOfflineQueue } = useApp();
+
   const { user, profile, isAuthenticated, isDemoMode, signOut, disableDemoMode, isLoading: authLoading, isTeamMember, activeTeamMembership } = useAuth();
   const alertCount = getAlertCount();
   const [showOfflineTooltip, setShowOfflineTooltip] = useState(false);
@@ -152,16 +149,6 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
       console.warn('[Navigation] Error loading threshold alerts:', err);
     }
 
-    const criticalWOs = workOrders.filter(w => w.priority === 'Critical' && w.status !== 'Completed');
-    if (criticalWOs.length > 0) {
-      details.push({
-        category: 'Critical Work Orders',
-        count: criticalWOs.length,
-        items: criticalWOs.slice(0, 3).map(w => `${w.title} (${w.status})`),
-        severity: 'critical',
-        navTarget: 'workorders'
-      });
-    }
 
     const lowStockParts = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
     if (lowStockParts.length > 0) {
@@ -175,7 +162,8 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
     }
 
     return details;
-  }, [sfiCertifications, maintenanceItems, workOrders, partsInventory]);
+  }, [sfiCertifications, maintenanceItems, partsInventory]);
+
 
 
   const handleAlertMouseEnter = () => {
@@ -206,7 +194,6 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
   // Row 1: Core operations & data entry
   const row1Items: NavItem[] = [
     { id: 'setup', label: 'Setup', icon: SlidersHorizontal },
-    { id: 'cars', label: 'Cars', icon: Car },
     { id: 'dashboard', label: 'Dashboard', icon: Gauge },
     { id: 'calendar', label: 'Calendar', icon: Calendar },
     { id: 'timeline', label: 'Timeline', icon: Activity },
@@ -218,21 +205,18 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
     { id: 'partsusage', label: 'Parts Usage', icon: History },
   ];
 
-
   // Row 2: Business, admin, and secondary features
   const row2Items: NavItem[] = [
     { id: 'borrowedloaned', label: 'Borrowed/Loaned', icon: ArrowLeftRight },
     { id: 'vendors', label: 'Vendors', icon: Database },
-    { id: 'costs', label: 'Cost Reports', icon: DollarSign },
-    { id: 'expenses', label: 'Expenses', icon: Receipt },
-    { id: 'fuellog', label: 'Fuel Log', icon: Fuel },
-    { id: 'workorders', label: 'Work Orders', icon: FileText },
     { id: 'checklists', label: 'Checklists', icon: CheckSquare },
     { id: 'todo', label: 'To Do', icon: ListTodo },
     { id: 'gallery', label: 'Gallery', icon: Camera },
     { id: 'backup', label: 'Backup', icon: HardDrive },
     { id: 'admin', label: 'Admin', icon: Settings, requiresAdmin: true },
   ];
+
+
 
 
 
@@ -314,11 +298,8 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
                 {isTeamMember ? `Crew Member - ${activeTeamMembership?.role}` : 'Race Team Management'}
               </p>
             </div>
-            {/* Car Selector */}
-            <div className="hidden lg:block ml-1">
-              <CarSelector />
-            </div>
           </div>
+
 
           {/* Right side: Sync Status, Alert Badge, Auth & Mobile Menu */}
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -706,13 +687,9 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
           </div>
         </div>
 
-        {/* ═══════════ Mobile Navigation ═══════════ */}
         {mobileMenuOpen && (
           <div className="lg:hidden py-3 border-t border-slate-700/50 max-h-[70vh] overflow-y-auto">
-            {/* Car Selector in mobile */}
-            <div className="mb-3 px-2">
-              <CarSelector />
-            </div>
+
 
             {/* Role Badge in Mobile */}
             {isAuthenticated && (

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useApp } from '@/contexts/AppContext';
-import { fetchWeatherForWidget, WeatherWidgetData, calculateDewPoint, calculateSAECorrection } from '@/lib/weather';
+import { fetchWeatherForWidget, WeatherWidgetData, calculateDewPoint, calculateSAECorrection, isWeatherConfigured } from '@/lib/weather';
 import {
   Cloud,
   CloudRain,
@@ -16,6 +16,7 @@ import {
   Loader2,
   MapPin,
   AlertCircle,
+  AlertTriangle,
   ChevronDown,
   ChevronUp,
   Mountain,
@@ -416,6 +417,48 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
       return () => clearTimeout(retryTimer);
     }
   }, [error, weatherData, isLoading]);
+
+  // ─── API key not configured ─────────────────────────────────────────────────
+  // If the weather API key is missing, show a clear setup message instead of
+  // silently failing or showing a confusing "unavailable" state.
+  if (!isWeatherConfigured()) {
+    return (
+      <div className="bg-slate-800/50 rounded-xl border border-amber-500/30 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Cloud className="w-5 h-5 text-blue-400" />
+            Track Weather
+          </h2>
+        </div>
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="w-6 h-6 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-amber-400 font-semibold text-sm">Weather API Key Not Configured</p>
+            <p className="text-slate-400 text-xs mt-1.5 leading-relaxed">
+              To enable live weather data, add{' '}
+              <code className="text-amber-300 bg-amber-500/10 px-1 py-0.5 rounded text-[11px] font-mono">VITE_WEATHER_API_KEY</code>{' '}
+              to your Vercel environment variables and redeploy.
+            </p>
+            <p className="text-slate-500 text-[11px] mt-2">
+              Get a free API key at{' '}
+              <a
+                href="https://www.weatherapi.com/signup.aspx"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:text-blue-300 underline"
+              >
+                weatherapi.com
+              </a>
+            </p>
+            <p className="text-slate-600 text-[10px] mt-1.5 font-mono">
+              Vercel &rarr; Settings &rarr; Environment Variables &rarr; Add VITE_WEATHER_API_KEY &rarr; Redeploy
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
 
   // No location configured
   if (error === 'no-location' && !weatherData) {

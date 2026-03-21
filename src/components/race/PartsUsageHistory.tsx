@@ -46,7 +46,8 @@ import {
 } from '@/data/partsUsageData';
 
 const PartsUsageHistory: React.FC = () => {
-  const { partsInventory, workOrders, raceEvents } = useApp();
+  const { partsInventory, raceEvents } = useApp();
+
   
   // ============ LIVE DATA FROM LOCALSTORAGE ============
   const [usageData, setUsageData] = useState<PartUsageRecord[]>([]);
@@ -257,13 +258,14 @@ const PartsUsageHistory: React.FC = () => {
   const exportToCSV = () => {
     const headers = [
       'Date', 'Part Number', 'Description', 'Action', 'Installed On', 
-      'Passes', 'Cost', 'Labor Cost', 'Performed By', 'Work Order', 'Event', 'Notes'
+      'Passes', 'Cost', 'Labor Cost', 'Performed By', 'Event', 'Notes'
     ];
     const rows = filteredRecords.map(r => [
       r.date, r.partNumber, r.partDescription, r.action, r.installedOn,
       r.passesAtAction, r.cost, r.laborCost || 0, r.performedBy,
-      r.workOrderId || '', r.raceEventName || '', r.notes
+      r.raceEventName || '', r.notes
     ]);
+
     
     const csv = [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -641,12 +643,8 @@ const PartsUsageHistory: React.FC = () => {
                             <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize border ${getActionColor(record.action)}`}>
                               {record.action}
                             </span>
-                            {record.workOrderId && (
-                              <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs flex items-center gap-1">
-                                <Link2 className="w-3 h-3" />
-                                {record.workOrderId}
-                              </span>
-                            )}
+
+
                             {record.raceEventName && (
                               <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs flex items-center gap-1">
                                 <Calendar className="w-3 h-3" />
@@ -1074,15 +1072,6 @@ const PartsUsageHistory: React.FC = () => {
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-slate-400 mb-1">Link to Work Order</label>
-                  <select className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white">
-                    <option value="">None</option>
-                    {workOrders.map(wo => (
-                      <option key={wo.id} value={wo.id}>{wo.id} - {wo.title}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
                   <label className="block text-sm text-slate-400 mb-1">Link to Race Event</label>
                   <select className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white">
                     <option value="">None</option>
@@ -1091,9 +1080,6 @@ const PartsUsageHistory: React.FC = () => {
                     ))}
                   </select>
                 </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">Labor Hours</label>
                   <input
@@ -1103,16 +1089,17 @@ const PartsUsageHistory: React.FC = () => {
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Condition on Removal</label>
-                  <select className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white">
-                    <option value="">N/A</option>
-                    <option value="Good">Good</option>
-                    <option value="Worn">Worn</option>
-                    <option value="Damaged">Damaged</option>
-                    <option value="Failed">Failed</option>
-                  </select>
-                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Condition on Removal</label>
+                <select className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white">
+                  <option value="">N/A</option>
+                  <option value="Good">Good</option>
+                  <option value="Worn">Worn</option>
+                  <option value="Damaged">Damaged</option>
+                  <option value="Failed">Failed</option>
+                </select>
               </div>
               
               <div>
@@ -1134,7 +1121,6 @@ const PartsUsageHistory: React.FC = () => {
               </button>
               <button
                 onClick={() => {
-                  // Would save the record here
                   setShowAddModal(false);
                 }}
                 className="flex-1 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600"

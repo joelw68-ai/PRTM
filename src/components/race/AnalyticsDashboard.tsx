@@ -22,7 +22,10 @@ import {
   Clock,
   AlertTriangle,
   LineChart as LineChartIcon,
-  Info
+  Info,
+  Milestone,
+  ToggleLeft,
+  ToggleRight
 } from 'lucide-react';
 
 import {
@@ -46,10 +49,13 @@ interface AnalyticsDashboardProps {
 
 const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = 'Crew' }) => {
 
-  const { passLogs, raceEvents, engines, workOrders, maintenanceItems } = useApp();
+  const { passLogs, raceEvents, engines, maintenanceItems } = useApp();
+
   const [timeRange, setTimeRange] = useState<'all' | 'year' | 'month' | 'week'>('year');
   const [selectedEngine, setSelectedEngine] = useState<string>('all');
   const [activeTab, setActiveTab] = useState<'overview' | 'reaction' | 'et' | 'tracks' | 'trends' | 'bestReaction' | 'best60' | 'best330' | 'avgET' | 'avgMPH'>('overview');
+  const [distanceView, setDistanceView] = useState<'eighth' | 'quarter'>('eighth');
+
 
 
   // Filter passes by time range
@@ -86,6 +92,18 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
     return filteredPasses.filter(p => !p.aborted);
   }, [filteredPasses]);
 
+  // Helper: compute back split for a pass
+  const getBackSplit = (pass: any): number => {
+    if (pass.endSplit && pass.endSplit > 0) return pass.endSplit;
+    if ((pass.quarterMileET || 0) > 0 && pass.eighth > 0) return (pass.quarterMileET || 0) - pass.eighth;
+    return 0;
+  };
+
+  // Check if any analytics passes have quarter-mile data
+  const hasQuarterMileData = useMemo(() => {
+    return analyticsPasses.some(p => (p.quarterMileET || 0) > 0 || (p.quarterMileMPH || 0) > 0);
+  }, [analyticsPasses]);
+
   // Performance statistics (excluding aborted passes)
   const performanceStats = useMemo(() => {
     const abortedCount = filteredPasses.filter(p => p.aborted).length;
@@ -111,7 +129,16 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
         consistency: null,
         winRate: null,
         redLightCount: 0,
-        perfectLightCount: 0
+        perfectLightCount: 0,
+        // Quarter-mile stats
+        bestQuarterET: null,
+        bestQuarterMPH: null,
+        avgQuarterET: null,
+        avgQuarterMPH: null,
+        avgBackSplit: null,
+        bestBackSplit: null,
+        quarterConsistency: null,
+        quarterPassCount: 0
       };
     }
 
@@ -123,12 +150,28 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
     const wins = analyticsPasses.filter(p => p.result === 'Win').length;
     const eliminations = analyticsPasses.filter(p => ['Win', 'Loss'].includes(p.result || '')).length;
 
+    // Quarter-mile arrays
+    const quarterETs = analyticsPasses.map(p => p.quarterMileET || 0).filter(v => v > 0);
+    const quarterMPHs = analyticsPasses.map(p => p.quarterMileMPH || 0).filter(v => v > 0);
+    const backSplits = analyticsPasses.map(p => getBackSplit(p)).filter(v => v > 0);
+
     // Calculate averages
     const avgET = ets.length > 0 ? ets.reduce((a, b) => a + b, 0) / ets.length : null;
     const avgMPH = mphs.length > 0 ? mphs.reduce((a, b) => a + b, 0) / mphs.length : null;
     const avg60ft = sixtyFoots.length > 0 ? sixtyFoots.reduce((a, b) => a + b, 0) / sixtyFoots.length : null;
     const avg330ft = threeThirtyFoots.length > 0 ? threeThirtyFoots.reduce((a, b) => a + b, 0) / threeThirtyFoots.length : null;
     const avgReaction = reactions.length > 0 ? reactions.reduce((a, b) => a + b, 0) / reactions.length : null;
+
+    // Quarter-mile averages
+    const avgQuarterET = quarterETs.length > 0 ? quarterETs.reduce((a, b) => a + b, 0) / quarterETs.length : null;
+    const avgQuarterMPH = quarterMPHs.length > 0 ? quarterMPHs.reduce((a, b) => a + b, 0) / quarterMPHs.length : null;
+    const avgBackSplit = backSplits.length > 0 ? backSplits.reduce((a, b) => a + b, 0) / backSplits.length : null;
+
+    // Quarter-mile consistency (std dev)
+    const quarterETVariance = avgQuarterET !== null && quarterETs.length > 1
+      ? quarterETs.reduce((sum, et) => sum + Math.pow(et - avgQuarterET, 2), 0) / quarterETs.length
+      : 0;
+    const quarterStdDev = Math.sqrt(quarterETVariance);
 
     // Calculate ET standard deviation for consistency
     const etVariance = avgET !== null && ets.length > 0
@@ -172,7 +215,16 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
       consistency: stdDev || null,
       winRate: eliminations > 0 ? (wins / eliminations) * 100 : null,
       redLightCount,
-      perfectLightCount
+      perfectLightCount,
+      // Quarter-mile stats
+      bestQuarterET: quarterETs.length > 0 ? Math.min(...quarterETs) : null,
+      bestQuarterMPH: quarterMPHs.length > 0 ? Math.max(...quarterMPHs) : null,
+      avgQuarterET,
+      avgQuarterMPH,
+      avgBackSplit,
+      bestBackSplit: backSplits.length > 0 ? Math.min(...backSplits) : null,
+      quarterConsistency: quarterStdDev || null,
+      quarterPassCount: quarterETs.length
     };
   }, [filteredPasses, analyticsPasses]);
 
@@ -186,10 +238,14 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
       threeThirty: pass.threeThirty || null,
       eighth: pass.eighth || null,
       mph: pass.mph || null,
+      quarterMileET: (pass.quarterMileET || 0) > 0 ? pass.quarterMileET : null,
+      quarterMileMPH: (pass.quarterMileMPH || 0) > 0 ? pass.quarterMileMPH : null,
+      backSplit: getBackSplit(pass) > 0 ? getBackSplit(pass) : null,
       sessionType: pass.sessionType,
       track: pass.track
     }));
   }, [analyticsPasses]);
+
 
   // Monthly trend data (excluding aborted passes)
   const monthlyTrendData = useMemo(() => {
@@ -443,6 +499,24 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
               <Download className="w-4 h-4" />
               Export
             </button>
+            {hasQuarterMileData && (
+              <button
+                onClick={() => setDistanceView(distanceView === 'eighth' ? 'quarter' : 'eighth')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
+                  distanceView === 'quarter'
+                    ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/20'
+                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+                title="Toggle between 1/8 mile and 1/4 mile analytics"
+              >
+                {distanceView === 'eighth' ? (
+                  <ToggleLeft className="w-4 h-4" />
+                ) : (
+                  <ToggleRight className="w-4 h-4" />
+                )}
+                {distanceView === 'eighth' ? '1/8 Mile' : '1/4 Mile'}
+              </button>
+            )}
           </div>
         </div>
 
@@ -486,8 +560,97 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
           ))}
         </div>
 
+        {/* Quarter-Mile Performance Summary Cards (shown when 1/4 mile view is active) */}
+        {distanceView === 'quarter' && hasQuarterMileData && (
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <Milestone className="w-5 h-5 text-orange-400" />
+              <h3 className="text-lg font-semibold text-white">Quarter-Mile Performance</h3>
+              <span className="text-xs bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded-full border border-orange-500/30">
+                {performanceStats.quarterPassCount} passes with 1/4 data
+              </span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <div className="bg-gradient-to-br from-orange-500/20 to-amber-500/20 rounded-xl p-4 border border-orange-500/30">
+                <div className="flex items-center gap-2 text-orange-400 text-sm mb-1">
+                  <Milestone className="w-4 h-4" />
+                  Best 1/4 ET
+                </div>
+                <p className="text-2xl font-bold text-orange-400 font-mono">
+                  {performanceStats.bestQuarterET?.toFixed(3) || '-'}
+                </p>
+              </div>
 
-        {/* Key Metrics - Always Visible */}
+              <div className="bg-gradient-to-br from-amber-500/20 to-yellow-500/20 rounded-xl p-4 border border-amber-500/30">
+                <div className="flex items-center gap-2 text-amber-400 text-sm mb-1">
+                  <TrendingUp className="w-4 h-4" />
+                  Best 1/4 MPH
+                </div>
+                <p className="text-2xl font-bold text-amber-400 font-mono">
+                  {performanceStats.bestQuarterMPH?.toFixed(1) || '-'}
+                </p>
+              </div>
+
+              <div className="bg-gradient-to-br from-rose-500/20 to-pink-500/20 rounded-xl p-4 border border-rose-500/30">
+                <div className="flex items-center gap-2 text-rose-400 text-sm mb-1">
+                  <Timer className="w-4 h-4" />
+                  Best Back Split
+                </div>
+                <p className="text-2xl font-bold text-rose-400 font-mono">
+                  {performanceStats.bestBackSplit?.toFixed(3) || '-'}
+                </p>
+              </div>
+
+              <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
+                <div className="flex items-center gap-2 text-orange-300 text-sm mb-1">
+                  <Target className="w-4 h-4" />
+                  Avg 1/4 ET
+                </div>
+                <p className="text-2xl font-bold text-orange-300 font-mono">
+                  {performanceStats.avgQuarterET?.toFixed(3) || '-'}
+                </p>
+                {performanceStats.avgQuarterET && performanceStats.bestQuarterET && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Gap: {((performanceStats.avgQuarterET - performanceStats.bestQuarterET) * 1000).toFixed(1)}ms
+                  </p>
+                )}
+              </div>
+
+              <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
+                <div className="flex items-center gap-2 text-amber-300 text-sm mb-1">
+                  <Gauge className="w-4 h-4" />
+                  Avg 1/4 MPH
+                </div>
+                <p className="text-2xl font-bold text-amber-300 font-mono">
+                  {performanceStats.avgQuarterMPH?.toFixed(1) || '-'}
+                </p>
+                {performanceStats.avgQuarterMPH && performanceStats.bestQuarterMPH && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Gap: {(performanceStats.bestQuarterMPH - performanceStats.avgQuarterMPH).toFixed(1)} MPH
+                  </p>
+                )}
+              </div>
+
+              <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
+                <div className="flex items-center gap-2 text-rose-300 text-sm mb-1">
+                  <BarChart3 className="w-4 h-4" />
+                  Avg Back Split
+                </div>
+                <p className="text-2xl font-bold text-rose-300 font-mono">
+                  {performanceStats.avgBackSplit?.toFixed(3) || '-'}
+                </p>
+                {performanceStats.quarterConsistency && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    1/4 Std Dev: {performanceStats.quarterConsistency.toFixed(4)}s
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Key Metrics - Always Visible (1/8 mile) */}
+        {distanceView === 'eighth' && (
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-6">
           <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
             <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
@@ -530,7 +693,7 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
           <div className="bg-gradient-to-br from-green-500/20 to-emerald-500/20 rounded-xl p-4 border border-green-500/30">
             <div className="flex items-center gap-2 text-green-400 text-sm mb-1">
               <Timer className="w-4 h-4" />
-              Best ET
+              Best 1/8 ET
             </div>
             <p className="text-2xl font-bold text-green-400 font-mono">
               {performanceStats.bestET?.toFixed(3) || '-'}
@@ -540,7 +703,7 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
           <div className="bg-gradient-to-br from-blue-500/20 to-cyan-500/20 rounded-xl p-4 border border-blue-500/30">
             <div className="flex items-center gap-2 text-blue-400 text-sm mb-1">
               <Zap className="w-4 h-4" />
-              Best MPH
+              Best 1/8 MPH
             </div>
             <p className="text-2xl font-bold text-blue-400 font-mono">
               {performanceStats.bestMPH?.toFixed(1) || '-'}
@@ -567,6 +730,8 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
             </p>
           </div>
         </div>
+        )}
+
 
         {/* Performance Trends Tab */}
         {activeTab === 'trends' && (
@@ -764,8 +929,129 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
                 <p className="text-slate-400 text-center py-12">No data available</p>
               )}
             </div>
+
+            {/* Quarter-Mile Trend Charts (shown when quarter-mile data exists) */}
+            {hasQuarterMileData && (
+              <>
+                {/* Quarter-Mile ET and MPH Trend */}
+                <div className="bg-gradient-to-r from-orange-500/5 to-amber-500/5 rounded-xl border border-orange-500/30 p-5">
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <Milestone className="w-5 h-5 text-orange-400" />
+                    Quarter-Mile ET and MPH Trends
+                    <span className="text-xs bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded-full ml-2">1/4 Mile</span>
+                  </h3>
+                  {performanceTrendData.some(d => d.quarterMileET !== null) ? (
+                    <ResponsiveContainer width="100%" height={300}>
+                      <ComposedChart data={performanceTrendData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                        <XAxis dataKey="passNumber" stroke="#94a3b8" label={{ value: 'Pass #', position: 'insideBottom', offset: -5 }} />
+                        <YAxis yAxisId="left" stroke="#f97316" domain={['auto', 'auto']} tickFormatter={(v) => v.toFixed(2)} />
+                        <YAxis yAxisId="right" orientation="right" stroke="#f59e0b" domain={['auto', 'auto']} />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend />
+                        <Line 
+                          yAxisId="left"
+                          type="monotone" 
+                          dataKey="quarterMileET" 
+                          stroke="#f97316" 
+                          strokeWidth={2}
+                          dot={{ fill: '#f97316', r: 3 }}
+                          name="1/4 ET"
+                          connectNulls
+                        />
+                        <Line 
+                          yAxisId="right"
+                          type="monotone" 
+                          dataKey="quarterMileMPH" 
+                          stroke="#f59e0b" 
+                          strokeWidth={2}
+                          dot={{ fill: '#f59e0b', r: 3 }}
+                          name="1/4 MPH"
+                          connectNulls
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="text-slate-400 text-center py-12">No quarter-mile data available</p>
+                  )}
+                </div>
+
+                {/* Quarter-Mile Back Split Trend */}
+                <div className="bg-gradient-to-r from-rose-500/5 to-pink-500/5 rounded-xl border border-rose-500/30 p-5">
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5 text-rose-400" />
+                    Back Split Trend (1/4 ET - 1/8 ET)
+                    <span className="text-xs bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded-full ml-2">1/4 Mile</span>
+                  </h3>
+                  {performanceTrendData.some(d => d.backSplit !== null) ? (
+                    <ResponsiveContainer width="100%" height={250}>
+                      <AreaChart data={performanceTrendData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                        <XAxis dataKey="passNumber" stroke="#94a3b8" label={{ value: 'Pass #', position: 'insideBottom', offset: -5 }} />
+                        <YAxis stroke="#94a3b8" domain={['auto', 'auto']} tickFormatter={(v) => v.toFixed(3)} />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend />
+                        <Area 
+                          type="monotone" 
+                          dataKey="backSplit" 
+                          stroke="#f43f5e" 
+                          fill="#f43f5e"
+                          fillOpacity={0.15}
+                          strokeWidth={2}
+                          name="Back Split"
+                          connectNulls
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="text-slate-400 text-center py-12">No back split data available</p>
+                  )}
+                </div>
+
+                {/* 1/8 vs 1/4 Mile Overlay Chart */}
+                <div className="bg-gradient-to-r from-green-500/5 to-orange-500/5 rounded-xl border border-slate-700/50 p-5">
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <LineChartIcon className="w-5 h-5 text-green-400" />
+                    1/8 Mile vs 1/4 Mile ET Overlay
+                  </h3>
+                  {performanceTrendData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={performanceTrendData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                        <XAxis dataKey="passNumber" stroke="#94a3b8" label={{ value: 'Pass #', position: 'insideBottom', offset: -5 }} />
+                        <YAxis stroke="#94a3b8" domain={['auto', 'auto']} tickFormatter={(v) => v.toFixed(2)} />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend />
+                        <Line 
+                          type="monotone" 
+                          dataKey="eighth" 
+                          stroke="#22c55e" 
+                          strokeWidth={2}
+                          dot={{ fill: '#22c55e', r: 3 }}
+                          name="1/8 ET"
+                          connectNulls
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="quarterMileET" 
+                          stroke="#f97316" 
+                          strokeWidth={2}
+                          dot={{ fill: '#f97316', r: 3 }}
+                          name="1/4 ET"
+                          connectNulls
+                          strokeDasharray="5 5"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="text-slate-400 text-center py-12">No data available</p>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         )}
+
 
         {/* Overview Tab */}
         {activeTab === 'overview' && (
@@ -939,8 +1225,41 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
                     <span className="text-slate-400">Perfect Lights</span>
                     <span className="text-emerald-400 font-mono">{performanceStats.perfectLightCount}</span>
                   </div>
+                  {/* Quarter-Mile Stats in Performance Summary */}
+                  {hasQuarterMileData && (
+                    <>
+                      <div className="border-t border-orange-500/20 pt-3 mt-3">
+                        <p className="text-orange-400 text-xs font-semibold uppercase tracking-wider mb-2">Quarter Mile</p>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Best 1/4 ET</span>
+                        <span className="text-orange-400 font-mono">{performanceStats.bestQuarterET?.toFixed(3) || '-'}s</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Avg 1/4 ET</span>
+                        <span className="text-orange-300 font-mono">{performanceStats.avgQuarterET?.toFixed(3) || '-'}s</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Best 1/4 MPH</span>
+                        <span className="text-amber-400 font-mono">{performanceStats.bestQuarterMPH?.toFixed(1) || '-'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Avg 1/4 MPH</span>
+                        <span className="text-amber-300 font-mono">{performanceStats.avgQuarterMPH?.toFixed(1) || '-'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Best Back Split</span>
+                        <span className="text-rose-400 font-mono">{performanceStats.bestBackSplit?.toFixed(3) || '-'}s</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Avg Back Split</span>
+                        <span className="text-rose-300 font-mono">{performanceStats.avgBackSplit?.toFixed(3) || '-'}s</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
+
 
               {/* Session Breakdown */}
               <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-5">

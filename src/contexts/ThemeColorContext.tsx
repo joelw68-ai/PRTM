@@ -1,23 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { useCar } from '@/contexts/CarContext';
 
-// Default team colors assigned by car index
-const DEFAULT_COLORS = [
-  '#ef4444', // red
-  '#3b82f6', // blue
-  '#22c55e', // green
-  '#a855f7', // purple
-  '#f59e0b', // amber
-  '#06b6d4', // cyan
-  '#ec4899', // pink
-  '#8b5cf6', // violet
-  '#14b8a6', // teal
-  '#f97316', // orange
-];
-
-const ALL_CARS_COLOR = '#f97316'; // orange — the app's original accent
+// Default accent color (orange — the app's original accent)
+const DEFAULT_ACCENT = '#f97316';
 
 const STORAGE_KEY = 'raceLogbook_teamColors';
+const ACCENT_KEY = 'raceLogbook_accentColor';
 
 // Convert hex to RGB components
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -89,11 +76,11 @@ export interface ThemeColors {
 }
 
 interface ThemeColorContextType {
-  /** Current accent colors based on selected car */
+  /** Current accent colors */
   colors: ThemeColors;
-  /** Get the team color for a specific car ID */
+  /** Get the team color for a specific car ID (legacy compat — returns accent) */
   getTeamColor: (carId: string) => string;
-  /** Set the team color for a specific car ID */
+  /** Set the team color for a specific car ID (legacy compat) */
   setTeamColor: (carId: string, color: string) => void;
   /** All stored team colors map */
   teamColors: Record<string, string>;
@@ -116,10 +103,22 @@ function computeThemeColors(hex: string): ThemeColors {
   };
 }
 
-export const ThemeColorProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { selectedCarId, cars } = useCar();
+const DEFAULT_COLORS = [
+  '#ef4444', '#3b82f6', '#22c55e', '#a855f7', '#f59e0b',
+  '#06b6d4', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316',
+];
 
-  // Load stored team colors from localStorage
+export const ThemeColorProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // Load stored accent color
+  const [accentColor, setAccentColor] = useState<string>(() => {
+    try {
+      return localStorage.getItem(ACCENT_KEY) || DEFAULT_ACCENT;
+    } catch {
+      return DEFAULT_ACCENT;
+    }
+  });
+
+  // Legacy team colors map (kept for compat)
   const [teamColors, setTeamColors] = useState<Record<string, string>>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -142,18 +141,15 @@ export const ThemeColorProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const getTeamColor = useCallback((carId: string): string => {
     if (teamColors[carId]) return teamColors[carId];
-    // Find the car's index to assign a default
-    const idx = cars.findIndex(c => c.id === carId);
-    return idx >= 0 ? getDefaultColor(idx) : ALL_CARS_COLOR;
-  }, [teamColors, cars, getDefaultColor]);
+    return DEFAULT_ACCENT;
+  }, [teamColors]);
 
   const setTeamColor = useCallback((carId: string, color: string) => {
     setTeamColors(prev => ({ ...prev, [carId]: color }));
   }, []);
 
-  // Compute current accent color
-  const currentHex = selectedCarId ? getTeamColor(selectedCarId) : ALL_CARS_COLOR;
-  const colors = computeThemeColors(currentHex);
+  // Use the accent color directly (no car selection)
+  const colors = computeThemeColors(accentColor);
 
   // Apply CSS custom properties to document root
   useEffect(() => {
@@ -243,7 +239,7 @@ export function useAccentStyles() {
     logoGradient: {
       background: `linear-gradient(to bottom right, ${colors.base}, ${colors.dark})`,
     } as React.CSSProperties,
-    /** Selected car indicator */
+    /** Selected car indicator (legacy compat) */
     carIndicator: {
       backgroundColor: `rgba(${colors.rgb}, 0.2)`,
       borderColor: `rgba(${colors.rgb}, 0.5)`,

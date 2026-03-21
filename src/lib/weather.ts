@@ -1,14 +1,73 @@
 // Weather API utility — calls WeatherAPI.com directly from the browser.
-// API key is read from VITE_WEATHER_API_KEY environment variable.
-// No Supabase Edge Function needed.
+// API key is read from the VITE_WEATHER_API_KEY environment variable.
+//
+// ─── Vercel Deployment ───────────────────────────────────────────────────────
+// In Vercel → Settings → Environment Variables, add:
+//   Name:  VITE_WEATHER_API_KEY
+//   Value: <your WeatherAPI.com key>
+//
+// IMPORTANT: This is a Vite app, NOT Next.js.  Vite requires the VITE_ prefix
+// (not NEXT_PUBLIC_) for client-side env vars.  The variable is baked into the
+// JS bundle at build time via import.meta.env.
+//
+// After adding/changing the env var in Vercel you MUST redeploy for the new
+// value to take effect (Vercel → Deployments → Redeploy).
+// ─────────────────────────────────────────────────────────────────────────────
 import { parseLocalDate, getLocalDateString } from './utils';
 
 
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
-const WEATHER_API_KEY = import.meta.env.VITE_WEATHER_API_KEY || '';
+const WEATHER_API_KEY = import.meta.env.VITE_WEATHER_API_KEY ?? '';
 const WEATHER_API_BASE = 'https://api.weatherapi.com/v1';
+
+// Startup diagnostic — logs once when the module is first imported so you can
+// immediately see in the browser console whether the key was injected.
+if (WEATHER_API_KEY) {
+  // Only log the first/last 3 chars so the full key is never exposed in logs
+  const masked = WEATHER_API_KEY.length > 6
+    ? `${WEATHER_API_KEY.slice(0, 3)}...${WEATHER_API_KEY.slice(-3)}`
+    : '***';
+  console.log(`[weather] API key loaded (${masked}), length=${WEATHER_API_KEY.length}`);
+} else {
+  console.warn(
+    '[weather] VITE_WEATHER_API_KEY is NOT set.\n' +
+    '  → For local dev: create a .env file with VITE_WEATHER_API_KEY=your_key\n' +
+    '  → For Vercel: add VITE_WEATHER_API_KEY in Settings → Environment Variables, then redeploy.\n' +
+    '  → NOTE: This is a Vite app — use VITE_ prefix, NOT NEXT_PUBLIC_.'
+  );
+}
+
+/**
+ * Check whether the weather API key is configured.
+ * Components can call this to show a helpful "not configured" state
+ * instead of triggering a fetch that will always fail.
+ */
+export function isWeatherConfigured(): boolean {
+  return WEATHER_API_KEY.length > 0;
+}
+
+/**
+ * Returns a diagnostic object for debugging weather configuration issues.
+ * Safe to call from browser console: `import('@/lib/weather').then(m => console.table(m.getWeatherDiagnostics()))`
+ */
+export function getWeatherDiagnostics(): Record<string, string | boolean | number> {
+  return {
+    keyPresent: WEATHER_API_KEY.length > 0,
+    keyLength: WEATHER_API_KEY.length,
+    keyPreview: WEATHER_API_KEY.length > 6
+      ? `${WEATHER_API_KEY.slice(0, 3)}...${WEATHER_API_KEY.slice(-3)}`
+      : WEATHER_API_KEY.length > 0 ? '***' : '(empty)',
+    apiBase: WEATHER_API_BASE,
+    envVarName: 'VITE_WEATHER_API_KEY',
+    framework: 'Vite (use VITE_ prefix, not NEXT_PUBLIC_)',
+    hint: WEATHER_API_KEY.length === 0
+      ? 'Add VITE_WEATHER_API_KEY to Vercel env vars and redeploy'
+      : 'Key is configured — if weather still fails, verify the key is valid at weatherapi.com',
+  };
+}
+
 
 // ─── Shared helper: call WeatherAPI.com directly with retry ──────────────────
 

@@ -5,9 +5,10 @@ import { useTheme } from '@/components/theme-provider';
 import { useAuth } from '@/contexts/AuthContext';
 
 import { AppProvider, useApp } from '@/contexts/AppContext';
-import { CarProvider } from '@/contexts/CarContext';
 import { ThemeColorProvider } from '@/contexts/ThemeColorContext';
 import { RaceDayProvider, useRaceDay } from '@/contexts/RaceDayContext';
+
+
 
 
 
@@ -22,10 +23,12 @@ import RaceDayBanner from './race/RaceDayBanner';
 // Section components
 import Dashboard from './race/Dashboard';
 import PassLog from './race/PassLog';
-import SetupLibrary from './race/SetupLibrary';
+import MainComponents from './race/MainComponents';
+
 import PartsInventory from './race/PartsInventory';
 import PartsUsageHistory from './race/PartsUsageHistory';
 import BackupRestore from './race/BackupRestore';
+
 import MaintenanceTracker from './race/MaintenanceTracker';
 import TeamNotes from './race/TeamNotes';
 import HeroSection from './race/HeroSection';
@@ -40,20 +43,16 @@ import CrewChecklist from './race/CrewChecklist';
 import AdminSettings from './race/AdminSettings';
 import MediaGallery from './race/MediaGallery';
 import ToDoList from './race/ToDoList';
-import WorkOrderSystem from './race/WorkOrderSystem';
 import VendorManagement from './race/VendorManagement';
-import CostAnalytics from './race/CostAnalytics';
 import InitialSetup from './race/InitialSetup';
 import OnboardingWizard from './race/OnboardingWizard';
 import BetaFeedback from './race/BetaFeedback';
 import { InviteAcceptBanner } from './race/TeamInviteFlow';
 import BorrowedLoanedParts from './race/BorrowedLoanedParts';
-import MiscExpenses from './race/MiscExpenses';
-import FuelLog from './race/FuelLog';
-import CarProfiles from './race/CarProfiles';
-import BulkCarAssign from './race/BulkCarAssign';
 import RaceDayTimeline from './race/RaceDayTimeline';
 import TeamDashboard from './race/TeamDashboard';
+
+
 
 import { CrewRole, hasPermission, isAdminRole, Permission } from '@/lib/permissions';
 import { TeamMember } from './race/TeamProfile';
@@ -276,14 +275,6 @@ const AppLayoutContent: React.FC = () => {
           </div>
         );
 
-      case 'cars':
-        return (
-          <div className="bg-slate-900/30">
-            <CarProfiles currentRole={currentRole} />
-            <BulkCarAssign />
-          </div>
-        );
-
       case 'passlog':
         return <PassLog currentRole={currentRole} />;
 
@@ -301,7 +292,8 @@ const AppLayoutContent: React.FC = () => {
         return <AnalyticsDashboard currentRole={currentRole} />;
 
       case 'engines':
-        return <SetupLibrary currentRole={currentRole} />;
+        return <MainComponents currentRole={currentRole} />;
+
 
       case 'parts':
         return <PartsInventory currentRole={currentRole} reorderListTrigger={reorderListTrigger} />;
@@ -327,36 +319,8 @@ const AppLayoutContent: React.FC = () => {
           </div>
         );
 
-      case 'costs':
-        return (
-          <div className="bg-slate-950">
-            <CostAnalytics currentRole={currentRole} />
-          </div>
-        );
-
-      case 'expenses':
-        return (
-          <div className="bg-slate-900/30">
-            <MiscExpenses currentRole={currentRole} />
-          </div>
-        );
-
-      case 'fuellog':
-        return (
-          <div className="bg-slate-950">
-            <FuelLog currentRole={currentRole} />
-          </div>
-        );
-
       case 'maintenance':
         return <MaintenanceTracker onNavigate={handleNavigate} currentRole={currentRole} />;
-
-      case 'workorders':
-        return (
-          <div className="bg-slate-900/30">
-            <WorkOrderSystem />
-          </div>
-        );
 
       case 'checklists':
         return (
@@ -438,6 +402,8 @@ const AppLayoutContent: React.FC = () => {
         return (
           <TeamDashboard currentRole={currentRole} onNavigate={handleNavigate} />
         );
+
+
 
       default:
         return <DashboardGrid onNavigate={handleNavigate} />;
@@ -551,13 +517,11 @@ const AppLayoutContent: React.FC = () => {
 const AppLayout: React.FC = () => {
   return (
     <AppProvider>
-      <CarProvider>
-        <ThemeColorProvider>
-          <RaceDayProvider>
-            <AppLayoutContent />
-          </RaceDayProvider>
-        </ThemeColorProvider>
-      </CarProvider>
+      <ThemeColorProvider>
+        <RaceDayProvider>
+          <AppLayoutContent />
+        </RaceDayProvider>
+      </ThemeColorProvider>
     </AppProvider>
   );
 };

@@ -88,7 +88,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
   
 
   
-  const [activeTab, setActiveTab] = useState<'vendors' | 'orders' | 'invoices' | 'performance' | 'history'>('vendors');
+  const [activeTab, setActiveTab] = useState<'vendors'>('vendors');
+
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(initialPurchaseOrders);
   const [vendorPerformance, setVendorPerformance] = useState<VendorPerformance[]>(initialVendorPerformance);
@@ -225,9 +226,16 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
   const handleSaveVendor = async () => {
     try {
       const id = editingVendor ? editingVendor.id : `VEND-${Date.now()}`;
+      // Auto-generate vendor code from the first 4 uppercase characters of the name
+      const autoCode = newVendor.name
+        .replace(/[^a-zA-Z0-9]/g, '')
+        .substring(0, 4)
+        .toUpperCase()
+        .padEnd(4, 'X');
       const vendorToSave: VendorRecord = {
         ...newVendor,
-        id
+        id,
+        code: autoCode
       };
       
       if (editingVendor) {
@@ -258,6 +266,7 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
       alert('Failed to save vendor: ' + (err?.message || 'Unknown error'));
     }
   };
+
 
   const handleDeleteVendor = async (id: string) => {
     if (confirm('Are you sure you want to deactivate this vendor?')) {
@@ -458,21 +467,10 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
               <Building2 className="w-7 h-7 text-orange-500" />
               Vendor Management
             </h2>
-            <p className="text-slate-400">Track suppliers, manage purchase orders, and monitor performance</p>
+            <p className="text-slate-400">Manage your vendor contacts and supplier information</p>
+
           </div>
-          
           <div className="flex items-center gap-3 flex-wrap">
-            <button
-              onClick={() => {
-                setSelectedVendorForPO('');
-                setNewPO(defaultPO);
-                setShowPOModal(true);
-              }}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors"
-            >
-              <ShoppingCart className="w-4 h-4" />
-              New Purchase Order
-            </button>
             <button
               onClick={() => {
                 setEditingVendor(null);
@@ -485,6 +483,7 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
               Add Vendor
             </button>
           </div>
+
         </div>
 
         {/* Stats Cards */}
@@ -586,55 +585,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-2 mb-6 overflow-x-auto">
-          <button
-            onClick={() => setActiveTab('vendors')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${
-              activeTab === 'vendors' ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            <Building2 className="w-4 h-4" />
-            Vendors ({filteredVendors.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('orders')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${
-              activeTab === 'orders' ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            <ShoppingCart className="w-4 h-4" />
-            Purchase Orders ({purchaseOrders.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('invoices')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${
-              activeTab === 'invoices' ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            <Receipt className="w-4 h-4" />
-            Invoices
-          </button>
+        {/* Single Vendors tab - no tab bar needed */}
 
-          <button
-            onClick={() => setActiveTab('performance')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${
-              activeTab === 'performance' ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            <BarChart3 className="w-4 h-4" />
-            Performance Metrics
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${
-              activeTab === 'history' ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            <History className="w-4 h-4" />
-            Order History
-          </button>
-        </div>
 
         {/* Filters - hidden on invoices tab since it has its own */}
         {activeTab !== 'invoices' && (
@@ -915,387 +867,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
           </div>
         )}
 
-        {/* Purchase Orders Tab */}
-        {activeTab === 'orders' && (
-          <div className="space-y-4">
-            {/* Parts Needing Order Alert */}
-            {partsNeedingOrder.length > 0 && (
-              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 mb-4">
-                <div className="flex items-center gap-3 mb-3">
-                  <AlertTriangle className="w-5 h-5 text-yellow-400" />
-                  <h3 className="font-semibold text-white">{partsNeedingOrder.length} Parts Need Ordering</h3>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {partsNeedingOrder.slice(0, 5).map(part => (
-                    <span key={part.id} className="px-3 py-1 bg-slate-800 rounded-lg text-sm text-slate-300">
-                      {part.partNumber} - {part.description.substring(0, 30)}...
-                    </span>
-                  ))}
-                  {partsNeedingOrder.length > 5 && (
-                    <span className="px-3 py-1 bg-slate-800 rounded-lg text-sm text-slate-400">
-                      +{partsNeedingOrder.length - 5} more
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
-            
-            {filteredPOs.map(po => (
-              <div
-                key={po.id}
-                className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden"
-              >
-                <div 
-                  className="p-4 cursor-pointer hover:bg-slate-700/30 transition-colors"
-                  onClick={() => setExpandedPO(expandedPO === po.id ? null : po.id)}
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-3 mb-1">
-                        <span className="text-slate-500 font-mono">{po.id}</span>
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusColor(po.status)}`}>
-                          {po.status}
-                        </span>
-                      </div>
-                      <h3 className="text-lg font-semibold text-white">{po.vendorName}</h3>
-                      <p className="text-sm text-slate-400">
-                        Created: {po.createdDate} • {po.items.length} items
-                      </p>
-                    </div>
-                    
-                    <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        <p className="text-2xl font-bold text-green-400">${po.total.toLocaleString()}</p>
-                        {po.expectedDelivery && (
-                          <p className="text-sm text-slate-400">Expected: {po.expectedDelivery}</p>
-                        )}
-                      </div>
-                      {expandedPO === po.id ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
-                    </div>
-                  </div>
-                </div>
-                
-                {expandedPO === po.id && (
-                  <div className="border-t border-slate-700/50 p-4 bg-slate-900/30">
-                    <div className="bg-slate-900/50 rounded-lg p-3 mb-4">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-slate-400 border-b border-slate-700">
-                            <th className="text-left pb-2">Part</th>
-                            <th className="text-center pb-2">Qty</th>
-                            <th className="text-right pb-2">Unit</th>
-                            <th className="text-right pb-2">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {po.items.map((item, idx) => (
-                            <tr key={idx} className="border-b border-slate-700/50">
-                              <td className="py-2 text-white">
-                                {item.description}
-                                <span className="text-slate-500 text-xs ml-2">{item.partNumber}</span>
-                              </td>
-                              <td className="py-2 text-center text-slate-300">{item.quantity}</td>
-                              <td className="py-2 text-right text-slate-300">${item.unitCost.toLocaleString()}</td>
-                              <td className="py-2 text-right text-white">${item.totalCost.toLocaleString()}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <div className="flex gap-2">
-                        {po.status === 'Draft' && (
-                          <button
-                            onClick={() => handleUpdatePOStatus(po.id, 'Submitted')}
-                            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
-                          >
-                            Submit Order
-                          </button>
-                        )}
-                        {po.status === 'Submitted' && (
-                          <button
-                            onClick={() => handleUpdatePOStatus(po.id, 'Confirmed')}
-                            className="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700"
-                          >
-                            Mark Confirmed
-                          </button>
-                        )}
-                        {po.status === 'Confirmed' && (
-                          <button
-                            onClick={() => handleUpdatePOStatus(po.id, 'Shipped')}
-                            className="px-3 py-1.5 bg-yellow-600 text-white rounded-lg text-sm hover:bg-yellow-700"
-                          >
-                            Mark Shipped
-                          </button>
-                        )}
-                        {po.status === 'Shipped' && (
-                          <button
-                            onClick={() => handleUpdatePOStatus(po.id, 'Received')}
-                            className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700"
-                          >
-                            Mark Received
-                          </button>
-                        )}
-                        {po.status !== 'Received' && po.status !== 'Cancelled' && (
-                          <button
-                            onClick={() => handleUpdatePOStatus(po.id, 'Cancelled')}
-                            className="px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm hover:bg-red-500/30"
-                          >
-                            Cancel
-                          </button>
-                        )}
-                      </div>
-                      
-                      <div className="text-sm text-slate-400">
-                        Created by: {po.createdBy}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-            
-            {filteredPOs.length === 0 && (
-              <div className="text-center py-12 text-slate-500">
-                <ShoppingCart className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>No purchase orders found</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Invoices Tab */}
-        {activeTab === 'invoices' && (
-          <InvoiceUpload vendors={vendors} currentRole={currentRole} />
-        )}
 
 
-        {/* Performance Tab */}
-        {activeTab === 'performance' && (
-
-          <div className="space-y-6">
-            <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
-              <div className="p-4 border-b border-slate-700/50">
-                <h3 className="font-semibold text-white">Vendor Performance Scorecard</h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-slate-900/50 text-slate-400 text-sm">
-                      <th className="text-left px-4 py-3">Vendor</th>
-                      <th className="text-center px-4 py-3">Score</th>
-                      <th className="text-center px-4 py-3">Orders</th>
-                      <th className="text-center px-4 py-3">On-Time %</th>
-                      <th className="text-center px-4 py-3">Avg Lead Time</th>
-                      <th className="text-center px-4 py-3">Quality Issues</th>
-                      <th className="text-right px-4 py-3">Total Spent</th>
-                      <th className="text-center px-4 py-3">Rating</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {vendorPerformance.map(perf => {
-                      const vendor = vendors.find(v => v.id === perf.vendorId);
-                      if (!vendor) return null;
-                      
-                      const perfScore = getPerformanceScore(vendor.id);
-                      const onTimePercent = perf.totalOrders > 0 ? Math.round(perf.onTimeDeliveries / perf.totalOrders * 100) : 0;
-                      
-                      return (
-                        <tr key={perf.vendorId} className="border-b border-slate-700/30 hover:bg-slate-700/20">
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 bg-slate-700 rounded flex items-center justify-center">
-                                <span className="text-orange-400 font-bold text-xs">{vendor.code}</span>
-                              </div>
-                              <div>
-                                <p className="text-white font-medium">{vendor.name}</p>
-                                <p className="text-xs text-slate-400">{vendor.category}</p>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            {perfScore ? (
-                              <div className={`inline-flex items-center justify-center w-10 h-10 rounded-full text-lg font-bold ${
-                                perfScore.score >= 90 ? 'bg-green-500/20 text-green-400' :
-                                perfScore.score >= 80 ? 'bg-yellow-500/20 text-yellow-400' :
-                                'bg-red-500/20 text-red-400'
-                              }`}>
-                                {perfScore.grade}
-                              </div>
-                            ) : (
-                              <span className="text-slate-500">-</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-center text-white">{perf.totalOrders}</td>
-                          <td className="px-4 py-3 text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <span className={`font-medium ${
-                                onTimePercent >= 95 ? 'text-green-400' :
-                                onTimePercent >= 80 ? 'text-yellow-400' :
-                                'text-red-400'
-                              }`}>
-                                {onTimePercent}%
-                              </span>
-                              {onTimePercent >= 95 ? (
-                                <ArrowUpRight className="w-4 h-4 text-green-400" />
-                              ) : onTimePercent < 80 ? (
-                                <ArrowDownRight className="w-4 h-4 text-red-400" />
-                              ) : null}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-center text-white">{perf.averageLeadTime} days</td>
-                          <td className="px-4 py-3 text-center">
-                            <span className={perf.qualityIssues > 0 ? 'text-red-400' : 'text-green-400'}>
-                              {perf.qualityIssues}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right text-green-400 font-medium">
-                            ${perf.totalSpent.toLocaleString()}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center justify-center gap-0.5">
-                              {getRatingStars(vendor.rating)}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            
-            {/* Spending by Category */}
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-4">
-                <h3 className="font-semibold text-white mb-4">Spending by Category</h3>
-                <div className="space-y-3">
-                  {categories.map(category => {
-                    const categoryVendors = vendors.filter(v => v.category === category);
-                    const categorySpent = vendorPerformance
-                      .filter(vp => categoryVendors.some(v => v.id === vp.vendorId))
-                      .reduce((sum, vp) => sum + vp.totalSpent, 0);
-                    const percentage = stats.totalSpent > 0 ? Math.round(categorySpent / stats.totalSpent * 100) : 0;
-                    
-                    return (
-                      <div key={category}>
-                        <div className="flex justify-between text-sm mb-1">
-                          <span className="text-slate-300">{category}</span>
-                          <span className="text-white">${categorySpent.toLocaleString()} ({percentage}%)</span>
-                        </div>
-                        <div className="w-full bg-slate-700 rounded-full h-2">
-                          <div
-                            className="bg-orange-500 h-2 rounded-full"
-                            style={{ width: `${percentage}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-              
-              <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-4">
-                <h3 className="font-semibold text-white mb-4">Top Vendors by Spend</h3>
-                <div className="space-y-3">
-                  {[...vendorPerformance]
-                    .sort((a, b) => b.totalSpent - a.totalSpent)
-                    .slice(0, 5)
-                    .map((perf, idx) => {
-                      const vendor = vendors.find(v => v.id === perf.vendorId);
-                      if (!vendor) return null;
-                      
-                      return (
-                        <div key={perf.vendorId} className="flex items-center justify-between p-2 bg-slate-900/50 rounded-lg">
-                          <div className="flex items-center gap-3">
-                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                              idx === 0 ? 'bg-yellow-500 text-black' :
-                              idx === 1 ? 'bg-slate-400 text-black' :
-                              idx === 2 ? 'bg-orange-600 text-white' :
-                              'bg-slate-700 text-slate-300'
-                            }`}>
-                              {idx + 1}
-                            </span>
-                            <span className="text-white">{vendor.name}</span>
-                          </div>
-                          <span className="text-green-400 font-medium">${perf.totalSpent.toLocaleString()}</span>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Order History Tab */}
-        {activeTab === 'history' && (
-          <div className="space-y-6">
-            <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-4">
-              <h3 className="font-semibold text-white mb-4">Monthly Order Summary</h3>
-              <div className="space-y-3">
-                {orderHistory.map(([month, data]) => (
-                  <div key={month} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-slate-700 rounded-lg flex items-center justify-center">
-                        <Calendar className="w-5 h-5 text-orange-400" />
-                      </div>
-                      <div>
-                        <p className="text-white font-medium">
-                          {formatLocalDate(month + '-01', { month: 'long', year: 'numeric' })}
-
-                        </p>
-
-                        <p className="text-sm text-slate-400">{data.orders} orders placed</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xl font-bold text-green-400">${data.spent.toLocaleString()}</p>
-                      <p className="text-sm text-slate-400">Total spent</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            
-            {/* Recent Orders Timeline */}
-            <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-4">
-              <h3 className="font-semibold text-white mb-4">Recent Order Activity</h3>
-              <div className="space-y-4">
-                {purchaseOrders.slice(0, 10).map((po, idx) => (
-                  <div key={po.id} className="flex gap-4">
-                    <div className="flex flex-col items-center">
-                      <div className={`w-3 h-3 rounded-full ${
-                        po.status === 'Received' ? 'bg-green-400' :
-                        po.status === 'Shipped' ? 'bg-yellow-400' :
-                        po.status === 'Cancelled' ? 'bg-red-400' :
-                        'bg-blue-400'
-                      }`} />
-                      {idx < purchaseOrders.slice(0, 10).length - 1 && (
-                        <div className="w-0.5 h-full bg-slate-700 mt-1" />
-                      )}
-                    </div>
-                    <div className="flex-1 pb-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-white font-medium">{po.id} - {po.vendorName}</p>
-                          <p className="text-sm text-slate-400">{po.createdDate} • {po.items.length} items</p>
-                        </div>
-                        <div className="text-right">
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusColor(po.status)}`}>
-                            {po.status}
-                          </span>
-                          <p className="text-green-400 font-medium mt-1">${po.total.toLocaleString()}</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Vendor Modal */}
@@ -1312,8 +885,7 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
             </div>
             
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
+              <div>
                   <label className="block text-sm text-slate-400 mb-1">Vendor Name *</label>
                   <input
                     type="text"
@@ -1322,18 +894,7 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Vendor Code *</label>
-                  <input
-                    type="text"
-                    value={newVendor.code}
-                    onChange={(e) => setNewVendor({ ...newVendor, code: e.target.value.toUpperCase() })}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                    maxLength={10}
-                  />
-                </div>
 
-              </div>
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -1435,41 +996,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
                 </div>
               </div>
               
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Payment Terms</label>
-                  <select
-                    value={newVendor.paymentTerms}
-                    onChange={(e) => setNewVendor({ ...newVendor, paymentTerms: e.target.value })}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                  >
-                    <option value="Net 15">Net 15</option>
-                    <option value="Net 30">Net 30</option>
-                    <option value="Net 45">Net 45</option>
-                    <option value="Net 60">Net 60</option>
-                    <option value="COD">COD</option>
-                    <option value="Prepaid">Prepaid</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Discount %</label>
-                  <input
-                    type="number"
-                    value={newVendor.discountPercent}
-                    onChange={(e) => setNewVendor({ ...newVendor, discountPercent: parseFloat(e.target.value) || 0 })}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Lead Time (days)</label>
-                  <input
-                    type="number"
-                    value={newVendor.leadTimeDays}
-                    onChange={(e) => setNewVendor({ ...newVendor, leadTimeDays: parseInt(e.target.value) || 0 })}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                  />
-                </div>
-              </div>
+
+
               
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Notes</label>
@@ -1491,7 +1019,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
               </button>
               <button
                 onClick={handleSaveVendor}
-                disabled={!newVendor.name || !newVendor.code}
+                disabled={!newVendor.name}
+
                 className="flex-1 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 disabled:opacity-50"
               >
                 {editingVendor ? 'Save Changes' : 'Add Vendor'}

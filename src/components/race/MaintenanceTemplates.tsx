@@ -1,8 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { getLocalDateString } from '@/lib/utils';
 import { useApp } from '@/contexts/AppContext';
-import { useCar } from '@/contexts/CarContext';
-import CarDropdown from '@/components/race/CarDropdown';
+
 import { MaintenanceItem } from '@/data/proModData';
 import { toast } from 'sonner';
 import {
@@ -230,7 +229,6 @@ interface MaintenanceTemplatesProps {
 
 const MaintenanceTemplates: React.FC<MaintenanceTemplatesProps> = ({ onApplyTemplate }) => {
   const { addMaintenanceItem, maintenanceItems, partsInventory } = useApp();
-  const { selectedCarId } = useCar();
 
   const [templates, setTemplates] = useState<MaintenanceTemplate[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -243,11 +241,12 @@ const MaintenanceTemplates: React.FC<MaintenanceTemplatesProps> = ({ onApplyTemp
   const [editingTemplate, setEditingTemplate] = useState<MaintenanceTemplate | null>(null);
   const [showApplyModal, setShowApplyModal] = useState(false);
   const [applyingTemplate, setApplyingTemplate] = useState<MaintenanceTemplate | null>(null);
-  const [applyCarId, setApplyCarId] = useState<string>(selectedCarId || '');
+  const [applyCarId, setApplyCarId] = useState<string>('');
   const [applySelectedItems, setApplySelectedItems] = useState<Set<string>>(new Set());
   const [isApplying, setIsApplying] = useState(false);
 
   // Create/Edit form state
+
   const [formName, setFormName] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formType, setFormType] = useState<MaintenanceTemplate['type']>('Custom');
@@ -476,10 +475,11 @@ const MaintenanceTemplates: React.FC<MaintenanceTemplatesProps> = ({ onApplyTemp
 
   const openApplyModal = (template: MaintenanceTemplate) => {
     setApplyingTemplate(template);
-    setApplyCarId(selectedCarId || '');
+    setApplyCarId('');
     setApplySelectedItems(new Set(template.items.map(i => i.id)));
     setShowApplyModal(true);
   };
+
 
   const toggleApplyItem = (itemId: string) => {
     setApplySelectedItems(prev => {
@@ -1330,17 +1330,8 @@ const MaintenanceTemplates: React.FC<MaintenanceTemplatesProps> = ({ onApplyTemp
               </button>
             </div>
 
-            {/* Car Selection */}
-            <div className="mb-5">
-              <CarDropdown
-                value={applyCarId}
-                onChange={setApplyCarId}
-                label="Apply to Car"
-              />
-              <p className="text-xs text-slate-500 mt-1">
-                All selected maintenance items will be assigned to this car. Leave blank for no car assignment.
-              </p>
-            </div>
+            {/* Item Selection */}
+
 
             {/* Item Selection */}
             <div className="mb-5">

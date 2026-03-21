@@ -5,6 +5,9 @@ import { getLocalDateString } from '@/lib/utils';
 
 import { useApp } from '@/contexts/AppContext';
 import BackupRestore from './BackupRestore';
+import DatabaseHealthCheck from './DatabaseHealthCheck';
+
+
 import StorageSetupGuide from './StorageSetupGuide';
 import SyncHistoryTab from './SyncHistoryTab';
 
@@ -76,8 +79,10 @@ import {
   Upload,
   DollarSign,
   Phone,
-  RotateCcw
+  RotateCcw,
+  Activity
 } from 'lucide-react';
+
 
 
 
@@ -99,7 +104,8 @@ interface AdminSettingsProps {
   currentRole: CrewRole;
 }
 
-type AdminSection = 'roles' | 'team' | 'engines' | 'superchargers' | 'heads' | 'maintenance' | 'sfi' | 'parts' | 'auditlog' | 'sampledata' | 'backup' | 'storage' | 'alerts' | 'synchistory';
+type AdminSection = 'roles' | 'team' | 'engines' | 'superchargers' | 'heads' | 'maintenance' | 'sfi' | 'parts' | 'auditlog' | 'sampledata' | 'backup' | 'storage' | 'alerts' | 'synchistory' | 'healthcheck';
+
 
 
 type AuditDateRange = '1d' | '7d' | '30d' | 'all';
@@ -560,6 +566,7 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
 
   const sections = [
 
+    { id: 'healthcheck', label: 'DB Health Check', icon: Activity, adminOnly: false },
     { id: 'storage', label: 'Storage & Uploads', icon: Upload, adminOnly: false },
     { id: 'backup', label: 'Backup & Restore', icon: HardDrive, adminOnly: false },
     { id: 'alerts', label: 'Maintenance Alerts', icon: AlertTriangle, adminOnly: false, count: currentAlerts.length > 0 ? currentAlerts.length : undefined },
@@ -577,6 +584,7 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
     { id: 'sfi', label: 'SFI Certs', icon: Shield, count: sfiCertifications.length },
     { id: 'parts', label: 'Parts Inventory', icon: Package, count: partsInventory.length }
   ];
+
 
 
 
@@ -1574,7 +1582,13 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
             {activeSection === 'synchistory' && (
               <SyncHistoryTab />
             )}
+
+            {/* Database Health Check */}
+            {activeSection === 'healthcheck' && (
+              <DatabaseHealthCheck />
+            )}
           </div>
+
 
 
 

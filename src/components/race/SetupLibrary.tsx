@@ -5,8 +5,8 @@ import { toast } from 'sonner';
 
 
 import DateInputDark from '@/components/ui/DateInputDark';
-import CarDropdown from '@/components/race/CarDropdown';
-import { useCar } from '@/contexts/CarContext';
+
+
 import ChassisSetup from '@/components/race/ChassisSetup';
 
 import { useApp } from '@/contexts/AppContext';
@@ -94,10 +94,12 @@ interface CylinderHead {
   passesSinceRefresh: number;
   status: 'Active' | 'Ready' | 'Refresh' | 'Retired';
   position: 'Left' | 'Right' | 'Spare';
+  currentlyInstalled: boolean;
   engineId?: string;
   notes: string;
   components: Record<string, ComponentTracker>;
 }
+
 
 interface Supercharger {
   id: string;
@@ -133,7 +135,7 @@ const getPowerAdderTypeBadgeColor = (type?: PowerAdderType): string => {
 
 const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => {
 
-  const { selectedCarId, cars, getCarLabel, activeCars } = useCar();
+  // Single-car mode — no car filtering needed; all components belong to the one car
 
 
   const { 
@@ -159,15 +161,14 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
     performDrivetrainSwap
   } = useApp();
 
-  // Helper: check if a car_id is empty/null/undefined
-  const isEmptyCarId = (id: any): boolean => !id || id === '';
+  // Single-car mode — show all data without filtering
+  const engines = allEngines;
+  const cylinderHeads = allCylinderHeads;
+  const superchargers = allSuperchargers;
+  const drivetrainComponents = allDrivetrainComponents;
+  const drivetrainSwapLogs = allDrivetrainSwapLogs;
 
-  // Filter by selected car — when no car selected show ALL; when car selected show matching + legacy (no car_id)
-  const engines = useMemo(() => (selectedCarId && selectedCarId !== '') ? allEngines.filter((e: any) => e.car_id === selectedCarId || isEmptyCarId(e.car_id)) : allEngines, [allEngines, selectedCarId]);
-  const cylinderHeads = useMemo(() => (selectedCarId && selectedCarId !== '') ? allCylinderHeads.filter((h: any) => h.car_id === selectedCarId || isEmptyCarId(h.car_id)) : allCylinderHeads, [allCylinderHeads, selectedCarId]);
-  const superchargers = useMemo(() => (selectedCarId && selectedCarId !== '') ? allSuperchargers.filter((s: any) => s.car_id === selectedCarId || isEmptyCarId(s.car_id)) : allSuperchargers, [allSuperchargers, selectedCarId]);
-  const drivetrainComponents = useMemo(() => (selectedCarId && selectedCarId !== '') ? allDrivetrainComponents.filter((c: any) => c.car_id === selectedCarId || isEmptyCarId(c.car_id)) : allDrivetrainComponents, [allDrivetrainComponents, selectedCarId]);
-  const drivetrainSwapLogs = useMemo(() => (selectedCarId && selectedCarId !== '') ? allDrivetrainSwapLogs.filter((l: any) => l.car_id === selectedCarId || isEmptyCarId(l.car_id)) : allDrivetrainSwapLogs, [allDrivetrainSwapLogs, selectedCarId]);
+
 
   // Active vendors derived from centralized AppContext (no more independent fetching)
   const vendorsList = useMemo(() => allVendors.filter((v: any) => v.isActive), [allVendors]);
@@ -208,6 +209,23 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   const [scSwapPerformedBy, setScSwapPerformedBy] = useState('');
   const [scSwapNotes, setScSwapNotes] = useState('');
 
+  // ─── Engine Swap Modal State ────────────────────────────────────────────────
+  const [showEngineSwapModal, setShowEngineSwapModal] = useState(false);
+  const [engineSwapPreviousId, setEngineSwapPreviousId] = useState('');
+  const [engineSwapNewId, setEngineSwapNewId] = useState('');
+  const [engineSwapReason, setEngineSwapReason] = useState('');
+  const [engineSwapPerformedBy, setEngineSwapPerformedBy] = useState('');
+  const [engineSwapNotes, setEngineSwapNotes] = useState('');
+
+  // ─── Cylinder Head Swap Modal State ──────────────────────────────────────────
+  const [showHeadSwapModal, setShowHeadSwapModal] = useState(false);
+  const [headSwapPreviousId, setHeadSwapPreviousId] = useState('');
+  const [headSwapNewId, setHeadSwapNewId] = useState('');
+  const [headSwapReason, setHeadSwapReason] = useState('');
+  const [headSwapPerformedBy, setHeadSwapPerformedBy] = useState('');
+  const [headSwapNotes, setHeadSwapNotes] = useState('');
+
+
   // Auto-populate previous SC when swap modal opens
   useEffect(() => {
     if (showSCSwapModal) {
@@ -246,6 +264,87 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
     setScSwapPerformedBy('');
     setScSwapNotes('');
   };
+
+  // ─── Engine Swap: Auto-populate previous engine when modal opens ────────────
+  useEffect(() => {
+    if (showEngineSwapModal) {
+      const installed = engines.find(e => e.currentlyInstalled);
+      setEngineSwapPreviousId(installed?.id || '');
+      setEngineSwapNewId('');
+    }
+  }, [showEngineSwapModal, engines]);
+
+  // ─── Engine Swap Handler ────────────────────────────────────────────────────
+  const handlePerformEngineSwap = async () => {
+    if (!engineSwapPreviousId || !engineSwapNewId || !engineSwapReason || !engineSwapPerformedBy) return;
+    const today = getLocalDateString();
+    try {
+      // Mark old engine as not installed
+      await updateEngine(engineSwapPreviousId, {
+        currentlyInstalled: false,
+        status: 'Ready' as EngineStatus,
+      });
+      // Mark new engine as installed
+      await updateEngine(engineSwapNewId, {
+        currentlyInstalled: true,
+        status: 'Active' as EngineStatus,
+        installDate: today,
+      });
+      const prevEng = engines.find(e => e.id === engineSwapPreviousId);
+      const newEng = engines.find(e => e.id === engineSwapNewId);
+      toast.success(`Swapped "${prevEng?.name || 'Unknown'}" out, installed "${newEng?.name || 'Unknown'}"`, { duration: 5000 });
+    } catch (err) {
+      console.error('[EngineSwap] Error:', err);
+      toast.error('Failed to perform engine swap.');
+    }
+    setShowEngineSwapModal(false);
+    setEngineSwapPreviousId('');
+    setEngineSwapNewId('');
+    setEngineSwapReason('');
+    setEngineSwapPerformedBy('');
+    setEngineSwapNotes('');
+  };
+
+  // ─── Cylinder Head Swap: Auto-populate previous head when modal opens ───────
+  useEffect(() => {
+    if (showHeadSwapModal) {
+      const installed = cylinderHeads.find(h => h.currentlyInstalled || h.status === 'Active');
+      setHeadSwapPreviousId(installed?.id || '');
+      setHeadSwapNewId('');
+    }
+  }, [showHeadSwapModal, cylinderHeads]);
+
+  // ─── Cylinder Head Swap Handler ─────────────────────────────────────────────
+  const handlePerformHeadSwap = async () => {
+    if (!headSwapPreviousId || !headSwapNewId || !headSwapReason || !headSwapPerformedBy) return;
+    const today = getLocalDateString();
+    try {
+      // Mark old head as not installed
+      await updateCylinderHead(headSwapPreviousId, {
+        currentlyInstalled: false,
+        status: 'Ready' as HeadStatus,
+      });
+      // Mark new head as installed
+      await updateCylinderHead(headSwapNewId, {
+        currentlyInstalled: true,
+        status: 'Active' as HeadStatus,
+        installDate: today,
+      });
+      const prevHead = cylinderHeads.find(h => h.id === headSwapPreviousId);
+      const newHeadItem = cylinderHeads.find(h => h.id === headSwapNewId);
+      toast.success(`Swapped "${prevHead?.name || 'Unknown'}" out, installed "${newHeadItem?.name || 'Unknown'}"`, { duration: 5000 });
+    } catch (err) {
+      console.error('[HeadSwap] Error:', err);
+      toast.error('Failed to perform cylinder head swap.');
+    }
+    setShowHeadSwapModal(false);
+    setHeadSwapPreviousId('');
+    setHeadSwapNewId('');
+    setHeadSwapReason('');
+    setHeadSwapPerformedBy('');
+    setHeadSwapNotes('');
+  };
+
 
 
   // Swap counts by category
@@ -457,9 +556,11 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
     passesSinceRefresh: 0,
     status: 'Ready',
     position: 'Spare',
+    currentlyInstalled: false,
     notes: '',
     components: defaultHeadComponents
   };
+
 
   const defaultSupercharger: Supercharger = {
     id: '',
@@ -496,40 +597,33 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   // ─── Record Pass Modal State ────────────────────────────────────────────────
   const [showRecordPassModal, setShowRecordPassModal] = useState(false);
   const [recordPassCount, setRecordPassCount] = useState(1);
-  const [recordPassCarId, setRecordPassCarId] = useState<string>(selectedCarId || (activeCars.length === 1 ? activeCars[0].id : ''));
   const [recordPassLoading, setRecordPassLoading] = useState(false);
 
-  // Keep recordPassCarId in sync with selectedCarId
-  useEffect(() => {
-    if (selectedCarId) setRecordPassCarId(selectedCarId);
-  }, [selectedCarId]);
-
-  // ─── Pass History Log ───────────────────────────────────────────────────────
-  interface PassHistoryEntry {
-    id: string;
-    date: string;
-    time: string;
-    carId: string;
-    carName: string;
-    passCount: number;
-    componentsUpdated: number;
-    flaggedCount: number;
-  }
-
-  const PASS_HISTORY_KEY = 'setupLibrary_passHistory';
-  const [passHistory, setPassHistory] = useState<PassHistoryEntry[]>(() => {
-    try {
-      const stored = localStorage.getItem(PASS_HISTORY_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch { return []; }
-  });
+  // ─── Pass History Log (database-backed — replaces localStorage) ───────────────
+  // Uses PassHistoryEntry from database.ts (already imported on line 15).
+  const [passHistory, setPassHistory] = useState<PassHistoryEntry[]>([]);
+  const [passHistoryLoaded, setPassHistoryLoaded] = useState(false);
   const [showPassHistory, setShowPassHistory] = useState(false);
 
-  const addPassHistoryEntry = (entry: PassHistoryEntry) => {
-    const updated = [entry, ...passHistory].slice(0, 50); // keep last 50
-    setPassHistory(updated);
-    try { localStorage.setItem(PASS_HISTORY_KEY, JSON.stringify(updated)); } catch {}
-  };
+  // Load pass history from database on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const entries = await db.fetchPassHistory();
+        if (!cancelled) {
+          setPassHistory(entries);
+          setPassHistoryLoaded(true);
+        }
+      } catch (err) {
+        console.error('[SetupLibrary] Failed to load pass history from database:', err);
+        if (!cancelled) setPassHistoryLoaded(true); // mark loaded even on error so UI isn't stuck
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+
 
   // ─── Bulk Service Reset State ───────────────────────────────────────────────
   const [showBulkResetModal, setShowBulkResetModal] = useState(false);
@@ -552,14 +646,13 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
 
 
 
-  // ─── Record Pass Handler ────────────────────────────────────────────────────
+  // ─── Record Pass Handler (single-car mode — updates ALL installed components) ──
   const handleRecordPass = async () => {
-    if (!recordPassCarId || recordPassCount < 1) return;
+    if (recordPassCount < 1) return;
     setRecordPassLoading(true);
 
     const n = recordPassCount;
-    const carId = recordPassCarId;
-    const matchesCar = (item: any) => item.car_id === carId || isEmptyCarId(item.car_id);
+
 
     // Helper: increment sub-component pass counts and auto-flag status
     const bumpSubComponents = (comps: Record<string, ComponentTracker> | undefined): Record<string, ComponentTracker> | undefined => {
@@ -597,8 +690,8 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
     };
 
     try {
-      // 1. Update installed engines
-      const installedEngines = allEngines.filter((e: any) => e.currentlyInstalled && matchesCar(e));
+      // 1. Update installed engines (single-car: all installed components)
+      const installedEngines = allEngines.filter((e: any) => e.currentlyInstalled);
       for (const eng of installedEngines) {
         const updatedComponents = bumpSubComponents(eng.components);
         await updateEngine(eng.id, {
@@ -611,7 +704,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
       }
 
       // 2. Update active cylinder heads (status === 'Active')
-      const activeHeads = allCylinderHeads.filter((h: any) => h.status === 'Active' && matchesCar(h));
+      const activeHeads = allCylinderHeads.filter((h: any) => h.status === 'Active');
       for (const head of activeHeads) {
         const updatedComponents = bumpSubComponents(head.components);
         await updateCylinderHead(head.id, {
@@ -624,7 +717,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
       }
 
       // 3. Update installed power adders
-      const installedSCs = allSuperchargers.filter((s: any) => s.currentlyInstalled && matchesCar(s));
+      const installedSCs = allSuperchargers.filter((s: any) => s.currentlyInstalled);
       for (const sc of installedSCs) {
         const scTyped = sc as Supercharger;
         const updatedComponents = bumpSubComponents(scTyped.components);
@@ -638,7 +731,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
       }
 
       // 4. Update installed drivetrain components
-      const installedDT = allDrivetrainComponents.filter((d: any) => d.currentlyInstalled && matchesCar(d));
+      const installedDT = allDrivetrainComponents.filter((d: any) => d.currentlyInstalled);
       for (const dt of installedDT) {
         const updatedComponents = bumpSubComponents(dt.components);
         await updateDrivetrainComponent(dt.id, {
@@ -649,6 +742,9 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
         totalUpdated++;
         collectFlags(dt.name, updatedComponents);
       }
+
+
+
 
       // Un-dismiss alert banners so new alerts show immediately
       setAlertBannerDismissed(false);
@@ -671,18 +767,47 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
       console.error('[RecordPass] Error:', err);
       toast.error('Failed to record passes. Some components may not have been updated.');
     } finally {
-      // Log to pass history
+      // Build a rich PassHistoryEntry and persist to database
       const now = new Date();
-      addPassHistoryEntry({
+      const newEntry: PassHistoryEntry = {
         id: `PH-${Date.now()}`,
-        date: getLocalDateString(),
-        time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        carId: carId,
-        carName: getCarLabel(carId),
         passCount: n,
         componentsUpdated: totalUpdated,
         flaggedCount: flaggedDue.length,
+        flaggedDetails: flaggedDue.map(desc => {
+          // Parse "ParentName > ComponentName [Status]" format
+          const match = desc.match(/^(.+?) > (.+?) \[(.+?)\]$/);
+          return {
+            parentName: match?.[1] || '',
+            componentName: match?.[2] || '',
+            status: match?.[3] || '',
+            percentUsed: 0, // not tracked in the flaggedDue strings
+          };
+        }),
+        enginesUpdated: allEngines
+          .filter((e: any) => e.currentlyInstalled)
+          .map((e: any) => ({ id: e.id, name: e.name, newTotal: e.totalPasses + n, newSinceRebuild: e.passesSinceRebuild + n })),
+        headsUpdated: allCylinderHeads
+          .filter((h: any) => h.status === 'Active')
+          .map((h: any) => ({ id: h.id, name: h.name, newTotal: h.totalPasses + n, newSinceRefresh: h.passesSinceRefresh + n })),
+        powerAddersUpdated: allSuperchargers
+          .filter((s: any) => s.currentlyInstalled)
+          .map((s: any) => ({ id: s.id, name: s.name, newTotal: s.totalPasses + n, newSinceService: s.passesSinceService + n })),
+        drivetrainUpdated: allDrivetrainComponents
+          .filter((d: any) => d.currentlyInstalled)
+          .map((d: any) => ({ id: d.id, name: d.name, category: d.category, newTotal: d.totalPasses + n, newSinceService: d.passesSinceService + n })),
+        createdAt: now.toISOString(),
+      };
+
+      // Optimistically update local state (prepend, keep last 50)
+      setPassHistory(prev => [newEntry, ...prev].slice(0, 50));
+
+      // Persist to database (fire-and-forget — don't block UI)
+      db.insertPassHistory(newEntry).catch(err => {
+        console.error('[RecordPass] Failed to persist pass history to database:', err);
+        toast.error('Pass recorded but history entry failed to save to database.');
       });
+
       setRecordPassLoading(false);
       setShowRecordPassModal(false);
       setRecordPassCount(1);
@@ -1362,10 +1487,10 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
             </button>
             <button
               onClick={() => {
-                setRecordPassCarId(selectedCarId || (activeCars.length === 1 ? activeCars[0].id : ''));
                 setRecordPassCount(1);
                 setShowRecordPassModal(true);
               }}
+
               className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-500 hover:to-emerald-500 transition-all shadow-lg shadow-green-600/20 whitespace-nowrap"
             >
               <Play className="w-5 h-5" />
@@ -1387,7 +1512,11 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
               </button>
             </div>
             <div className="space-y-2 max-h-48 overflow-y-auto">
-              {passHistory.slice(0, 20).map((entry) => (
+              {passHistory.slice(0, 20).map((entry) => {
+                const d = new Date(entry.createdAt);
+                const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+                const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                return (
                 <div key={entry.id} className="flex items-center justify-between p-2.5 bg-slate-900/50 rounded-lg border border-slate-700/30">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
@@ -1395,9 +1524,11 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                     </div>
                     <div>
                       <p className="text-sm text-white font-medium">
-                        +{entry.passCount} pass{entry.passCount !== 1 ? 'es' : ''} <span className="text-slate-400 font-normal">on</span> {entry.carName}
+                        +{entry.passCount} pass{entry.passCount !== 1 ? 'es' : ''} recorded
                       </p>
-                      <p className="text-xs text-slate-500">{entry.date} at {entry.time} &middot; {entry.componentsUpdated} components updated</p>
+                      <p className="text-xs text-slate-500">
+                        {dateStr} at {timeStr} &middot; {entry.componentsUpdated} components updated
+                      </p>
                     </div>
                   </div>
                   {entry.flaggedCount > 0 && (
@@ -1406,11 +1537,11 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                     </span>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
-
 
 
         {/* Service Alert Banner */}
@@ -1509,7 +1640,15 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
         {/* Engines Tab */}
         {activeTab === 'engines' && (
           <div className="space-y-4">
-            <div className="flex justify-end mb-4">
+            <div className="flex justify-end gap-2 mb-4">
+
+              <button
+                onClick={() => setShowEngineSwapModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg font-medium hover:bg-cyan-700 transition-colors whitespace-nowrap"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Swap Engine
+              </button>
               <button
                 onClick={() => {
                   setEditingEngine(null);
@@ -1522,6 +1661,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                 Add Engine
               </button>
             </div>
+
             
             {engines.map((engine) => {
               const issueCount = countComponentIssues(engine.components);
@@ -1907,7 +2047,15 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
         {/* Cylinder Heads Tab */}
         {activeTab === 'heads' && (
           <div className="space-y-4">
-            <div className="flex justify-end mb-4">
+           <div className="flex justify-end gap-2 mb-4">
+
+              <button
+                onClick={() => setShowHeadSwapModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg font-medium hover:bg-cyan-700 transition-colors whitespace-nowrap"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Swap Cylinder Head
+              </button>
               <button
                 onClick={() => {
                   setEditingHead(null);
@@ -1920,6 +2068,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                 Add Cylinder Head
               </button>
             </div>
+
             
             {cylinderHeads.map((head) => {
               const issueCount = countComponentIssues(head.components);
@@ -2917,8 +3066,27 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                   />
                 </div>
               </div>
-              
+
+
+
+              {/* Currently Installed Toggle */}
+              <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                <span className="text-sm text-slate-300">Currently Installed</span>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <div
+                    onClick={() => setNewEngine({ ...newEngine, currentlyInstalled: !newEngine.currentlyInstalled })}
+                    className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${newEngine.currentlyInstalled ? 'bg-green-500' : 'bg-slate-600'}`}
+                  >
+                    <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${newEngine.currentlyInstalled ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                  </div>
+                  <span className={`text-sm font-medium ${newEngine.currentlyInstalled ? 'text-green-400' : 'text-slate-500'}`}>
+                    {newEngine.currentlyInstalled ? 'Yes' : 'No'}
+                  </span>
+                </label>
+              </div>
+
               <div>
+
                 <label className="block text-sm text-slate-400 mb-1">Notes</label>
                 <textarea
                   value={newEngine.notes}
@@ -3210,6 +3378,22 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                   ))}
                 </select>
               </div>
+
+              {/* Currently Installed Toggle */}
+              <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                <span className="text-sm text-slate-300">Currently Installed</span>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <div
+                    onClick={() => setNewHead({ ...newHead, currentlyInstalled: !newHead.currentlyInstalled })}
+                    className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${newHead.currentlyInstalled ? 'bg-green-500' : 'bg-slate-600'}`}
+                  >
+                    <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${newHead.currentlyInstalled ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                  </div>
+                  <span className={`text-sm font-medium ${newHead.currentlyInstalled ? 'text-green-400' : 'text-slate-500'}`}>
+                    {newHead.currentlyInstalled ? 'Yes' : 'No'}
+                  </span>
+                </label>
+              </div>
               
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Notes</label>
@@ -3220,6 +3404,7 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
                   className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                 />
               </div>
+
             </div>
             
             <div className="flex gap-3 mt-6">
@@ -3786,6 +3971,272 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
       )}
 
 
+
+      {/* ─── Engine Swap Modal ─────────────────────────────────────────── */}
+      {showEngineSwapModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl max-w-lg w-full p-6 border border-cyan-500/30 shadow-2xl shadow-cyan-500/10 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <RefreshCw className="w-5 h-5 text-cyan-400" />
+                Swap Engine
+              </h3>
+              <button onClick={() => setShowEngineSwapModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Swap visualization preview */}
+            {engineSwapPreviousId && engineSwapNewId && (
+              <div className="flex items-center gap-3 mb-5">
+                <div className="flex-1 bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+                  <p className="text-xs text-red-400 mb-0.5 uppercase tracking-wide">Removing</p>
+                  <p className="text-sm font-semibold text-white">{engines.find(e => e.id === engineSwapPreviousId)?.name || 'Unknown'}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">S/N: {engines.find(e => e.id === engineSwapPreviousId)?.serialNumber || ''}</p>
+                </div>
+                <div className="flex-shrink-0">
+                  <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center">
+                    <ArrowRight className="w-4 h-4 text-cyan-400" />
+                  </div>
+                </div>
+                <div className="flex-1 bg-green-500/10 border border-green-500/20 rounded-lg p-3">
+                  <p className="text-xs text-green-400 mb-0.5 uppercase tracking-wide">Installing</p>
+                  <p className="text-sm font-semibold text-white">{engines.find(e => e.id === engineSwapNewId)?.name || 'Unknown'}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">S/N: {engines.find(e => e.id === engineSwapNewId)?.serialNumber || ''}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Previous Engine (being removed) *</label>
+                <select
+                  value={engineSwapPreviousId}
+                  onChange={(e) => setEngineSwapPreviousId(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Select engine...</option>
+                  {engines.map(eng => (
+                    <option key={eng.id} value={eng.id}>
+                      {eng.name}{eng.currentlyInstalled ? ' (Currently Installed)' : ''} - {eng.builder} [{eng.status}]
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">New Engine (being installed) *</label>
+                <select
+                  value={engineSwapNewId}
+                  onChange={(e) => setEngineSwapNewId(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Select engine...</option>
+                  {engines.filter(eng => eng.id !== engineSwapPreviousId).map(eng => (
+                    <option key={eng.id} value={eng.id}>
+                      {eng.name} - {eng.builder} [{eng.status}]
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Reason for Swap *</label>
+                <select
+                  value={engineSwapReason}
+                  onChange={(e) => setEngineSwapReason(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Select reason...</option>
+                  <option value="Scheduled Maintenance">Scheduled Maintenance</option>
+                  <option value="Component Failure">Component Failure</option>
+                  <option value="Performance Upgrade">Performance Upgrade</option>
+                  <option value="Testing / R&D">Testing / R&D</option>
+                  <option value="Rebuild Required">Rebuild Required</option>
+                  <option value="Preventive Replacement">Preventive Replacement</option>
+                  <option value="Damage / Breakage">Damage / Breakage</option>
+                  <option value="Setup Change">Setup Change</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Performed By *</label>
+                <input
+                  type="text"
+                  value={engineSwapPerformedBy}
+                  onChange={(e) => setEngineSwapPerformedBy(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  placeholder="e.g., John Smith"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Notes</label>
+                <textarea
+                  value={engineSwapNotes}
+                  onChange={(e) => setEngineSwapNotes(e.target.value)}
+                  rows={3}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  placeholder="Additional notes about this engine swap..."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowEngineSwapModal(false)}
+                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePerformEngineSwap}
+                disabled={!engineSwapPreviousId || !engineSwapNewId || !engineSwapReason || !engineSwapPerformedBy}
+                className="flex-1 px-4 py-2 bg-cyan-600 text-white rounded-lg font-medium hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Swap Engine
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Cylinder Head Swap Modal ──────────────────────────────────── */}
+      {showHeadSwapModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl max-w-lg w-full p-6 border border-cyan-500/30 shadow-2xl shadow-cyan-500/10 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <RefreshCw className="w-5 h-5 text-cyan-400" />
+                Swap Cylinder Head
+              </h3>
+              <button onClick={() => setShowHeadSwapModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Swap visualization preview */}
+            {headSwapPreviousId && headSwapNewId && (
+              <div className="flex items-center gap-3 mb-5">
+                <div className="flex-1 bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+                  <p className="text-xs text-red-400 mb-0.5 uppercase tracking-wide">Removing</p>
+                  <p className="text-sm font-semibold text-white">{cylinderHeads.find(h => h.id === headSwapPreviousId)?.name || 'Unknown'}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">S/N: {cylinderHeads.find(h => h.id === headSwapPreviousId)?.serialNumber || ''}</p>
+                </div>
+                <div className="flex-shrink-0">
+                  <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center">
+                    <ArrowRight className="w-4 h-4 text-cyan-400" />
+                  </div>
+                </div>
+                <div className="flex-1 bg-green-500/10 border border-green-500/20 rounded-lg p-3">
+                  <p className="text-xs text-green-400 mb-0.5 uppercase tracking-wide">Installing</p>
+                  <p className="text-sm font-semibold text-white">{cylinderHeads.find(h => h.id === headSwapNewId)?.name || 'Unknown'}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">S/N: {cylinderHeads.find(h => h.id === headSwapNewId)?.serialNumber || ''}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Previous Cylinder Head (being removed) *</label>
+                <select
+                  value={headSwapPreviousId}
+                  onChange={(e) => setHeadSwapPreviousId(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Select cylinder head...</option>
+                  {cylinderHeads.map(h => (
+                    <option key={h.id} value={h.id}>
+                      {h.name}{(h.currentlyInstalled || h.status === 'Active') ? ' (Currently Installed)' : ''} - {h.position} [{h.status}]
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">New Cylinder Head (being installed) *</label>
+                <select
+                  value={headSwapNewId}
+                  onChange={(e) => setHeadSwapNewId(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Select cylinder head...</option>
+                  {cylinderHeads.filter(h => h.id !== headSwapPreviousId).map(h => (
+                    <option key={h.id} value={h.id}>
+                      {h.name} - {h.position} [{h.status}]
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Reason for Swap *</label>
+                <select
+                  value={headSwapReason}
+                  onChange={(e) => setHeadSwapReason(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Select reason...</option>
+                  <option value="Scheduled Maintenance">Scheduled Maintenance</option>
+                  <option value="Component Failure">Component Failure</option>
+                  <option value="Performance Upgrade">Performance Upgrade</option>
+                  <option value="Testing / R&D">Testing / R&D</option>
+                  <option value="Rebuild Required">Rebuild Required</option>
+                  <option value="Preventive Replacement">Preventive Replacement</option>
+                  <option value="Damage / Breakage">Damage / Breakage</option>
+                  <option value="Setup Change">Setup Change</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Performed By *</label>
+                <input
+                  type="text"
+                  value={headSwapPerformedBy}
+                  onChange={(e) => setHeadSwapPerformedBy(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  placeholder="e.g., John Smith"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Notes</label>
+                <textarea
+                  value={headSwapNotes}
+                  onChange={(e) => setHeadSwapNotes(e.target.value)}
+                  rows={3}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  placeholder="Additional notes about this cylinder head swap..."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowHeadSwapModal(false)}
+                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePerformHeadSwap}
+                disabled={!headSwapPreviousId || !headSwapNewId || !headSwapReason || !headSwapPerformedBy}
+                className="flex-1 px-4 py-2 bg-cyan-600 text-white rounded-lg font-medium hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Swap Cylinder Head
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* Record Pass Modal */}
+
       {/* Record Pass Modal */}
       {showRecordPassModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -3801,23 +4252,11 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
             </div>
 
             <p className="text-sm text-slate-400 mb-5">
-              Instantly update <span className="text-white font-medium">passCount</span>, <span className="text-white font-medium">totalPasses</span>, <span className="text-white font-medium">passesSinceRebuild</span>, <span className="text-white font-medium">passesSinceService</span>, and <span className="text-white font-medium">passesSinceRefresh</span> on ALL currently installed components for the selected car, including every sub-component.
+              Instantly update <span className="text-white font-medium">passCount</span>, <span className="text-white font-medium">totalPasses</span>, <span className="text-white font-medium">passesSinceRebuild</span>, <span className="text-white font-medium">passesSinceService</span>, and <span className="text-white font-medium">passesSinceRefresh</span> on all currently installed components, including every sub-component.
             </p>
 
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Which Car *</label>
-                <select
-                  value={recordPassCarId}
-                  onChange={(e) => setRecordPassCarId(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                >
-                  <option value="">Select a car...</option>
-                  {activeCars.map(car => (
-                    <option key={car.id} value={car.id}>{getCarLabel(car.id)}</option>
-                  ))}
-                </select>
-              </div>
+
 
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Number of Passes to Add</label>
@@ -3841,7 +4280,8 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
               </button>
               <button
                 onClick={handleRecordPass}
-                disabled={!recordPassCarId || recordPassCount < 1 || recordPassLoading}
+                disabled={recordPassCount < 1 || recordPassLoading}
+
                 className="flex-1 px-4 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-500 hover:to-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
               >
                 {recordPassLoading ? (

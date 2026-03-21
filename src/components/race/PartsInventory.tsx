@@ -56,7 +56,9 @@ import {
 import LowStockAlertPanel from './LowStockAlertPanel';
 import ReorderListGenerator from './ReorderListGenerator';
 import CSVImportModal from './CSVImportModal';
-import PartsBackupRestore, { savePartsBackup } from './PartsBackupRestore';
+
+
+
 
 // ============ MAINTENANCE HISTORY (shared with MaintenanceTracker) ============
 interface MaintenanceHistoryEntry {
@@ -131,17 +133,14 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
   const [showPOSuccess, setShowPOSuccess] = useState(false);
   const [lastCreatedPO, setLastCreatedPO] = useState<PurchaseOrder | null>(null);
 
-  // Quick Order Mode
-  const [quickOrderMode, setQuickOrderMode] = useState(false);
-  const [selectedForQuickOrder, setSelectedForQuickOrder] = useState<Set<string>>(new Set());
-
   // Usage History Modal State
   const [showUsageHistoryModal, setShowUsageHistoryModal] = useState(false);
   const [selectedPartForHistory, setSelectedPartForHistory] = useState<PartInventoryItem | null>(null);
 
-  // CSV Import & Backup/Restore Modal State
+  // CSV Import Modal State
   const [showCSVImport, setShowCSVImport] = useState(false);
-  const [showBackupRestore, setShowBackupRestore] = useState(false);
+
+
 
 
   // Reorder List Generator Modal State
@@ -261,13 +260,6 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-backup parts to localStorage whenever partsInventory changes
-  useEffect(() => {
-    if (partsInventory.length > 0) {
-      savePartsBackup(partsInventory);
-    }
-  }, [partsInventory]);
-
 
 
   // CSV Import handler — batch add parts
@@ -276,14 +268,6 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
       await addPartInventory(part);
     }
     toast.success(`Successfully imported ${parts.length} parts`);
-  };
-
-  // Backup restore handler — re-add missing parts
-  const handleRestoreFromBackup = async (parts: PartInventoryItem[]) => {
-    for (const part of parts) {
-      await addPartInventory(part);
-    }
-    toast.success(`Restored ${parts.length} missing parts from backup`);
   };
 
 
@@ -296,7 +280,6 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
   }, []);
 
   // Watch for external trigger to open the ReorderListGenerator modal
-  // (e.g., from Dashboard's LowStockAlertPanel "Reorder Now" / "View Reorder List" buttons)
   const prevReorderTriggerRef = useRef(reorderListTrigger ?? 0);
   useEffect(() => {
     if (
@@ -309,63 +292,82 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
     }
   }, [reorderListTrigger]);
   // ============ VENDORS FROM APPCONTEXT ============
-  // Active vendors derived from centralized context state (no more independent fetching)
   const vendors = useMemo(() => allVendors.filter(v => v.isActive), [allVendors]);
 
 
 
   const categories = useMemo(() => [...new Set(partsInventory.map(p => p.category))], [partsInventory]);
 
-
-  // Default new part
+  // ============ DEFAULT PART & FORM STATE ============
   const defaultPart: PartInventoryItem = {
     id: '',
     partNumber: '',
+    name: '',
     description: '',
     category: 'Engine',
     subcategory: '',
     onHand: 0,
     minQuantity: 1,
-    maxQuantity: 10,
-    unitCost: 0,
-    totalValue: 0,
+    maxQuantity: 5,
     vendor: '',
     vendorPartNumber: '',
-    lastOrdered: getLocalDateString(),
-
+    unitCost: 0,
+    totalValue: 0,
+    lastOrdered: '',
     lastUsed: '',
     location: '',
+    notes: '',
     status: 'In Stock',
     reorderStatus: 'OK',
-    notes: ''
   };
 
   const [newPart, setNewPart] = useState<PartInventoryItem>(defaultPart);
 
-  // Filter and sort parts
+  // ============ STATS ============
+  const stats = useMemo(() => {
+    const totalParts = partsInventory.length;
+    const totalValue = partsInventory.reduce((sum, p) => sum + p.totalValue, 0);
+    const lowStock = partsInventory.filter(p => p.status === 'Low Stock').length;
+    const outOfStock = partsInventory.filter(p => p.status === 'Out of Stock').length;
+    const onOrder = partsInventory.filter(p => p.status === 'On Order').length;
+    return { totalParts, totalValue, lowStock, outOfStock, onOrder };
+  }, [partsInventory]);
+
+  // ============ FILTERED & SORTED PARTS ============
   const filteredParts = useMemo(() => {
-    let result = partsInventory.filter(part => {
-      const matchesSearch = 
-        part.partNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        part.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        part.vendor.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        part.vendorPartNumber.toLowerCase().includes(searchTerm.toLowerCase());
-      
-      const matchesCategory = categoryFilter === 'all' || part.category === categoryFilter;
-      const matchesStatus = statusFilter === 'all' || part.status === statusFilter;
-      
-      return matchesSearch && matchesCategory && matchesStatus;
-    });
+    let filtered = [...partsInventory];
+
+    // Search filter
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      filtered = filtered.filter(p =>
+        p.partNumber.toLowerCase().includes(term) ||
+        p.description.toLowerCase().includes(term) ||
+        p.vendor.toLowerCase().includes(term) ||
+        (p.name && p.name.toLowerCase().includes(term)) ||
+        (p.notes && p.notes.toLowerCase().includes(term))
+      );
+    }
+
+    // Category filter
+    if (categoryFilter !== 'all') {
+      filtered = filtered.filter(p => p.category === categoryFilter);
+    }
+
+    // Status filter
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(p => p.status === statusFilter);
+    }
 
     // Sort
-    result.sort((a, b) => {
+    filtered.sort((a, b) => {
       const aVal = a[sortField];
       const bVal = b[sortField];
-      
+      if (aVal == null && bVal == null) return 0;
+      if (aVal == null) return 1;
+      if (bVal == null) return -1;
       if (typeof aVal === 'string' && typeof bVal === 'string') {
-        return sortDirection === 'asc' 
-          ? aVal.localeCompare(bVal) 
-          : bVal.localeCompare(aVal);
+        return sortDirection === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
       if (typeof aVal === 'number' && typeof bVal === 'number') {
         return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
@@ -373,26 +375,10 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
       return 0;
     });
 
-    return result;
+    return filtered;
   }, [partsInventory, searchTerm, categoryFilter, statusFilter, sortField, sortDirection]);
 
-  // Parts that need ordering
-  const partsNeedingOrder = useMemo(() => {
-    return partsInventory.filter(p => 
-      p.status === 'Low Stock' || p.status === 'Out of Stock' || 
-      p.reorderStatus === 'Reorder' || p.reorderStatus === 'Critical'
-    );
-  }, [partsInventory]);
-
-  // Stats
-  const stats = useMemo(() => ({
-    totalValue: partsInventory.reduce((sum, p) => sum + p.totalValue, 0),
-    totalParts: partsInventory.length,
-    lowStock: partsInventory.filter(p => p.status === 'Low Stock').length,
-    outOfStock: partsInventory.filter(p => p.status === 'Out of Stock').length,
-    onOrder: partsInventory.filter(p => p.reorderStatus === 'On Order').length
-  }), [partsInventory]);
-
+  // ============ HANDLERS ============
   const handleSort = (field: keyof PartInventoryItem) => {
     if (sortField === field) {
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -402,152 +388,84 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
     }
   };
 
-  const handleUpdateQuantity = async (id: string, newQuantity: number) => {
-    const part = partsInventory.find(p => p.id === id);
+  const handleUpdateQuantity = async (partId: string, newQuantity: number) => {
+    const part = partsInventory.find(p => p.id === partId);
     if (!part) return;
-    
-    const oldQuantity = part.onHand;
-    const status = newQuantity === 0 ? 'Out of Stock' : 
-                   newQuantity <= part.minQuantity ? 'Low Stock' : 'In Stock';
-    const reorderStatus = newQuantity === 0 ? 'Critical' :
-                          newQuantity <= part.minQuantity ? 'Reorder' : 'OK';
-    
-    await updatePartInventory(id, {
+
+    let newStatus: PartInventoryItem['status'] = 'In Stock';
+    if (newQuantity === 0) newStatus = 'Out of Stock';
+    else if (newQuantity <= part.minQuantity) newStatus = 'Low Stock';
+
+    let newReorderStatus: PartInventoryItem['reorderStatus'] = 'OK';
+    if (newQuantity === 0) newReorderStatus = 'Critical';
+    else if (newQuantity <= part.minQuantity) newReorderStatus = 'Reorder';
+
+    await updatePartInventory(partId, {
       onHand: newQuantity,
       totalValue: newQuantity * part.unitCost,
-      status: status as PartInventoryItem['status'],
-      reorderStatus: reorderStatus as PartInventoryItem['reorderStatus']
+      status: newStatus,
+      reorderStatus: newReorderStatus,
     });
+  };
 
-
-    // Log the inventory change
-    await auditLog.logInventoryChange(
-      id,
-      part.description,
-      'update',
-      { onHand: oldQuantity, totalValue: part.totalValue },
-      { onHand: newQuantity, totalValue: newQuantity * part.unitCost }
-    );
+  const handleDeletePart = async (partId: string) => {
+    if (!confirm('Are you sure you want to delete this part?')) return;
+    await deletePartInventory(partId);
+    toast.success('Part deleted');
   };
 
   const handleSavePart = async () => {
-    try {
-      const status = newPart.onHand === 0 ? 'Out of Stock' :
-                     newPart.onHand <= newPart.minQuantity ? 'Low Stock' : 'In Stock';
-      const reorderStatus = newPart.onHand === 0 ? 'Critical' :
-                            newPart.onHand <= newPart.minQuantity ? 'Reorder' : 'OK';
-      
-      const partToSave = {
-        ...newPart,
-        totalValue: newPart.onHand * newPart.unitCost,
-        status: status as PartInventoryItem['status'],
-        reorderStatus: reorderStatus as PartInventoryItem['reorderStatus']
-      };
+    if (!newPart.partNumber || !newPart.description) return;
 
-      if (editingPart) {
-        await updatePartInventory(editingPart.id, partToSave);
-        
-        // Log the update
-        await auditLog.logInventoryChange(
-          editingPart.id,
-          partToSave.description,
-          'update',
-          editingPart,
-          partToSave
-        );
-        toast.success(`Part "${partToSave.description}" updated successfully`);
-      } else {
-        // Use crypto.randomUUID for unique, collision-free IDs
-        const id = typeof crypto !== 'undefined' && crypto.randomUUID
-          ? `PART-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
-          : `PART-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-        
-        await addPartInventory({ ...partToSave, id });
-        
-        // Log the creation
-        await auditLog.logInventoryChange(
-          id,
-          partToSave.description,
-          'create',
-          undefined,
-          { ...partToSave, id }
-        );
-        toast.success(`Part "${partToSave.description}" added successfully and saved to database`);
-      }
+    const partToSave: PartInventoryItem = {
+      ...newPart,
+      id: editingPart ? editingPart.id : `PART-${Date.now()}`,
+      totalValue: newPart.onHand * newPart.unitCost,
+      status: newPart.onHand === 0 ? 'Out of Stock' : newPart.onHand <= newPart.minQuantity ? 'Low Stock' : 'In Stock',
+      reorderStatus: newPart.onHand === 0 ? 'Critical' : newPart.onHand <= newPart.minQuantity ? 'Reorder' : 'OK',
+      name: newPart.name || newPart.description,
+    };
 
-      // Only close modal and reset form on success
-      setShowAddModal(false);
-      setEditingPart(null);
-      setNewPart(defaultPart);
-    } catch (error: any) {
-      console.error('Error saving part:', error);
-      toast.error(
-        `Failed to save part: ${error?.message || 'Unknown error'}. Please try again.`,
-        { duration: 8000 }
-      );
-      // Do NOT close the modal on error — let the user retry
+    if (editingPart) {
+      await updatePartInventory(editingPart.id, partToSave);
+      toast.success('Part updated');
+    } else {
+      await addPartInventory(partToSave);
+      toast.success('Part added');
     }
+
+    setShowAddModal(false);
+    setEditingPart(null);
+    setNewPart(defaultPart);
   };
 
-
-
-  // ============ DELETE PART (with undo) ============
-  // The confirm() dialog is removed — the undo toast in AppContext serves as the safety net.
-  // Audit logging is now handled by AppContext after the 10-second undo window expires.
-  const handleDeletePart = async (id: string) => {
-    await deletePartInventory(id);
-  };
-
-
-  // Purchase Order Functions
   const openPOModal = (parts: PartInventoryItem[]) => {
     setSelectedPartsForPO(parts);
-    
-    // Auto-populate PO items
     const items: PurchaseOrderItem[] = parts.map(part => ({
       partId: part.id,
       partNumber: part.partNumber,
       description: part.description,
-      quantity: Math.max(part.maxQuantity - part.onHand, part.minQuantity),
+      quantity: Math.max(1, part.maxQuantity - part.onHand),
       unitCost: part.unitCost,
-      totalCost: Math.max(part.maxQuantity - part.onHand, part.minQuantity) * part.unitCost
+      totalCost: Math.max(1, part.maxQuantity - part.onHand) * part.unitCost,
     }));
-    
     setPOItems(items);
-    
-    // Try to auto-select vendor based on first part's vendor
-    const firstPartVendor = parts[0]?.vendor;
-    if (firstPartVendor) {
-      const matchingVendor = vendors.find(v => 
-        v.name.toLowerCase().includes(firstPartVendor.toLowerCase()) ||
-        firstPartVendor.toLowerCase().includes(v.name.toLowerCase())
-      );
-      if (matchingVendor) {
-        setPOVendorId(matchingVendor.id);
-      }
+
+    // Auto-select vendor if all parts share the same vendor
+    const vendorNames = [...new Set(parts.map(p => p.vendor).filter(Boolean))];
+    if (vendorNames.length === 1) {
+      const matchedVendor = vendors.find(v => v.name === vendorNames[0]);
+      if (matchedVendor) setPOVendorId(matchedVendor.id);
+    } else {
+      setPOVendorId('');
     }
-    
+
+    setPOShipping(0);
+    setPOTax(0);
+    setPONotes('');
     setShowPOModal(true);
   };
 
-  const handleQuickOrderToggle = (partId: string) => {
-    const newSelected = new Set(selectedForQuickOrder);
-    if (newSelected.has(partId)) {
-      newSelected.delete(partId);
-    } else {
-      newSelected.add(partId);
-    }
-    setSelectedForQuickOrder(newSelected);
-  };
-
-  const handleCreateQuickOrder = () => {
-    const parts = partsInventory.filter(p => selectedForQuickOrder.has(p.id));
-    if (parts.length > 0) {
-      openPOModal(parts);
-      setQuickOrderMode(false);
-      setSelectedForQuickOrder(new Set());
-    }
-  };
 
   const updatePOItemQuantity = (index: number, quantity: number) => {
     setPOItems(prev => prev.map((item, i) => 
@@ -614,18 +532,19 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
     setShowPOSuccess(true);
     setTimeout(() => setShowPOSuccess(false), 5000);
   };
-
   const exportToCSV = () => {
     const headers = [
+
       'Part Number', 'Description', 'Category', 'Subcategory', 'On Hand', 
-      'Min Qty', 'Vendor', 'Vendor P/N', 'Unit Cost', 'Total Value', 
+      'Min Qty', 'Max Qty', 'Threshold', 'Vendor', 'Unit Cost', 'Total Value', 
       'Last Ordered', 'Location', 'Status', 'Notes'
     ];
     const rows = filteredParts.map(p => [
       p.partNumber, p.description, p.category, p.subcategory, p.onHand,
-      p.minQuantity, p.vendor, p.vendorPartNumber, p.unitCost.toFixed(2),
+      p.minQuantity, p.maxQuantity, p.threshold ?? '', p.vendor, p.unitCost.toFixed(2),
       p.totalValue.toFixed(2), p.lastOrdered, p.location, p.status, p.notes
     ]);
+
     
     const csv = [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -890,30 +809,6 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
           </div>
           
           <div className="flex items-center gap-3 flex-wrap">
-            {quickOrderMode ? (
-              <>
-                <button
-                  onClick={() => {
-                    setQuickOrderMode(false);
-                    setSelectedForQuickOrder(new Set());
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
-                >
-                  <X className="w-4 h-4" />
-                  Cancel
-                </button>
-                <button
-                  onClick={handleCreateQuickOrder}
-                  disabled={selectedForQuickOrder.size === 0}
-                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50"
-                >
-                  <ShoppingCart className="w-4 h-4" />
-                  Create PO ({selectedForQuickOrder.size})
-                </button>
-              </>
-            ) : (
-              <>
-
                 <button
                   onClick={() => setShowCSVImport(true)}
                   className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors"
@@ -921,27 +816,7 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                   <Upload className="w-4 h-4" />
                   Import CSV
                 </button>
-                <button
-                  onClick={() => setShowBackupRestore(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  <Shield className="w-4 h-4" />
-                  Restore Backup
-                </button>
-                <button
-                  onClick={() => setShowReorderList(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
-                >
-                  <FileText className="w-4 h-4" />
-                  Generate Reorder List
-                </button>
-                <button
-                  onClick={() => setQuickOrderMode(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-                >
-                  <ShoppingCart className="w-4 h-4" />
-                  Quick Order
-                </button>
+
                 <button
                   onClick={exportToCSV}
                   className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors"
@@ -949,6 +824,7 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                   <Download className="w-4 h-4" />
                   Export CSV
                 </button>
+
                 <button
                   onClick={() => {
                     setEditingPart(null);
@@ -960,65 +836,12 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                   <Plus className="w-4 h-4" />
                   Add Part
                 </button>
-              </>
-            )}
           </div>
+
         </div>
 
 
-        {/* Parts Needing Order Alert */}
-        {partsNeedingOrder.length > 0 && !quickOrderMode && (
-          <div className="bg-gradient-to-r from-yellow-500/10 to-red-500/10 border border-yellow-500/30 rounded-xl p-4 mb-6">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-yellow-500/20 rounded-lg flex items-center justify-center">
-                  <AlertTriangle className="w-5 h-5 text-yellow-400" />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-white">{partsNeedingOrder.length} Parts Need Ordering</h3>
-                  <p className="text-sm text-slate-400">Low stock or out of stock items requiring attention</p>
-                </div>
-              </div>
-              <button
-                onClick={() => openPOModal(partsNeedingOrder)}
-                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700"
-              >
-                <ShoppingCart className="w-4 h-4" />
-                Create PO for All
-              </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-              {partsNeedingOrder.slice(0, 6).map(part => (
-                <div 
-                  key={part.id} 
-                  className="flex items-center justify-between p-2 bg-slate-800/50 rounded-lg"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${
-                      part.status === 'Out of Stock' ? 'bg-red-400' : 'bg-yellow-400'
-                    }`} />
-                    <div>
-                      <p className="text-sm text-white">{part.partNumber}</p>
-                      <p className="text-xs text-slate-400">{part.description.substring(0, 30)}...</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => openPOModal([part])}
-                    className="p-1.5 bg-green-500/20 text-green-400 rounded hover:bg-green-500/30"
-                    title="Create PO"
-                  >
-                    <ShoppingCart className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-            {partsNeedingOrder.length > 6 && (
-              <p className="text-sm text-slate-400 mt-2 text-center">
-                +{partsNeedingOrder.length - 6} more parts need ordering
-              </p>
-            )}
-          </div>
-        )}
+
 
         {/* Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
@@ -1126,27 +949,8 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
             <table className="w-full">
               <thead>
                 <tr className="bg-slate-900/50 border-b border-slate-700/50">
-                  {quickOrderMode && (
-                    <th className="px-4 py-3 w-12">
-                      <input
-                        type="checkbox"
-                        checked={selectedForQuickOrder.size === filteredParts.filter(p => 
-                          p.status === 'Low Stock' || p.status === 'Out of Stock'
-                        ).length && selectedForQuickOrder.size > 0}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            const needsOrder = filteredParts.filter(p => 
-                              p.status === 'Low Stock' || p.status === 'Out of Stock'
-                            );
-                            setSelectedForQuickOrder(new Set(needsOrder.map(p => p.id)));
-                          } else {
-                            setSelectedForQuickOrder(new Set());
-                          }
-                        }}
-                        className="w-4 h-4 rounded border-slate-600 bg-slate-800"
-                      />
-                    </th>
-                  )}
+
+
                   <th 
                     className="text-left px-4 py-3 text-sm font-medium text-slate-400 cursor-pointer hover:text-white"
                     onClick={() => handleSort('description')}
@@ -1184,28 +988,12 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                 {filteredParts.map((part) => (
                   <React.Fragment key={part.id}>
                     <tr 
-                      className={`border-b border-slate-700/30 hover:bg-slate-700/20 cursor-pointer ${
-                        quickOrderMode && selectedForQuickOrder.has(part.id) ? 'bg-green-500/10' : ''
-                      }`}
-                      onClick={() => {
-                        if (quickOrderMode) {
-                          handleQuickOrderToggle(part.id);
-                        } else {
-                          setExpandedPart(expandedPart === part.id ? null : part.id);
-                        }
-                      }}
+                      className="border-b border-slate-700/30 hover:bg-slate-700/20 cursor-pointer"
+                      onClick={() => setExpandedPart(expandedPart === part.id ? null : part.id)}
                     >
-                      {quickOrderMode && (
-                        <td className="px-4 py-3">
-                          <input
-                            type="checkbox"
-                            checked={selectedForQuickOrder.has(part.id)}
-                            onChange={() => handleQuickOrderToggle(part.id)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-4 h-4 rounded border-slate-600 bg-slate-800"
-                          />
-                        </td>
-                      )}
+
+
+
                       <td className="px-4 py-3">
                         <p className="text-white text-sm">{part.description}</p>
                       </td>
@@ -1245,7 +1033,8 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                       </td>
                       <td className="px-4 py-3 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          {(part.status === 'Low Stock' || part.status === 'Out of Stock') && !quickOrderMode && (
+                          {(part.status === 'Low Stock' || part.status === 'Out of Stock') && (
+
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1312,17 +1101,14 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                     </tr>
                     
                     {/* Expanded Details */}
-                    {expandedPart === part.id && !quickOrderMode && (
+                    {expandedPart === part.id && (
+
                       <tr className="bg-slate-900/30">
                         <td colSpan={11} className="px-4 py-4">
                           <div className="grid md:grid-cols-4 gap-6">
                             <div>
                               <h4 className="text-sm font-medium text-slate-400 mb-3">Part Details</h4>
                               <div className="space-y-2 text-sm">
-                                <div className="flex justify-between">
-                                  <span className="text-slate-400">Vendor P/N</span>
-                                  <span className="text-white font-mono">{part.vendorPartNumber}</span>
-                                </div>
                                 <div className="flex justify-between">
                                   <span className="text-slate-400">Location</span>
                                   <span className="text-white">{part.location}</span>
@@ -1331,8 +1117,18 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                                   <span className="text-slate-400">Max Qty</span>
                                   <span className="text-white">{part.maxQuantity}</span>
                                 </div>
+                                <div className="flex justify-between">
+                                  <span className="text-slate-400">Threshold</span>
+                                  <span className={`font-medium ${
+                                    part.threshold != null && part.onHand <= part.threshold ? 'text-amber-400' : 'text-white'
+                                  }`}>
+                                    {part.threshold != null ? part.threshold : 'Not set'}
+                                  </span>
+                                </div>
                               </div>
                             </div>
+
+
                             
                             <div>
                               <h4 className="text-sm font-medium text-slate-400 mb-3">Order Info</h4>
@@ -1441,27 +1237,17 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
             </div>
             
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Part Number *</label>
-                  <input
-                    type="text"
-                    value={newPart.partNumber}
-                    onChange={(e) => setNewPart({...newPart, partNumber: e.target.value})}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                    placeholder="e.g., ENG-PISTON-001"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Vendor Part Number</label>
-                  <input
-                    type="text"
-                    value={newPart.vendorPartNumber}
-                    onChange={(e) => setNewPart({...newPart, vendorPartNumber: e.target.value})}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                  />
-                </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Part Number *</label>
+                <input
+                  type="text"
+                  value={newPart.partNumber}
+                  onChange={(e) => setNewPart({...newPart, partNumber: e.target.value})}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  placeholder="e.g., ENG-PISTON-001"
+                />
               </div>
+
               
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Description *</label>
@@ -1512,7 +1298,8 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                 </div>
               </div>
               
-              <div className="grid grid-cols-3 gap-4">
+
+              <div className="grid grid-cols-4 gap-4">
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">On Hand</label>
                   <input
@@ -1540,7 +1327,22 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">
+                    Threshold
+                    <span className="ml-1 text-xs text-amber-400">(alert)</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={newPart.threshold ?? ''}
+                    onChange={(e) => setNewPart({...newPart, threshold: e.target.value === '' ? undefined : parseInt(e.target.value) || 0})}
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                    placeholder="e.g., 3"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Alert when stock falls to this level</p>
+                </div>
               </div>
+
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -1897,7 +1699,8 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                     <div className="text-center py-8 text-slate-500">
                       <History className="w-12 h-12 mx-auto mb-4 opacity-50" />
                       <p>No usage history found for this part</p>
-                      <p className="text-sm mt-2">Usage records will appear here when this part is used in maintenance completions or work orders</p>
+                      <p className="text-sm mt-2">Usage records will appear here when this part is used in maintenance completions</p>
+
                     </div>
                   );
                 }
@@ -1958,11 +1761,8 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                                   Component: <span className="text-white">{record.installedOn}</span>
                                 </span>
                               )}
-                              {record.workOrderId && (
-                                <span className="text-slate-400">
-                                  Work Order: <span className="text-orange-400">{record.workOrderId}</span>
-                                </span>
-                              )}
+
+
                               {record.raceEventName && (
                                 <span className="text-slate-400">
                                   Event: <span className="text-cyan-400">{record.raceEventName}</span>
@@ -2053,13 +1853,8 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
         onImport={handleCSVImport}
       />
 
-      {/* Backup/Restore Modal */}
-      <PartsBackupRestore
-        isOpen={showBackupRestore}
-        onClose={() => setShowBackupRestore(false)}
-        currentParts={partsInventory}
-        onRestore={handleRestoreFromBackup}
-      />
+
+
     </section>
 
   );

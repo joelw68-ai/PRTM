@@ -5,7 +5,7 @@ import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils
 
 
 import { useApp } from '@/contexts/AppContext';
-import { useCar } from '@/contexts/CarContext';
+
 import DateInputDark from '@/components/ui/DateInputDark';
 import {
 
@@ -24,8 +24,8 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  ComposedChart
 } from 'recharts';
+
 import {
   DollarSign,
   TrendingUp,
@@ -43,17 +43,14 @@ import {
   FileSpreadsheet,
   Target,
   Users,
-  Settings,
   Shield,
-  ChevronDown,
-  ChevronUp,
   Building2,
   User,
   ClipboardList,
   History,
   Receipt,
-  Car
 } from 'lucide-react';
+
 
 
 import { purchaseOrders, vendorPerformance, vendors } from '@/data/vendorData';
@@ -62,8 +59,9 @@ import { parseRows } from '@/lib/validatedQuery';
 import { VendorInvoiceRowSchema, CostReportRowSchema } from '@/lib/validators';
 import LaborTracking, { DailyLaborEntry } from './LaborTracking';
 import LaborReports from './LaborReports';
-import PartsUsageHistory from './PartsUsageHistory';
 import { fetchLaborEntries, upsertLaborEntry, deleteLaborEntry, getCurrentUserId, LaborEntry } from '@/lib/database';
+
+
 
 
 interface CostAnalyticsProps {
@@ -71,40 +69,15 @@ interface CostAnalyticsProps {
 }
 
 type CostDateRange = '30d' | '90d' | '6m' | '1y' | 'all';
-type CostActiveView = 'overview' | 'workorders' | 'categories' | 'trends' | 'budget' | 'labor' | 'laborReports' | 'sponsor' | 'vendorSpending' | 'costReports';
+type CostActiveView = 'overview' | 'categories' | 'trends' | 'budget' | 'labor' | 'laborReports' | 'sponsor' | 'vendorSpending' | 'costReports';
 
 const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
-  const { workOrders: allWorkOrders, partsInventory: allPartsInventory, maintenanceItems: allMaintenanceItems, teamMembers } = useApp();
-  const { selectedCarId, cars, getCarLabel } = useCar();
+  const { partsInventory, maintenanceItems, teamMembers } = useApp();
 
-  // Helper: check if a car_id is empty/null/undefined
-  const isEmptyCarId = (id: string | null | undefined): boolean => !id || id === '';
-
-
-  // ─── Car-Filtered Data ─────────────────────────────────────
-  // When "All Cars" selected (selectedCarId is null/empty): show ALL records
-  // When specific car selected: show matching car_id + records with no car_id (legacy data)
-  const workOrders = useMemo(() =>
-    (selectedCarId && selectedCarId !== '') ? allWorkOrders.filter((w) => w.car_id === selectedCarId || isEmptyCarId(w.car_id)) : allWorkOrders,
-    [allWorkOrders, selectedCarId]
-  );
-  const partsInventory = useMemo(() =>
-    (selectedCarId && selectedCarId !== '') ? allPartsInventory.filter((p) => p.car_id === selectedCarId || isEmptyCarId(p.car_id)) : allPartsInventory,
-    [allPartsInventory, selectedCarId]
-  );
-  const maintenanceItems = useMemo(() =>
-    (selectedCarId && selectedCarId !== '') ? allMaintenanceItems.filter((m) => m.car_id === selectedCarId || isEmptyCarId(m.car_id)) : allMaintenanceItems,
-    [allMaintenanceItems, selectedCarId]
-
-  );
+  const [dateRange, setDateRange] = useState<CostDateRange>('1y');
+  const [activeView, setActiveView] = useState<CostActiveView>('overview');
 
 
-
-  const [dateRange, setDateRange] = useState<'30d' | '90d' | '6m' | '1y' | 'all'>('1y');
-  const [activeView, setActiveView] = useState<'overview' | 'workorders' | 'categories' | 'trends' | 'budget' | 'labor' | 'laborReports' | 'sponsor' | 'vendorSpending' | 'costReports'>('overview');
-
-
-  const [expandedWorkOrder, setExpandedWorkOrder] = useState<string | null>(null);
   const reportRef = useRef<HTMLDivElement>(null);
 
   // Daily labor entries state — starts empty, loaded from database
@@ -238,7 +211,7 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
     await deleteLaborEntry(id);
   }, []);
 
-  const DEFAULT_HOURLY_RATE = 125;
+  
 
   
   // Color palette for charts
@@ -269,6 +242,9 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
     'Body': '#f59e0b'
   };
 
+  const VENDOR_BAR_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#8b5cf6', '#06b6d4', '#eab308', '#ec4899', '#14b8a6'];
+
+
   // Calculate date filter
 
   const getDateFilter = () => {
@@ -295,57 +271,10 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
     return { totalHours, totalCost, entries: filteredLabor.length };
   }, [laborEntries, dateRange]);
 
-  // Calculate work order costs with detailed breakdown
-  const workOrderCosts = useMemo(() => {
-    const dateFilter = getDateFilter();
-    
-    return workOrders
-      .filter(wo => parseLocalDate(wo.createdDate) >= dateFilter)
 
-      .map(wo => {
-        const parts = Array.isArray(wo.parts) ? wo.parts : [];
-        const partsCost = parts.reduce((sum, p) => sum + ((p.cost || 0) * (p.quantity || 0)), 0);
-        const estimatedLaborCost = (wo.estimatedHours || 0) * DEFAULT_HOURLY_RATE;
-        const actualLaborCost = (wo.actualHours || wo.estimatedHours || 0) * DEFAULT_HOURLY_RATE;
-        const estimatedTotal = partsCost + estimatedLaborCost;
-        const actualTotal = partsCost + actualLaborCost;
-        const variance = actualTotal - estimatedTotal;
-        const variancePercent = estimatedTotal > 0 ? (variance / estimatedTotal) * 100 : 0;
-        
-        return {
-          ...wo,
-          partsCost,
-          estimatedLaborCost,
-          actualLaborCost,
-          estimatedTotal,
-          actualTotal,
-          variance,
-          variancePercent
-        };
-      });
-  }, [workOrders, dateRange]);
+  // Overall statistics (vendor/inventory/maintenance based)
 
-
-  // Overall statistics
   const stats = useMemo(() => {
-    const completed = workOrderCosts.filter(wo => wo.status === 'Completed');
-    const pending = workOrderCosts.filter(wo => wo.status !== 'Completed' && wo.status !== 'Cancelled');
-    
-    const totalEstimated = workOrderCosts.reduce((sum, wo) => sum + wo.estimatedTotal, 0);
-    const totalActual = completed.reduce((sum, wo) => sum + wo.actualTotal, 0);
-    const totalPending = pending.reduce((sum, wo) => sum + wo.estimatedTotal, 0);
-    
-    const totalPartsCost = workOrderCosts.reduce((sum, wo) => sum + wo.partsCost, 0);
-    const totalLaborCost = completed.reduce((sum, wo) => sum + wo.actualLaborCost, 0);
-    
-    const avgVariance = completed.length > 0 
-      ? completed.reduce((sum, wo) => sum + wo.variancePercent, 0) / completed.length 
-      : 0;
-    
-    const overBudget = completed.filter(wo => wo.variance > 0).length;
-    const underBudget = completed.filter(wo => wo.variance < 0).length;
-    const onBudget = completed.filter(wo => wo.variance === 0).length;
-    
     // Vendor spending from purchase orders
     const vendorSpending = purchaseOrders
       .filter(po => po.status === 'Received')
@@ -356,53 +285,36 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
     
     // Maintenance costs
     const maintenanceCosts = maintenanceItems.reduce((sum, m) => sum + (m.estimatedCost || 0), 0);
+
+    // Daily labor totals
+    const totalLaborCost = laborEntries.reduce((sum, e) => sum + e.totalCost, 0);
+    const totalPartsCost = inventoryValue;
     
     return {
-      totalEstimated,
-      totalActual,
-      totalPending,
+      totalEstimated: vendorSpending + maintenanceCosts,
+      totalActual: vendorSpending + totalLaborCost,
+      totalPending: maintenanceCosts,
       totalPartsCost,
       totalLaborCost,
-      avgVariance,
-      overBudget,
-      underBudget,
-      onBudget,
-      completedCount: completed.length,
-      pendingCount: pending.length,
+      avgVariance: 0,
+      overBudget: 0,
+      underBudget: 0,
+      onBudget: 0,
+      completedCount: 0,
+      pendingCount: 0,
       vendorSpending,
       inventoryValue,
       maintenanceCosts
     };
-  }, [workOrderCosts, partsInventory, maintenanceItems]);
+  }, [partsInventory, maintenanceItems, laborEntries]);
 
-  // Spending by category
+  // Spending by category (now returns empty — vendor/inventory/maintenance based)
   const categorySpending = useMemo(() => {
-    const categories: Record<string, { estimated: number; actual: number; count: number; parts: number; labor: number }> = {};
-    
-    workOrderCosts.forEach(wo => {
-      if (!categories[wo.category]) {
-        categories[wo.category] = { estimated: 0, actual: 0, count: 0, parts: 0, labor: 0 };
-      }
-      categories[wo.category].estimated += wo.estimatedTotal;
-      categories[wo.category].actual += wo.status === 'Completed' ? wo.actualTotal : 0;
-      categories[wo.category].parts += wo.partsCost;
-      categories[wo.category].labor += wo.status === 'Completed' ? wo.actualLaborCost : wo.estimatedLaborCost;
-      categories[wo.category].count += 1;
-    });
-    
-    return Object.entries(categories)
-      .map(([category, data]) => ({
-        category,
-        name: category,
-        ...data,
-        variance: data.actual - data.estimated,
-        variancePercent: data.estimated > 0 ? ((data.actual - data.estimated) / data.estimated) * 100 : 0,
-        color: CATEGORY_COLORS[category] || '#64748b'
-      }))
-      .sort((a, b) => b.actual - a.actual);
-  }, [workOrderCosts]);
+    return [] as { category: string; name: string; estimated: number; actual: number; count: number; parts: number; labor: number; variance: number; variancePercent: number; color: string }[];
+  }, []);
 
-  // Monthly spending trend
+  // Monthly spending trend (vendor spending only — vendor/inventory/maintenance based)
+
   const monthlyTrend = useMemo(() => {
     const months: Record<string, { parts: number; labor: number; maintenance: number; vendors: number; total: number; estimated: number }> = {};
     
@@ -410,31 +322,27 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
     for (let i = 11; i >= 0; i--) {
       const date = new Date();
       date.setMonth(date.getMonth() - i);
-      // Use local year/month to avoid UTC midnight shifting to the wrong month
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       months[key] = { parts: 0, labor: 0, maintenance: 0, vendors: 0, total: 0, estimated: 0 };
-
     }
     
-    workOrderCosts.forEach(wo => {
-      const month = wo.createdDate.substring(0, 7);
-      if (months[month]) {
-        months[month].parts += wo.partsCost;
-        months[month].estimated += wo.estimatedTotal;
-        if (wo.status === 'Completed') {
-          months[month].labor += wo.actualLaborCost;
-          months[month].total += wo.actualTotal;
-        }
-      }
-    });
-    
-    // Add vendor spending
+    // Add vendor spending from purchase orders
     purchaseOrders.forEach(po => {
       if (po.status === 'Received' && po.receivedDate) {
         const month = po.receivedDate.substring(0, 7);
         if (months[month]) {
           months[month].vendors += po.total;
+          months[month].total += po.total;
         }
+      }
+    });
+
+    // Add labor entries
+    laborEntries.forEach(entry => {
+      const month = entry.date.substring(0, 7);
+      if (months[month]) {
+        months[month].labor += entry.totalCost;
+        months[month].total += entry.totalCost;
       }
     });
     
@@ -443,28 +351,12 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
       .map(([month, data]) => ({
         month,
         label: formatLocalDate(month + '-01', { month: 'short', year: '2-digit' }),
-
-
         ...data
       }));
-  }, [workOrderCosts]);
-
-  // Estimated vs Actual comparison data
-  const estimatedVsActual = useMemo(() => {
-    return workOrderCosts
-      .filter(wo => wo.status === 'Completed')
-      .slice(0, 10)
-      .map(wo => ({
-        name: wo.title.length > 20 ? wo.title.substring(0, 20) + '...' : wo.title,
-        estimated: wo.estimatedTotal,
-        actual: wo.actualTotal,
-        variance: wo.variance
-      }));
-  }, [workOrderCosts]);
+  }, [laborEntries]);
 
   // Budget allocation data
   const budgetAllocation = useMemo(() => {
-    const total = stats.totalPartsCost + stats.totalLaborCost + stats.vendorSpending;
     return [
       { name: 'Parts', value: stats.totalPartsCost, color: COLORS.parts },
       { name: 'Labor', value: stats.totalLaborCost, color: COLORS.labor },
@@ -472,75 +364,91 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
     ].filter(item => item.value > 0);
   }, [stats]);
 
-  // ========== VENDOR SPENDING SUMMARY ==========
-  // Aggregates costs from parts inventory, purchase orders, and vendor invoices by vendor name
+  // Vendor Spending Data — aggregates parts inventory, purchase orders, and vendor invoices
   const vendorSpendingData = useMemo(() => {
-    const vendorMap: Record<string, { totalSpend: number; transactions: number; sources: { parts: number; purchaseOrders: number; invoices: number } }> = {};
+    interface VendorSpendEntry {
+      name: string;
+      partsSpend: number;
+      poSpend: number;
+      invoiceSpend: number;
+      totalSpend: number;
+      transactions: number;
+      avgPerTransaction: number;
+    }
 
-    const addToVendor = (name: string, amount: number, source: 'parts' | 'purchaseOrders' | 'invoices') => {
-      const key = name.trim();
-      if (!key) return;
-      if (!vendorMap[key]) {
-        vendorMap[key] = { totalSpend: 0, transactions: 0, sources: { parts: 0, purchaseOrders: 0, invoices: 0 } };
+    const vendorMap: Record<string, { partsSpend: number; poSpend: number; invoiceSpend: number; partsTxn: number; poTxn: number; invoiceTxn: number }> = {};
+
+    const ensure = (name: string) => {
+      if (!name || name.trim() === '') return;
+      if (!vendorMap[name]) {
+        vendorMap[name] = { partsSpend: 0, poSpend: 0, invoiceSpend: 0, partsTxn: 0, poTxn: 0, invoiceTxn: 0 };
       }
-      vendorMap[key].totalSpend += amount;
-      vendorMap[key].transactions += 1;
-      vendorMap[key].sources[source] += amount;
     };
 
-    // 1. Parts inventory — each part with a vendor and totalValue > 0 is a transaction
-    partsInventory.forEach(part => {
-      if (part.vendor && part.totalValue > 0) {
-        addToVendor(part.vendor, part.totalValue, 'parts');
-      }
+    // 1. Parts inventory by vendor name
+    partsInventory.forEach(p => {
+      const vName = (p.vendor || '').trim();
+      if (!vName) return;
+      ensure(vName);
+      vendorMap[vName].partsSpend += p.totalValue || 0;
+      vendorMap[vName].partsTxn += 1;
     });
 
-    // 2. Purchase orders (received)
+    // 2. Purchase orders by vendorName (received only)
     purchaseOrders.forEach(po => {
-      if (po.vendorName && po.total > 0) {
-        addToVendor(po.vendorName, po.total, 'purchaseOrders');
+      const vName = (po.vendorName || '').trim();
+      if (!vName) return;
+      ensure(vName);
+      if (po.status === 'Received') {
+        vendorMap[vName].poSpend += po.total || 0;
       }
+      vendorMap[vName].poTxn += 1;
     });
 
-    // 3. Vendor invoices from database
+    // 3. Vendor invoices by vendor_name
     vendorInvoices.forEach(inv => {
-      if (inv.vendor_name && inv.total > 0) {
-        addToVendor(inv.vendor_name, inv.total, 'invoices');
-      }
+      const vName = (inv.vendor_name || '').trim();
+      if (!vName) return;
+      ensure(vName);
+      vendorMap[vName].invoiceSpend += Number(inv.total) || 0;
+      vendorMap[vName].invoiceTxn += 1;
     });
 
-    const result = Object.entries(vendorMap)
-      .map(([name, data]) => ({
-        name,
-        totalSpend: data.totalSpend,
-        transactions: data.transactions,
-        avgPerTransaction: data.transactions > 0 ? data.totalSpend / data.transactions : 0,
-        partsSpend: data.sources.parts,
-        poSpend: data.sources.purchaseOrders,
-        invoiceSpend: data.sources.invoices,
-      }))
+    // Build ranked list
+    const vendorsList: VendorSpendEntry[] = Object.entries(vendorMap)
+      .map(([name, d]) => {
+        const totalSpend = d.partsSpend + d.poSpend + d.invoiceSpend;
+        const transactions = d.partsTxn + d.poTxn + d.invoiceTxn;
+        return {
+          name,
+          partsSpend: Math.round(d.partsSpend * 100) / 100,
+          poSpend: Math.round(d.poSpend * 100) / 100,
+          invoiceSpend: Math.round(d.invoiceSpend * 100) / 100,
+          totalSpend: Math.round(totalSpend * 100) / 100,
+          transactions,
+          avgPerTransaction: transactions > 0 ? Math.round((totalSpend / transactions) * 100) / 100 : 0
+        };
+      })
+      .filter(v => v.totalSpend > 0)
       .sort((a, b) => b.totalSpend - a.totalSpend);
 
-    const grandTotal = result.reduce((sum, v) => sum + v.totalSpend, 0);
-    const totalTransactions = result.reduce((sum, v) => sum + v.transactions, 0);
+    const grandTotal = vendorsList.reduce((s, v) => s + v.totalSpend, 0);
+    const totalTransactions = vendorsList.reduce((s, v) => s + v.transactions, 0);
 
-    return { vendors: result, grandTotal, totalTransactions, vendorCount: result.length };
+    return {
+      vendors: vendorsList,
+      vendorCount: vendorsList.length,
+      grandTotal: Math.round(grandTotal * 100) / 100,
+      totalTransactions
+    };
   }, [partsInventory, vendorInvoices]);
 
-  // Bar chart colors for vendor spending
-  const VENDOR_BAR_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#8b5cf6', '#ec4899', '#06b6d4', '#eab308', '#ef4444', '#14b8a6', '#a855f7', '#f59e0b', '#6366f1'];
 
-
-  // Export CSV
+  // Export CSV (monthly spending trend)
   const exportCSV = () => {
-    const headers = [
-      'Work Order ID', 'Title', 'Category', 'Status', 'Priority', 'Created Date',
-      'Parts Cost', 'Est. Labor', 'Actual Labor', 'Est. Total', 'Actual Total', 'Variance', 'Variance %'
-    ];
-    const rows = workOrderCosts.map(wo => [
-      wo.id, wo.title, wo.category, wo.status, wo.priority, wo.createdDate,
-      wo.partsCost.toFixed(2), wo.estimatedLaborCost.toFixed(2), wo.actualLaborCost.toFixed(2),
-      wo.estimatedTotal.toFixed(2), wo.actualTotal.toFixed(2), wo.variance.toFixed(2), wo.variancePercent.toFixed(1)
+    const headers = ['Month', 'Parts', 'Labor', 'Vendors', 'Total'];
+    const rows = monthlyTrend.map(m => [
+      m.month, m.parts.toFixed(2), m.labor.toFixed(2), m.vendors.toFixed(2), m.total.toFixed(2)
     ]);
     
     const csv = [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
@@ -552,6 +460,7 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
     a.click();
     URL.revokeObjectURL(url);
   };
+
 
   // Export PDF (using print)
   const exportPDF = () => {
@@ -625,17 +534,20 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
               <th>Percentage</th>
             </tr>
             <tr>
-              <td>Work Orders Under Budget</td>
+              <td>Tasks Under Budget</td>
+
               <td>${stats.underBudget}</td>
               <td class="positive">${stats.completedCount > 0 ? ((stats.underBudget / stats.completedCount) * 100).toFixed(1) : 0}%</td>
             </tr>
             <tr>
-              <td>Work Orders On Budget</td>
+              <td>Tasks On Budget</td>
+
               <td>${stats.onBudget}</td>
               <td>${stats.completedCount > 0 ? ((stats.onBudget / stats.completedCount) * 100).toFixed(1) : 0}%</td>
             </tr>
             <tr>
-              <td>Work Orders Over Budget</td>
+              <td>Tasks Over Budget</td>
+
               <td>${stats.overBudget}</td>
               <td class="negative">${stats.completedCount > 0 ? ((stats.overBudget / stats.completedCount) * 100).toFixed(1) : 0}%</td>
             </tr>
@@ -647,7 +559,8 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
           <table>
             <tr>
               <th>Category</th>
-              <th>Work Orders</th>
+              <th>Tasks</th>
+
               <th>Estimated</th>
               <th>Actual</th>
               <th>Variance</th>
@@ -781,7 +694,8 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
               <th>Category</th>
               <th>Investment</th>
               <th>% of Total</th>
-              <th>Work Orders</th>
+              <th>Tasks</th>
+
             </tr>
             ${categorySpending.slice(0, 6).map(cat => {
               const percentage = stats.totalActual > 0 ? (cat.actual / stats.totalActual) * 100 : 0;
@@ -806,10 +720,11 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
               <th>Status</th>
             </tr>
             <tr>
-              <td>Completed Work Orders</td>
+              <td>Completed Tasks</td>
               <td>${stats.completedCount}</td>
               <td class="positive">On Track</td>
             </tr>
+
             <tr>
               <td>Budget Adherence Rate</td>
               <td>${stats.completedCount > 0 ? (((stats.underBudget + stats.onBudget) / stats.completedCount) * 100).toFixed(0) : 0}%</td>
@@ -875,15 +790,8 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
               <BarChart3 className="w-7 h-7 text-orange-500" />
               Cost Analytics & Reporting
             </h2>
-            <p className="text-slate-400">Track spending, analyze costs, and generate budget reports</p>
-            {cars.length > 1 && (
-              <div className="flex items-center gap-2 mt-1">
-                <Car className="w-4 h-4 text-orange-400" />
-                <span className="text-sm text-slate-400">
-                  Showing data for: <span className="text-orange-400 font-semibold">{getCarLabel(selectedCarId)}</span>
-                </span>
-              </div>
-            )}
+
+
           </div>
 
           
@@ -1018,7 +926,7 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
           {[
             { id: 'overview', label: 'Overview', icon: PieChartIcon },
             { id: 'costReports', label: 'Cost Reports', icon: FileSpreadsheet },
-            { id: 'workorders', label: 'Work Order Analysis', icon: FileText },
+
             { id: 'categories', label: 'Category Breakdown', icon: BarChart3 },
             { id: 'trends', label: 'Spending Trends', icon: TrendingUp },
             { id: 'budget', label: 'Budget Planning', icon: Target },
@@ -1309,7 +1217,7 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
                 <div>
                   <div className="flex justify-between text-sm mb-2">
                     <span className="text-slate-400">Under Budget</span>
-                    <span className="text-green-400 font-medium">{stats.underBudget} work orders</span>
+                    <span className="text-green-400 font-medium">{stats.underBudget} tasks</span>
                   </div>
                   <div className="w-full bg-slate-700 rounded-full h-3">
                     <div
@@ -1321,7 +1229,7 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
                 <div>
                   <div className="flex justify-between text-sm mb-2">
                     <span className="text-slate-400">On Budget</span>
-                    <span className="text-slate-300 font-medium">{stats.onBudget} work orders</span>
+                    <span className="text-slate-300 font-medium">{stats.onBudget} tasks</span>
                   </div>
                   <div className="w-full bg-slate-700 rounded-full h-3">
                     <div
@@ -1333,7 +1241,7 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
                 <div>
                   <div className="flex justify-between text-sm mb-2">
                     <span className="text-slate-400">Over Budget</span>
-                    <span className="text-red-400 font-medium">{stats.overBudget} work orders</span>
+                    <span className="text-red-400 font-medium">{stats.overBudget} tasks</span>
                   </div>
                   <div className="w-full bg-slate-700 rounded-full h-3">
                     <div
@@ -1342,6 +1250,7 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
                     />
                   </div>
                 </div>
+
                 
                 <div className="pt-4 border-t border-slate-700">
                   <div className="text-center">
@@ -1393,146 +1302,8 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
           </div>
         )}
 
-        {/* Work Orders Tab */}
-        {activeView === 'workorders' && (
-          <div className="space-y-6">
-            {/* Estimated vs Actual Chart */}
-            <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6">
-              <h3 className="font-semibold text-white mb-4">Estimated vs Actual Costs</h3>
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={estimatedVsActual} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis type="number" stroke="#94a3b8" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                    <YAxis dataKey="name" type="category" stroke="#94a3b8" width={150} tick={{ fontSize: 12 }} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend />
-                    <Bar dataKey="estimated" name="Estimated" fill="#3b82f6" radius={[0, 4, 4, 0]} />
-                    <Bar dataKey="actual" name="Actual" fill="#22c55e" radius={[0, 4, 4, 0]} />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
 
-            {/* Work Orders Table */}
-            <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
-              <div className="p-4 border-b border-slate-700/50">
-                <h3 className="font-semibold text-white">Work Order Cost Details</h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-slate-900/50 text-slate-400 text-sm">
-                      <th className="text-left px-4 py-3">Work Order</th>
-                      <th className="text-left px-4 py-3">Category</th>
-                      <th className="text-center px-4 py-3">Status</th>
-                      <th className="text-right px-4 py-3">Parts</th>
-                      <th className="text-right px-4 py-3">Est. Labor</th>
-                      <th className="text-right px-4 py-3">Act. Labor</th>
-                      <th className="text-right px-4 py-3">Est. Total</th>
-                      <th className="text-right px-4 py-3">Act. Total</th>
-                      <th className="text-right px-4 py-3">Variance</th>
-                      <th className="text-center px-4 py-3"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {workOrderCosts.map(wo => (
-                      <React.Fragment key={wo.id}>
-                        <tr className="border-b border-slate-700/30 hover:bg-slate-700/20">
-                          <td className="px-4 py-3">
-                            <div>
-                              <p className="text-white font-medium">{wo.title}</p>
-                              <p className="text-xs text-slate-500">{wo.id}</p>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="flex items-center gap-2">
-                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS[wo.category] || '#64748b' }} />
-                              <span className="text-slate-300">{wo.category}</span>
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                              wo.status === 'Completed' ? 'bg-green-500/20 text-green-400' :
-                              wo.status === 'In Progress' ? 'bg-yellow-500/20 text-yellow-400' :
-                              wo.status === 'Cancelled' ? 'bg-red-500/20 text-red-400' :
-                              'bg-slate-500/20 text-slate-400'
-                            }`}>
-                              {wo.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right text-white">${wo.partsCost.toLocaleString()}</td>
-                          <td className="px-4 py-3 text-right text-slate-400">${wo.estimatedLaborCost.toLocaleString()}</td>
-                          <td className="px-4 py-3 text-right text-white">
-                            {wo.status === 'Completed' ? `$${wo.actualLaborCost.toLocaleString()}` : '-'}
-                          </td>
-                          <td className="px-4 py-3 text-right text-slate-400">${wo.estimatedTotal.toLocaleString()}</td>
-                          <td className="px-4 py-3 text-right text-white font-medium">
-                            {wo.status === 'Completed' ? `$${wo.actualTotal.toLocaleString()}` : '-'}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            {wo.status === 'Completed' ? (
-                              <span className={`font-medium ${
-                                wo.variance > 0 ? 'text-red-400' : wo.variance < 0 ? 'text-green-400' : 'text-slate-400'
-                              }`}>
-                                {wo.variance > 0 ? '+' : ''}{wo.variancePercent.toFixed(1)}%
-                              </span>
-                            ) : '-'}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <button
-                              onClick={() => setExpandedWorkOrder(expandedWorkOrder === wo.id ? null : wo.id)}
-                              className="p-1 hover:bg-slate-700 rounded"
-                            >
-                              {expandedWorkOrder === wo.id ? (
-                                <ChevronUp className="w-4 h-4 text-slate-400" />
-                              ) : (
-                                <ChevronDown className="w-4 h-4 text-slate-400" />
-                              )}
-                            </button>
-                          </td>
-                        </tr>
-                        {expandedWorkOrder === wo.id && (
-                          <tr className="bg-slate-900/30">
-                            <td colSpan={10} className="px-4 py-4">
-                              <div className="grid md:grid-cols-3 gap-4">
-                                <div>
-                                  <p className="text-slate-400 text-sm mb-1">Parts Used</p>
-                                  {wo.parts && wo.parts.length > 0 ? (
-                                    <ul className="space-y-1">
-                                      {wo.parts.map((part, idx) => (
-                                        <li key={idx} className="text-white text-sm flex justify-between">
-                                          <span>{part.name} x{part.quantity}</span>
-                                          <span className="text-slate-400">${((part.cost || 0) * (part.quantity || 0)).toLocaleString()}</span>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  ) : (
-                                    <p className="text-slate-500 text-sm">No parts recorded</p>
-                                  )}
-                                </div>
-                                <div>
-                                  <p className="text-slate-400 text-sm mb-1">Labor Details</p>
-                                  <p className="text-white text-sm">Estimated: {wo.estimatedHours || 0} hours</p>
-                                  <p className="text-white text-sm">Actual: {wo.actualHours || wo.estimatedHours || 0} hours</p>
-                                  <p className="text-white text-sm">Rate: ${DEFAULT_HOURLY_RATE}/hour</p>
-                                </div>
-                                <div>
-                                  <p className="text-slate-400 text-sm mb-1">Notes</p>
-                                  <p className="text-white text-sm">{wo.notes || 'No notes'}</p>
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
+
 
         {/* Categories Tab */}
         {activeView === 'categories' && (
@@ -1562,15 +1333,16 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${cat.color}20` }}>
-                        <Settings className="w-5 h-5" style={{ color: cat.color }} />
+                        <Package className="w-5 h-5" style={{ color: cat.color }} />
                       </div>
                       <div>
                         <h4 className="font-medium text-white">{cat.category}</h4>
-                        <p className="text-sm text-slate-400">{cat.count} work orders</p>
+                        <p className="text-sm text-slate-400">{cat.count} tasks</p>
                       </div>
                     </div>
                   </div>
-                  
+
+
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-slate-400">Estimated</span>
@@ -1835,12 +1607,13 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
                       <div>
                         <p className="text-white font-medium">Cost Overruns Detected</p>
                         <p className="text-sm text-slate-400 mt-1">
-                          {stats.overBudget} work orders exceeded budget. Review labor hour estimates.
+                          {stats.overBudget} tasks exceeded budget. Review labor hour estimates.
                         </p>
                       </div>
                     </div>
                   </div>
                 )}
+
                 
                 <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
                   <div className="flex items-start gap-3">
@@ -1848,7 +1621,8 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
                     <div>
                       <p className="text-white font-medium">Budget Adherence</p>
                       <p className="text-sm text-slate-400 mt-1">
-                        {stats.completedCount > 0 ? (((stats.underBudget + stats.onBudget) / stats.completedCount) * 100).toFixed(0) : 0}% of work orders within budget.
+                        {stats.completedCount > 0 ? (((stats.underBudget + stats.onBudget) / stats.completedCount) * 100).toFixed(0) : 0}% of tasks within budget.
+
                       </p>
                     </div>
                   </div>
@@ -1895,7 +1669,8 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
                   ${(stats.totalActual + stats.vendorSpending).toLocaleString()}
                 </p>
                 <p className="text-slate-400">
-                  Across {stats.completedCount} completed work orders and {purchaseOrders.filter(po => po.status === 'Received').length} vendor orders
+                  Across {stats.completedCount} completed tasks and {purchaseOrders.filter(po => po.status === 'Received').length} vendor orders
+
                 </p>
               </div>
             </div>
@@ -1960,7 +1735,8 @@ const CostAnalytics: React.FC<CostAnalyticsProps> = ({ currentRole }) => {
                       </div>
                       <div className="text-right">
                         <p className="text-white font-medium">${cat.actual.toLocaleString()}</p>
-                        <p className="text-xs text-slate-400">{cat.count} work orders</p>
+                        <p className="text-xs text-slate-400">{cat.count} tasks</p>
+
                       </div>
                     </div>
                   ))}

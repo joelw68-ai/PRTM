@@ -26,7 +26,8 @@ export interface PartUsageRecord {
   passesInService?: number; // How many passes this part was in service
   
   // Linked Records
-  workOrderId?: string;
+
+
   raceEventId?: string;
   raceEventName?: string;
   
@@ -135,11 +136,8 @@ export const partsUsageHistory: PartUsageRecord[] = loadPartsUsageHistory();
 export const getUsageByPart = (partId: string): PartUsageRecord[] => {
   const records = loadPartsUsageHistory();
   return records.filter(u => u.partId === partId);
-};
 
-export const getUsageByWorkOrder = (workOrderId: string): PartUsageRecord[] => {
-  const records = loadPartsUsageHistory();
-  return records.filter(u => u.workOrderId === workOrderId);
+
 };
 
 export const getUsageByEvent = (eventId: string): PartUsageRecord[] => {

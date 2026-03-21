@@ -7,9 +7,10 @@ import { parseRows } from '@/lib/validatedQuery';
 import { BorrowedLoanedPartRowSchema } from '@/lib/validators';
 
 import {
-  AlertTriangle, Wrench, FileText, Package, ArrowLeftRight,
+  AlertTriangle, Wrench, Package, ArrowLeftRight,
   X, ChevronRight, Bell, Clock
 } from 'lucide-react';
+
 
 interface LoginAlertPopupProps {
   onNavigate: (section: string) => void;
@@ -30,7 +31,8 @@ interface AlertItem {
 }
 
 const LoginAlertPopup: React.FC<LoginAlertPopupProps> = ({ onNavigate, onDismiss }) => {
-  const { maintenanceItems, workOrders, partsInventory } = useApp();
+  const { maintenanceItems, partsInventory } = useApp();
+
   const { user, isDemoMode, effectiveUserId } = useAuth();
   const todayStr = getLocalDateString();
 
@@ -98,23 +100,7 @@ const LoginAlertPopup: React.FC<LoginAlertPopupProps> = ({ onNavigate, onDismiss
       });
     }
 
-    // Open work orders
-    const openWO = workOrders.filter(w => w.status !== 'Completed' && w.status !== 'Cancelled');
-    if (openWO.length > 0) {
-      const criticalCount = openWO.filter(w => w.priority === 'Critical').length;
-      items.push({
-        id: 'workorders-open',
-        category: 'Open Work Orders',
-        icon: FileText,
-        iconColor: criticalCount > 0 ? 'text-red-400' : 'text-amber-400',
-        bgColor: criticalCount > 0 ? 'bg-red-500/10' : 'bg-amber-500/10',
-        borderColor: criticalCount > 0 ? 'border-red-500/30' : 'border-amber-500/30',
-        message: `${openWO.length} open work order${openWO.length !== 1 ? 's' : ''}${criticalCount > 0 ? ` (${criticalCount} critical)` : ''}`,
-        detail: openWO.slice(0, 3).map(w => w.title).join(', '),
-        navTarget: 'workorders',
-        severity: criticalCount > 0 ? 'critical' : 'warning',
-      });
-    }
+
 
     // Low stock parts
     const lowStock = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
@@ -165,7 +151,8 @@ const LoginAlertPopup: React.FC<LoginAlertPopupProps> = ({ onNavigate, onDismiss
     }
 
     return items;
-  }, [maintenanceItems, workOrders, partsInventory, borrowedLoanedParts, todayStr]);
+  }, [maintenanceItems, partsInventory, borrowedLoanedParts, todayStr]);
+
 
   // Don't show if no alerts
   if (alerts.length === 0) return null;

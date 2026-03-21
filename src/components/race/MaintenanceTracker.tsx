@@ -2,13 +2,12 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { getLocalDateString, parseLocalDate } from '@/lib/utils';
 
 import DateInputDark from '@/components/ui/DateInputDark';
-import CarDropdown from '@/components/race/CarDropdown';
-import { useCar } from '@/contexts/CarContext';
+
+
 
 import { useApp } from '@/contexts/AppContext';
 import { CrewRole } from '@/lib/permissions';
-import { MaintenanceItem, SFICertification } from '@/data/proModData';
-import MaintenanceCostReports from './MaintenanceCostReports';
+import { MaintenanceItem, SFICertification, calculateMaintenanceStatus } from '@/data/proModData';
 import MaintenanceTemplates from './MaintenanceTemplates';
 import CompleteMaintenanceModal, {
   MaintenanceHistoryEntry,
@@ -30,7 +29,6 @@ import {
   X,
   Package,
   History,
-  BarChart3,
   BookOpen
 } from 'lucide-react';
 
@@ -55,17 +53,15 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     addSFICertification,
     updateSFICertification,
     deleteSFICertification,
-    addWorkOrder, 
-    workOrders,
     vendors: allVendors,
   } = useApp();
 
 
 
 
-  const { selectedCarId, getCarLabel } = useCar();
   
-  const [activeTab, setActiveTab] = useState<'maintenance' | 'sfi' | 'costReports' | 'templates'>('maintenance');
+  const [activeTab, setActiveTab] = useState<'maintenance' | 'sfi' | 'templates'>('maintenance');
+
 
 
   const [filterCategory, setFilterCategory] = useState<string>('all');
@@ -105,16 +101,22 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   const drivetrainCats = ['Drivetrain - Transmission', 'Drivetrain - Torque Converter', 'Drivetrain - 3rd Member', 'Drivetrain - Ring & Pinion', 'Drivetrain - Trans Drive'];
   const categories = [...new Set([...baseCats, ...drivetrainCats])];
 
-  // Helper: check if a car_id is empty/null/undefined
-  const isEmptyCarId = (id: string | null | undefined): boolean => !id || id === '';
 
+  // ============ DYNAMIC STATUS COMPUTATION ============
+  // Always recompute status from current pass counts so the summary cards,
+  // table badges, and sort order are never stale — even if the stored status
+  // field wasn't updated (e.g. after a background pass increment).
+  const computedMaintenance: MaintenanceItem[] = useMemo(() => {
+    return maintenanceItems.map(item => ({
+      ...item,
+      status: calculateMaintenanceStatus(item),
+    }));
+  }, [maintenanceItems]);
 
-  // Filter by selected car AND category
-  const filteredMaintenance = maintenanceItems.filter(item => {
-    const carId = item.car_id;
-    const matchesCar = isEmptyCarId(selectedCarId) || carId === selectedCarId || isEmptyCarId(carId);
+  // Filter by category (car filter removed — single-car app)
+  const filteredMaintenance = computedMaintenance.filter(item => {
     const matchesCategory = filterCategory === 'all' || item.category === filterCategory;
-    return matchesCar && matchesCategory;
+    return matchesCategory;
   });
 
 
@@ -123,11 +125,9 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     return statusOrder[a.status] - statusOrder[b.status];
   });
 
-  // Filter SFI certifications by selected car
-  const filteredSfiCertifications = sfiCertifications.filter(cert => {
-    const carId = cert.car_id;
-    return isEmptyCarId(selectedCarId) || carId === selectedCarId || isEmptyCarId(carId);
-  });
+
+  // SFI certifications (no car filter — single-car app)
+  const filteredSfiCertifications = sfiCertifications;
 
 
   const sortedCertifications = [...filteredSfiCertifications].sort((a, b) => 
@@ -135,7 +135,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   );
 
 
-  // Default new maintenance item - auto-assign selected car
+  // Default new maintenance item
   const defaultMaintenance: MaintenanceItem = {
     id: '',
     component: '',
@@ -143,16 +143,17 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     passInterval: 50,
     currentPasses: 0,
     lastService: getLocalDateString(),
+    lastServiceTime: '',
     nextServicePasses: 50,
     status: 'Good',
     priority: 'Medium',
     notes: '',
-    car_id: selectedCarId || '',
+    threshold: 5,
   };
 
 
 
-  // Default new SFI certification - auto-assign selected car
+  // Default new SFI certification
   const defaultSFI: SFICertification = {
     id: '',
     item: '',
@@ -164,8 +165,9 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     status: 'Valid',
     daysUntilExpiration: 730,
     notes: '',
-    car_id: selectedCarId || '',
   };
+
+
 
 
   const [newMaintenance, setNewMaintenance] = useState<MaintenanceItem>(defaultMaintenance);
@@ -185,38 +187,13 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
   // ============ EXISTING HANDLERS ============
 
-  const handleCreateWorkOrder = (item: MaintenanceItem) => {
-    const newWorkOrder = {
-      id: `WO-${String(workOrders.length + 1).padStart(3, '0')}`,
-      title: `${item.component} Service`,
-      description: `Scheduled maintenance for ${item.component}. ${item.notes}`,
-      category: item.category,
-      priority: item.status === 'Overdue' ? 'Critical' as const : item.status === 'Due' ? 'High' as const : 'Medium' as const,
-      status: 'Open' as const,
-      createdDate: getLocalDateString(),
-      dueDate: getLocalDateString(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
-      assignedTo: '',
-      estimatedHours: 2,
-      parts: [],
-      relatedComponent: item.id,
-      notes: ''
-    };
-    addWorkOrder(newWorkOrder);
-    if (onNavigate) onNavigate('workorders');
-  };
+
+
 
   const handleSaveMaintenance = async () => {
     try {
-      // Compute the correct status based on current passes and next service passes
-      const remaining = newMaintenance.nextServicePasses - newMaintenance.currentPasses;
-      const percentage = newMaintenance.passInterval > 0 
-        ? (remaining / newMaintenance.passInterval) * 100 
-        : 100;
-      
-      let computedStatus: MaintenanceItem['status'] = 'Good';
-      if (remaining <= 0) computedStatus = 'Overdue';
-      else if (percentage <= 10) computedStatus = 'Due';
-      else if (percentage <= 25) computedStatus = 'Due Soon';
+      // Use the canonical calculateMaintenanceStatus function for consistency
+      const computedStatus = calculateMaintenanceStatus(newMaintenance);
 
       const itemToSave: MaintenanceItem = {
         ...newMaintenance,
@@ -237,6 +214,9 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
       setNewMaintenance(defaultMaintenance);
     }
   };
+
+
+
 
 
   const handleDeleteMaintenance = async (id: string) => {
@@ -350,17 +330,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
               </span>
             )}
           </button>
-          <button
-            onClick={() => setActiveTab('costReports')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === 'costReports' 
-                ? 'bg-orange-500 text-white' 
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            <BarChart3 className="w-4 h-4" />
-            Cost Reports
-          </button>
+
           <button
             onClick={() => setActiveTab('templates')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
@@ -532,13 +502,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                                 >
                                   <Edit2 className="w-4 h-4" />
                                 </button>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); handleCreateWorkOrder(item); }}
-                                  className="p-1.5 bg-purple-500/20 text-purple-400 rounded hover:bg-purple-500/30"
-                                  title="Create work order"
-                                >
-                                  <FileText className="w-4 h-4" />
-                                </button>
+
+
                                 {itemHistoryCount > 0 && (
                                   <button
                                     onClick={(e) => { 
@@ -750,9 +715,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
           </>
         )}
 
-        {activeTab === 'costReports' && (
-          <MaintenanceCostReports />
-        )}
+
+
 
         {activeTab === 'templates' && (
           <MaintenanceTemplates onApplyTemplate={() => setActiveTab('maintenance')} />
@@ -879,18 +843,11 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                 {editingMaintenance ? 'Edit Maintenance Item' : 'Add Maintenance Item'}
               </h3>
               <button onClick={() => setShowMaintenanceModal(false)} className="text-slate-400 hover:text-white">
+
                 <X className="w-6 h-6" />
               </button>
             </div>
-            
             <div className="space-y-4">
-              {/* Car Assignment */}
-              <CarDropdown
-                value={newMaintenance.car_id || ''}
-                onChange={(carId) => setNewMaintenance({...newMaintenance, car_id: carId})}
-                label="Assign to Car"
-              />
-
 
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Component Name *</label>
@@ -903,13 +860,11 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                 />
               </div>
 
-              
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">Category</label>
                   <select
                     value={newMaintenance.category}
-
                     onChange={(e) => setNewMaintenance({...newMaintenance, category: e.target.value})}
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   >
@@ -935,23 +890,19 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                       <option value="Quick Drive">Quick Drive</option>
                     </optgroup>
                   </select>
-
-
                 </div>
                 <div>
-                  <label className="block text-sm text-slate-400 mb-1">Priority</label>
-                  <select
-                    onChange={(e) => setNewMaintenance({...newMaintenance, priority: e.target.value as MaintenanceItem['priority']})}
-
+                  <label className="block text-sm text-slate-400 mb-1">Threshold (passes before alert)</label>
+                  <input
+                    type="number"
+                    value={newMaintenance.threshold || 5}
+                    onChange={(e) => setNewMaintenance({...newMaintenance, threshold: parseInt(e.target.value) || 0})}
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                  >
-                    <option value="Low">Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
-                    <option value="Critical">Critical</option>
-                  </select>
+                    placeholder="e.g., 5"
+                  />
                 </div>
               </div>
+
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -981,14 +932,26 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                 </div>
               </div>
               
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Last Service Date</label>
-                <DateInputDark
-                  value={newMaintenance.lastService}
-                  onChange={(e) => setNewMaintenance({...newMaintenance, lastService: e.target.value})}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Last Service Date</label>
+                  <DateInputDark
+                    value={newMaintenance.lastService}
+                    onChange={(e) => setNewMaintenance({...newMaintenance, lastService: e.target.value})}
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Last Service Time</label>
+                  <input
+                    type="time"
+                    value={newMaintenance.lastServiceTime || ''}
+                    onChange={(e) => setNewMaintenance({...newMaintenance, lastServiceTime: e.target.value})}
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  />
+                </div>
               </div>
+
 
               
               <div>
@@ -1034,12 +997,6 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
               </button>
             </div>
             <div className="space-y-4">
-              {/* Car Assignment for SFI */}
-              <CarDropdown
-                value={newSFI.car_id || ''}
-                onChange={(carId) => setNewSFI({...newSFI, car_id: carId})}
-                label="Assign to Car"
-              />
 
 
               <div>

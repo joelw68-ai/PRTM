@@ -18,7 +18,8 @@ import {
   removeFromRetryQueue,
 } from '@/lib/syncHistory';
 
-import type { PassLogEntry, Engine, Supercharger, CylinderHead, MaintenanceItem, SFICertification, WorkOrder, ChecklistItem, EngineSwapLog, TrackWeatherHistory } from '@/data/proModData';
+import type { PassLogEntry, Engine, Supercharger, CylinderHead, MaintenanceItem, SFICertification, ChecklistItem, EngineSwapLog, TrackWeatherHistory } from '@/data/proModData';
+
 import type { PartInventoryItem } from '@/data/partsInventory';
 import type { RaceEvent } from '@/components/race/RaceCalendar';
 import type { TeamMember } from '@/components/race/TeamProfile';
@@ -29,7 +30,7 @@ import type { SavedTrack, ToDoItem, TeamNote, LaborEntry, FuelLogEntry } from '@
 
 export type QueueOperationType =
   | 'upsertPassLog' | 'deletePassLog'
-  | 'upsertWorkOrder' | 'deleteWorkOrder'
+
   | 'upsertEngine' | 'deleteEngine'
   | 'upsertSupercharger' | 'deleteSupercharger'
   | 'upsertCylinderHead' | 'deleteCylinderHead'
@@ -59,9 +60,8 @@ export type QueueOperationType =
 export interface QueueDataMap {
   upsertPassLog: PassLogEntry;
   deletePassLog: string;
-  upsertWorkOrder: WorkOrder;
-  deleteWorkOrder: string;
   upsertEngine: Engine;
+
   deleteEngine: string;
   upsertSupercharger: Supercharger;
   deleteSupercharger: string;
@@ -288,15 +288,8 @@ const executeOperation = async (item: SerializedQueueItem): Promise<void> => {
       await db.deletePassLog(assertString(data, 'deletePassLog'));
       break;
 
-    // Work Orders
-    case 'upsertWorkOrder':
-      await db.upsertWorkOrder(assertEntity<WorkOrder>(data, 'upsertWorkOrder'), userId);
-      break;
-    case 'deleteWorkOrder':
-      await db.deleteWorkOrder(assertString(data, 'deleteWorkOrder'));
-      break;
-
     // Engines
+
     case 'upsertEngine':
       await db.upsertEngine(assertEntity<Engine>(data, 'upsertEngine'), userId);
       break;

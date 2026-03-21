@@ -3,7 +3,8 @@ import { RaceEvent } from '@/components/race/RaceCalendar';
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface TimelineReportEntry {
   id: string;
-  type: 'pass' | 'weather' | 'maintenance' | 'checklist' | 'workorder' | 'activity';
+  type: 'pass' | 'weather' | 'maintenance' | 'checklist' | 'activity';
+
   timestamp: Date;
   title: string;
   subtitle?: string;
@@ -21,22 +22,26 @@ interface ReportData {
     totalPasses: number;
     bestET: number | null;
     bestMPH: number | null;
+    bestQuarterET: number | null;
+    bestQuarterMPH: number | null;
     checklistCompletion: number;
     maintenanceActions: number;
-    workOrdersCompleted: number;
     weatherSnapshots: number;
+
   };
+  includeStats?: boolean;
 }
 
 // ─── Color map for entry types ───────────────────────────────────────────────
 const TYPE_COLORS: Record<string, { bg: string; text: string; border: string; label: string }> = {
+
   pass:        { bg: '#064e3b', text: '#34d399', border: '#059669', label: 'Pass' },
   weather:     { bg: '#0c4a6e', text: '#38bdf8', border: '#0284c7', label: 'Weather' },
   maintenance: { bg: '#451a03', text: '#fbbf24', border: '#d97706', label: 'Maintenance' },
   checklist:   { bg: '#2e1065', text: '#a78bfa', border: '#7c3aed', label: 'Checklist' },
-  workorder:   { bg: '#4c0519', text: '#fb7185', border: '#e11d48', label: 'Work Order' },
   activity:    { bg: '#1e293b', text: '#94a3b8', border: '#475569', label: 'Activity' },
 };
+
 
 // ─── Format time ─────────────────────────────────────────────────────────────
 const formatTime = (date: Date): string => {
@@ -49,7 +54,7 @@ const formatDate = (date: Date): string => {
 
 // ─── Generate the report HTML ────────────────────────────────────────────────
 const generateReportHTML = (data: ReportData): string => {
-  const { event, entries, teamName, generatedBy, stats } = data;
+  const { event, entries, teamName, generatedBy, stats, includeStats = true } = data;
 
   // Group entries by date
   const groupedByDate = new Map<string, TimelineReportEntry[]>();
@@ -128,6 +133,37 @@ const generateReportHTML = (data: ReportData): string => {
     `;
   }).join('');
 
+  // Stats section (conditionally included)
+  const statsHTML = includeStats ? `
+  <!-- Summary Stats -->
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; margin-bottom: 32px;">
+    <div style="text-align: center; padding: 14px; background: #1e293b; border: 1px solid #334155; border-radius: 8px;">
+      <div style="font-size: 26px; font-weight: 800; color: #f1f5f9;">${entries.length}</div>
+      <div style="font-size: 10px; color: #94a3b8; text-transform: uppercase;">Total Events</div>
+    </div>
+    ${typeCountsHTML}
+    ${stats.bestET ? `
+    <div style="text-align: center; padding: 14px; background: #064e3b; border: 1px solid #05966840; border-radius: 8px;">
+      <div style="font-size: 22px; font-weight: 800; color: #34d399; font-family: 'Courier New', monospace;">${stats.bestET.toFixed(3)}</div>
+      <div style="font-size: 10px; color: #94a3b8; text-transform: uppercase;">Best 1/8 ET</div>
+    </div>` : ''}
+    ${stats.bestMPH ? `
+    <div style="text-align: center; padding: 14px; background: #0c4a6e; border: 1px solid #0284c740; border-radius: 8px;">
+      <div style="font-size: 22px; font-weight: 800; color: #38bdf8; font-family: 'Courier New', monospace;">${stats.bestMPH.toFixed(1)}</div>
+      <div style="font-size: 10px; color: #94a3b8; text-transform: uppercase;">Best 1/8 MPH</div>
+    </div>` : ''}
+    ${stats.bestQuarterET ? `
+    <div style="text-align: center; padding: 14px; background: #064e3b; border: 1px solid #05966840; border-radius: 8px;">
+      <div style="font-size: 22px; font-weight: 800; color: #6ee7b7; font-family: 'Courier New', monospace;">${stats.bestQuarterET.toFixed(3)}</div>
+      <div style="font-size: 10px; color: #94a3b8; text-transform: uppercase;">Best 1/4 ET</div>
+    </div>` : ''}
+    ${stats.bestQuarterMPH ? `
+    <div style="text-align: center; padding: 14px; background: #0c4a6e; border: 1px solid #0284c740; border-radius: 8px;">
+      <div style="font-size: 22px; font-weight: 800; color: #7dd3fc; font-family: 'Courier New', monospace;">${stats.bestQuarterMPH.toFixed(1)}</div>
+      <div style="font-size: 10px; color: #94a3b8; text-transform: uppercase;">Best 1/4 MPH</div>
+    </div>` : ''}
+  </div>` : '';
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -177,24 +213,7 @@ const generateReportHTML = (data: ReportData): string => {
     </div>
   </div>
 
-  <!-- Summary Stats -->
-  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; margin-bottom: 32px;">
-    <div style="text-align: center; padding: 14px; background: #1e293b; border: 1px solid #334155; border-radius: 8px;">
-      <div style="font-size: 26px; font-weight: 800; color: #f1f5f9;">${entries.length}</div>
-      <div style="font-size: 10px; color: #94a3b8; text-transform: uppercase;">Total Events</div>
-    </div>
-    ${typeCountsHTML}
-    ${stats.bestET ? `
-    <div style="text-align: center; padding: 14px; background: #064e3b; border: 1px solid #05966840; border-radius: 8px;">
-      <div style="font-size: 22px; font-weight: 800; color: #34d399; font-family: 'Courier New', monospace;">${stats.bestET.toFixed(3)}</div>
-      <div style="font-size: 10px; color: #94a3b8; text-transform: uppercase;">Best ET</div>
-    </div>` : ''}
-    ${stats.bestMPH ? `
-    <div style="text-align: center; padding: 14px; background: #0c4a6e; border: 1px solid #0284c740; border-radius: 8px;">
-      <div style="font-size: 22px; font-weight: 800; color: #38bdf8; font-family: 'Courier New', monospace;">${stats.bestMPH.toFixed(1)}</div>
-      <div style="font-size: 10px; color: #94a3b8; text-transform: uppercase;">Best MPH</div>
-    </div>` : ''}
-  </div>
+  ${statsHTML}
 
   <!-- Timeline -->
   <div style="margin-bottom: 32px;">
@@ -214,7 +233,7 @@ const generateReportHTML = (data: ReportData): string => {
 </html>`;
 };
 
-// ─── Export function ─────────────────────────────────────────────────────────
+// ─── Export PDF function ─────────────────────────────────────────────────────
 export const exportTimelineReport = (data: ReportData): void => {
   const html = generateReportHTML(data);
   const blob = new Blob([html], { type: 'text/html' });
@@ -234,6 +253,98 @@ export const exportTimelineReport = (data: ReportData): void => {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }
+};
+
+// ─── Export CSV function ─────────────────────────────────────────────────────
+export const exportTimelineCSV = (data: ReportData): void => {
+  const { event, entries, teamName, stats, includeStats = true } = data;
+
+  // CSV escape helper
+  const escapeCSV = (value: string): string => {
+    if (!value) return '';
+    const str = String(value);
+    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  // Header row
+  const headers = [
+    'Date',
+    'Time',
+    'Type',
+    'Title',
+    'Subtitle',
+    'Actor',
+    'Actor Role',
+    'Detail Keys',
+    'Detail Values',
+  ];
+
+  // Build rows
+  const rows = entries.map(entry => {
+    const detailKeys = Object.entries(entry.details)
+      .filter(([_, v]) => v !== undefined && v !== '' && v !== '—')
+      .map(([k]) => k)
+      .join('; ');
+    const detailValues = Object.entries(entry.details)
+      .filter(([_, v]) => v !== undefined && v !== '' && v !== '—')
+      .map(([_, v]) => String(v))
+      .join('; ');
+
+    return [
+      escapeCSV(entry.timestamp.toLocaleDateString()),
+      escapeCSV(entry.timestamp.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })),
+      escapeCSV(entry.type),
+      escapeCSV(entry.title),
+      escapeCSV(entry.subtitle || ''),
+      escapeCSV(entry.actor || ''),
+      escapeCSV(entry.actorRole || ''),
+      escapeCSV(detailKeys),
+      escapeCSV(detailValues),
+    ];
+  });
+
+  // Build CSV content with BOM for Excel compatibility
+  let csvContent = '\uFEFF';
+
+  // Add metadata header
+  csvContent += `Race Day Timeline Report\r\n`;
+  csvContent += `Event: ${escapeCSV(event.title)}\r\n`;
+  csvContent += `Track: ${escapeCSV(event.trackName)}${event.trackLocation ? ` - ${escapeCSV(event.trackLocation)}` : ''}\r\n`;
+  csvContent += `Date: ${escapeCSV(event.startDate)}${event.endDate && event.endDate !== event.startDate ? ` to ${escapeCSV(event.endDate)}` : ''}\r\n`;
+  csvContent += `Team: ${escapeCSV(teamName)}\r\n`;
+
+  // Add stats summary if requested
+  if (includeStats) {
+    csvContent += `\r\nSummary Statistics\r\n`;
+    csvContent += `Total Entries,${entries.length}\r\n`;
+    csvContent += `Total Passes,${stats.totalPasses}\r\n`;
+    if (stats.bestET) csvContent += `Best 1/8 ET,${stats.bestET.toFixed(3)}\r\n`;
+    if (stats.bestMPH) csvContent += `Best 1/8 MPH,${stats.bestMPH.toFixed(1)}\r\n`;
+    if (stats.bestQuarterET) csvContent += `Best 1/4 ET,${stats.bestQuarterET.toFixed(3)}\r\n`;
+    if (stats.bestQuarterMPH) csvContent += `Best 1/4 MPH,${stats.bestQuarterMPH.toFixed(1)}\r\n`;
+    csvContent += `Checklist Items,${stats.checklistCompletion}\r\n`;
+    csvContent += `Maintenance Actions,${stats.maintenanceActions}\r\n`;
+    csvContent += `Weather Snapshots,${stats.weatherSnapshots}\r\n`;
+
+  }
+
+  csvContent += `\r\n`;
+  csvContent += headers.join(',') + '\r\n';
+  csvContent += rows.map(row => row.join(',')).join('\r\n');
+
+  // Create and trigger download
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `race-day-timeline-${event.startDate}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 };
 
 export default exportTimelineReport;

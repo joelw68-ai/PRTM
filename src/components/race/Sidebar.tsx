@@ -1,25 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useCar } from '@/contexts/CarContext';
 import { useApp } from '@/contexts/AppContext';
 import { useThemeColor, useAccentStyles } from '@/contexts/ThemeColorContext';
 import { useRaceDay } from '@/contexts/RaceDayContext';
 import { CrewRole, isAdminRole, hasPermission, getRoleColor } from '@/lib/permissions';
 import SaveStatusIndicator from '@/components/race/SaveStatusIndicator';
-import CarSelector from '@/components/race/CarSelector';
 import GlobalSearch from '@/components/race/GlobalSearch';
 
 import {
-  Gauge, Car, ClipboardList, Wrench, Shield, FileText, Settings,
+  Gauge, ClipboardList, Wrench, Shield, Settings,
   Menu, X, Package, Calendar, BarChart3, Camera, History,
-  SlidersHorizontal, ChevronDown, ChevronRight, DollarSign,
-  CheckSquare, ListTodo, Cog, ArrowLeftRight, Receipt, Fuel,
-  User, LogOut, LogIn, UserPlus, Play, Bell, AlertTriangle,
-  Loader2, Wifi, WifiOff, CloudUpload, Users, LayoutDashboard,
+  SlidersHorizontal, ChevronDown,
+  CheckSquare, ListTodo, Cog, ArrowLeftRight,
+  User, LogOut, LogIn, UserPlus, Play, Bell,
+  Loader2,
   Home, HardDrive, Radio, Zap, Activity
 } from 'lucide-react';
-
-
 
 
 interface SidebarProps {
@@ -48,7 +44,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
 }) => {
   const { user, profile, isAuthenticated, isDemoMode, signOut, disableDemoMode, isLoading: authLoading, isTeamMember, activeTeamMembership } = useAuth();
-  const { cars, selectedCarId, getCarLabel } = useCar();
   const { getAlertCount, saveStatus, lastSaveTime, lastSaveError, retrySave, refreshData, isSyncing, syncError, lastSyncTime, isOnline, pendingOfflineCount, hasConnectivityIssue, isOfflineSyncing, offlineSyncProgress, syncOfflineQueue } = useApp();
   const { colors } = useThemeColor();
   const styles = useAccentStyles();
@@ -64,25 +59,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     ? (isAdminRole(currentRole) || hasPermission(currentRole, 'settings.admin'))
     : isTeamMember && activeTeamMembership?.permissions?.includes('admin');
 
-  // Get the selected car for the active car indicator
-  const selectedCar = selectedCarId ? cars.find(c => c.id === selectedCarId) : null;
-
-  // Build car submenu items from actual car profiles
-  const carSubmenuItems = cars.map(car => ({
-    id: `car-${car.id}`,
-    label: car.nickname || `#${car.carNumber}` || `${car.make} ${car.model}` || 'Car',
-    icon: Car,
-  }));
-
   const menuItems: MenuItem[] = [
     { id: 'teamdash', label: 'Team Dashboard', icon: Radio },
-
-    {
-      id: 'cars',
-      label: 'Race Cars',
-      icon: Car,
-      submenu: carSubmenuItems.length > 0 ? carSubmenuItems : [{ id: 'cars', label: 'Car Profiles', icon: Car }],
-    },
     {
       id: 'raceday',
       label: 'Race Day',
@@ -97,7 +75,6 @@ const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
     {
-
       id: 'partsgroup',
       label: 'Parts & Components',
       icon: Package,
@@ -109,23 +86,14 @@ const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
     { id: 'calendar', label: 'Event Calendar', icon: Calendar },
-    { id: 'vendors', label: 'Vendors', icon: Users },
-    {
-      id: 'finances',
-      label: 'Finances',
-      icon: DollarSign,
-      submenu: [
-        { id: 'expenses', label: 'Expenses', icon: Receipt },
-        { id: 'costs', label: 'Cost Reports', icon: DollarSign },
-        { id: 'fuellog', label: 'Fuel Log', icon: Fuel },
-      ],
-    },
-    { id: 'workorders', label: 'Work Orders', icon: FileText },
+    { id: 'vendors', label: 'Vendors', icon: User },
     { id: 'gallery', label: 'Gallery', icon: Camera },
     { id: 'profile', label: 'Team & Crew Profile', icon: User },
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'dashboard', label: 'Dashboard', icon: Home },
     { id: 'setup', label: 'Setup', icon: SlidersHorizontal },
   ];
+
+
 
   // Auto-expand the menu group that contains the active section
   useEffect(() => {
@@ -152,12 +120,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleNavigate = (section: string) => {
-    // Handle car-specific navigation
-    if (section.startsWith('car-')) {
-      onNavigate('cars');
-    } else {
-      onNavigate(section);
-    }
+    onNavigate(section);
     setMobileOpen(false);
   };
 
@@ -167,7 +130,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const isActiveSection = (id: string) => {
-    if (id.startsWith('car-')) return activeSection === 'cars';
     return activeSection === id;
   };
 
@@ -200,69 +162,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
           )}
         </div>
-
-        {/* Car Selector */}
-        {!collapsed && (
-          <div className="mt-3">
-            <CarSelector />
-          </div>
-        )}
       </div>
-
-      {/* Active Car Indicator — always visible at top */}
-      {!collapsed && (
-        <div
-          className="px-3 py-2.5 border-b border-slate-700/50"
-          style={{
-            backgroundColor: selectedCar ? `rgba(${colors.rgb}, 0.08)` : 'transparent',
-          }}
-        >
-          <div className="flex items-center gap-2.5">
-            <div
-              className="w-3 h-3 rounded-full flex-shrink-0 ring-2 ring-offset-1 ring-offset-slate-900"
-              style={{
-                backgroundColor: colors.base,
-                ringColor: `rgba(${colors.rgb}, 0.4)`,
-                boxShadow: `0 0 8px rgba(${colors.rgb}, 0.4), inset 0 0 0 2px rgba(${colors.rgb}, 0.3)`,
-              }}
-            />
-            <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-semibold truncate" style={{ color: colors.light }}>
-                {selectedCar ? getCarLabel(selectedCarId) : 'All Cars'}
-              </p>
-              <p className="text-[9px] text-slate-500 truncate">
-                {selectedCar
-                  ? `${selectedCar.class || 'No class'} ${selectedCar.isActive ? '' : '(Inactive)'}`
-                  : 'Combined team view'}
-              </p>
-            </div>
-            {selectedCar && (
-              <div
-                className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
-                style={{
-                  backgroundColor: `rgba(${colors.rgb}, 0.2)`,
-                }}
-              >
-                <Car className="w-3 h-3" style={{ color: colors.light }} />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Collapsed: just show color dot */}
-      {collapsed && (
-        <div className="px-2 py-3 border-b border-slate-700/50 flex justify-center">
-          <div
-            className="w-4 h-4 rounded-full"
-            style={{
-              backgroundColor: colors.base,
-              boxShadow: `0 0 8px rgba(${colors.rgb}, 0.5)`,
-            }}
-            title={selectedCar ? getCarLabel(selectedCarId) : 'All Cars'}
-          />
-        </div>
-      )}
 
       {/* Team Member Banner */}
       {isTeamMember && activeTeamMembership && !collapsed && (
