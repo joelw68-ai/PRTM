@@ -506,7 +506,7 @@ const AppLayoutContent: React.FC = () => {
           className="text-sm font-mono font-semibold tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
           style={{ color: 'var(--tc)' }}
         >
-          v1.0.7
+          v2.0.1
         </span>
       </div>
 
