@@ -17,8 +17,63 @@ import { useAuth } from '@/contexts/AuthContext';
 import { CrewRole } from '@/lib/permissions';
 import { fetchWeatherData, calculateDewPoint, calculateVaporPressure, calculateWaterGrains, calculateWetBulb, calculateSTDCorrection } from '@/lib/weather';
 
-import { SavedTrack } from '@/lib/database';
+import { SavedTrack, ComponentPart } from '@/lib/database';
 import * as db from '@/lib/database';
+
+// ═══════════════════════════════════════════════════════════════════
+// LOCALSTORAGE HELPERS FOR STANDALONE PARTS
+// ═══════════════════════════════════════════════════════════════════
+// When PassLog auto-increments standalone parts, it MUST update both:
+//   1. The database (via bulkIncrementComponentPartPasses)
+//   2. The localStorage fallback (mainComp_parts_db_fallback)
+//
+// WHY BOTH? MainComponents may not be mounted when a pass is logged.
+// If MainComponents isn't mounted, the 'component-parts-incremented'
+// custom event goes nowhere, and the localStorage fallback never gets
+// updated. On next page load, MainComponents loads from localStorage
+// (if DB is unavailable/PGRST205) and sees the old pass counts.
+//
+// By directly updating localStorage here, we guarantee the pass counts
+// are persisted regardless of whether MainComponents is mounted, and
+// regardless of whether the database update succeeds.
+// ═══════════════════════════════════════════════════════════════════
+const PARTS_FALLBACK_KEY = 'mainComp_parts_db_fallback';
+
+/**
+ * Directly update standalone part pass counts in the localStorage fallback.
+ * Called by PassLog after auto-incrementing parts on a new pass.
+ *
+ * @param componentIds - IDs of the components whose parts should be updated
+ * @param increment    - Number of passes to add (positive) or subtract (negative for undo)
+ */
+function updateLocalStoragePartPasses(componentIds: string[], increment: number): void {
+  try {
+    const raw = localStorage.getItem(PARTS_FALLBACK_KEY);
+    if (!raw) {
+      console.log('[PassLog] No localStorage parts fallback found — skipping localStorage update');
+      return;
+    }
+    const parts: ComponentPart[] = JSON.parse(raw);
+    if (!Array.isArray(parts) || parts.length === 0) return;
+
+    let updatedCount = 0;
+    const updatedParts = parts.map(p => {
+      if (componentIds.includes(p.componentId)) {
+        updatedCount++;
+        return { ...p, passesOnPart: Math.max(0, (p.passesOnPart || 0) + increment) };
+      }
+      return p;
+    });
+
+    if (updatedCount > 0) {
+      localStorage.setItem(PARTS_FALLBACK_KEY, JSON.stringify(updatedParts));
+      console.log(`[PassLog] Updated ${updatedCount} standalone part(s) in localStorage fallback: ${increment > 0 ? '+' : ''}${increment}`);
+    }
+  } catch (err) {
+    console.warn('[PassLog] Failed to update localStorage parts fallback:', err);
+  }
+}
+
 
 
 
@@ -688,6 +743,17 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
             detail: { componentIds: incrementedComponentIds, increment: n }
           }));
           console.log(`[PassLog] Dispatched component-parts-incremented event: +${n} for ${incrementedComponentIds.length} component(s)`);
+
+          // ═══════════════════════════════════════════════════════════
+          // GUARANTEED LOCALSTORAGE UPDATE
+          // ═══════════════════════════════════════════════════════════
+          // Directly update the localStorage fallback for standalone parts.
+          // This is the CRITICAL fix: even if the DB update fails (PGRST205,
+          // RLS, schema cache) AND MainComponents is not mounted (so the
+          // custom event goes nowhere), the parts' pass counts are still
+          // persisted in localStorage. On next page load, MainComponents
+          // will pick up the updated values from localStorage.
+          updateLocalStoragePartPasses(incrementedComponentIds, n);
         }
 
 
@@ -743,7 +809,11 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                   detail: { componentIds: undoComponentIds, increment: -n }
                 }));
                 console.log(`[PassLog Undo] Dispatched component-parts-incremented event: -${n} for ${undoComponentIds.length} component(s)`);
+
+                // Also revert localStorage fallback
+                updateLocalStoragePartPasses(undoComponentIds, -n);
               }
+
 
               toast.success('Pass undone — pass log entry deleted and component passes reverted', { duration: 4000 });
               console.log('[PassLog Undo] Successfully reverted pass and component increments');
