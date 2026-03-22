@@ -1156,21 +1156,16 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                             </div>
                             
                             <div>
-                              <h4 className="text-sm font-medium text-slate-400 mb-3">Quick Actions</h4>
-                              <div className="space-y-2">
-                                {(part.status === 'Low Stock' || part.status === 'Out of Stock') && (
-                                  <button
-                                    onClick={() => openPOModal([part])}
-                                    className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700"
-                                  >
-                                    <ShoppingCart className="w-4 h-4" />
-                                    Create Purchase Order
-                                  </button>
-                                )}
+                              <h4 className="text-sm font-medium text-slate-400 mb-3">Vendor</h4>
+                              <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-slate-400">Vendor</span>
+                                  <span className="text-white">{part.vendor || 'N/A'}</span>
+                                </div>
                                 {onNavigateToVendors && (
                                   <button
                                     onClick={onNavigateToVendors}
-                                    className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-slate-700 text-white rounded-lg text-sm hover:bg-slate-600"
+                                    className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-slate-700 text-white rounded-lg text-sm hover:bg-slate-600 mt-2"
                                   >
                                     <Building2 className="w-4 h-4" />
                                     View Vendor Details
@@ -1178,6 +1173,7 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                                 )}
                               </div>
                             </div>
+
                           </div>
                         </td>
                       </tr>
@@ -1238,13 +1234,14 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
             
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-slate-400 mb-1">Part Number *</label>
+                <label className="block text-sm text-slate-400 mb-1">Brand and Part # *</label>
                 <input
                   type="text"
                   value={newPart.partNumber}
                   onChange={(e) => setNewPart({...newPart, partNumber: e.target.value})}
                   className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                  placeholder="e.g., ENG-PISTON-001"
+                  placeholder="e.g., CP Carrillo CP-1234"
+
                 />
               </div>
 
@@ -1269,11 +1266,12 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   >
                     <option value="Engine">Engine</option>
+                    <option value="Power Adder">Power Adder</option>
                     <option value="Drivetrain">Drivetrain</option>
-                    <option value="Ty-Drive">Ty-Drive</option>
-                    <option value="Quick Drive">Quick Drive</option>
+                    <option value="Trans Drive">Trans Drive</option>
                     <option value="Transmission">Transmission</option>
                     <option value="Fuel System">Fuel System</option>
+                    <option value="Oil System">Oil System</option>
                     <option value="Electrical">Electrical</option>
                     <option value="Suspension">Suspension</option>
                     <option value="Brakes">Brakes</option>
@@ -1281,21 +1279,37 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                     <option value="Safety">Safety</option>
                     <option value="Body">Body</option>
                     <option value="Wheels/Tires">Wheels/Tires</option>
-                    <option value="Supercharger">Supercharger</option>
                   </select>
-
-
                 </div>
+
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">Subcategory</label>
-                  <input
-                    type="text"
+                  <select
                     value={newPart.subcategory}
                     onChange={(e) => setNewPart({...newPart, subcategory: e.target.value})}
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                    placeholder="e.g., Pistons"
-                  />
+                  >
+                    <option value="">Select subcategory...</option>
+                    <option value="Torque Converter">Torque Converter</option>
+                    <option value="Ty-Drive">Ty-Drive</option>
+                    <option value="Quick Drive">Quick Drive</option>
+                    <option value="Lenco Drive">Lenco Drive</option>
+                    <option value="Bruno">Bruno</option>
+                    <option value="Short Block">Short Block</option>
+                    <option value="Intake">Intake</option>
+                    <option value="Cylinder Head">Cylinder Head</option>
+                    <option value="Oil">Oil</option>
+                    <option value="Fuel">Fuel</option>
+                    <option value="Hartz Charger">Hartz Charger</option>
+                    <option value="Procharger">Procharger</option>
+                    <option value="Screw Blower">Screw Blower</option>
+                    <option value="Roots Blower">Roots Blower</option>
+                    <option value="Turbo Charger">Turbo Charger</option>
+                    <option value="Other">Other</option>
+                  </select>
                 </div>
+
+
               </div>
               
 

@@ -4,6 +4,7 @@ import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils
 
 
 import { useApp } from '@/contexts/AppContext';
+import { useAuth } from '@/contexts/AuthContext';
 import InvoiceUpload from './InvoiceUpload';
 import { VendorRecord } from '@/lib/database';
 import { getStateSelectOptions } from '@/data/usStates';
@@ -45,7 +46,9 @@ import {
   Upload,
   Receipt,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  MessageSquarePlus,
+  StickyNote
 } from 'lucide-react';
 
 
@@ -54,6 +57,9 @@ import {
   PurchaseOrder,
   PurchaseOrderItem,
   VendorPerformance,
+  VendorNote,
+  parseVendorNotes,
+  serializeVendorNotes,
   purchaseOrders as initialPurchaseOrders,
   vendorPerformance as initialVendorPerformance,
   VENDOR_CATEGORIES
@@ -74,8 +80,20 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
     refreshVendors
   } = useApp();
 
+  const { user, profile } = useAuth();
+
+  // Get current user display name for notes authorship
+  const getCurrentAuthor = useCallback(() => {
+    return profile?.driverName || profile?.teamName || user?.email?.split('@')[0] || 'Unknown User';
+  }, [profile?.driverName, profile?.teamName, user?.email]);
+
   // Manual refresh state
   const [isRefreshingVendors, setIsRefreshingVendors] = useState(false);
+
+  // Notes input state per vendor (keyed by vendor ID)
+  const [noteInputs, setNoteInputs] = useState<Record<string, string>>({});
+  // Notes input for the modal (new vendor being created/edited)
+  const [modalNoteInput, setModalNoteInput] = useState('');
 
   const handleRefreshVendors = useCallback(async () => {
     setIsRefreshingVendors(true);
@@ -85,6 +103,7 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
       setIsRefreshingVendors(false);
     }
   }, [refreshVendors]);
+
   
 
   
@@ -454,8 +473,109 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
     a.href = url;
     a.download = `vendor_list_${getLocalDateString()}.csv`;
 
+
     a.click();
   };
+
+
+  // ============ VENDOR NOTES LOG HANDLERS ============
+
+  /**
+   * Add a timestamped note to an existing vendor (from the expanded card view).
+   * Parses the current notes JSON, appends the new note, serializes, and saves via updateVendor.
+   */
+  const handleAddVendorNote = async (vendorId: string) => {
+    const text = (noteInputs[vendorId] || '').trim();
+    if (!text) return;
+
+    const vendor = vendors.find(v => v.id === vendorId);
+    if (!vendor) return;
+
+    const existingNotes = parseVendorNotes(vendor.notes);
+    const newNote: VendorNote = {
+      id: `note-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      text,
+      author: getCurrentAuthor(),
+      timestamp: new Date().toISOString()
+    };
+    const updatedNotes = [newNote, ...existingNotes]; // newest first
+    const serialized = serializeVendorNotes(updatedNotes);
+
+    try {
+      await ctxUpdateVendor(vendorId, { notes: serialized });
+      setNoteInputs(prev => ({ ...prev, [vendorId]: '' }));
+      refreshVendors();
+    } catch (err: any) {
+      console.error('Failed to add vendor note:', err);
+      alert('Failed to add note: ' + (err?.message || 'Unknown error'));
+    }
+  };
+
+  /**
+   * Delete a specific note from an existing vendor (from the expanded card view).
+   */
+  const handleDeleteVendorNote = async (vendorId: string, noteId: string) => {
+    const vendor = vendors.find(v => v.id === vendorId);
+    if (!vendor) return;
+
+    const existingNotes = parseVendorNotes(vendor.notes);
+    const updatedNotes = existingNotes.filter(n => n.id !== noteId);
+    const serialized = serializeVendorNotes(updatedNotes);
+
+    try {
+      await ctxUpdateVendor(vendorId, { notes: serialized });
+      refreshVendors();
+    } catch (err: any) {
+      console.error('Failed to delete vendor note:', err);
+      alert('Failed to delete note: ' + (err?.message || 'Unknown error'));
+    }
+  };
+
+  /**
+   * Add a note to the vendor being created/edited in the modal.
+   * This modifies the newVendor state (notes field) directly.
+   */
+  const handleAddModalNote = () => {
+    const text = modalNoteInput.trim();
+    if (!text) return;
+
+    const existingNotes = parseVendorNotes(newVendor.notes);
+    const newNote: VendorNote = {
+      id: `note-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      text,
+      author: getCurrentAuthor(),
+      timestamp: new Date().toISOString()
+    };
+    const updatedNotes = [newNote, ...existingNotes];
+    setNewVendor({ ...newVendor, notes: serializeVendorNotes(updatedNotes) });
+    setModalNoteInput('');
+  };
+
+  /**
+   * Delete a note from the vendor being created/edited in the modal.
+   */
+  const handleDeleteModalNote = (noteId: string) => {
+    const existingNotes = parseVendorNotes(newVendor.notes);
+    const updatedNotes = existingNotes.filter(n => n.id !== noteId);
+    setNewVendor({ ...newVendor, notes: serializeVendorNotes(updatedNotes) });
+  };
+
+  /**
+   * Format a timestamp for display (e.g., "Mar 22, 2026 at 4:51 AM")
+   */
+  const formatNoteTimestamp = (iso: string): string => {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric'
+      }) + ' at ' + d.toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', hour12: true
+      });
+    } catch {
+      return iso;
+    }
+  };
+
 
   return (
     <section className="py-8 px-4">
@@ -468,13 +588,13 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
               Vendor Management
             </h2>
             <p className="text-slate-400">Manage your vendor contacts and supplier information</p>
-
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             <button
               onClick={() => {
                 setEditingVendor(null);
                 setNewVendor(defaultVendor);
+                setModalNoteInput('');
                 setShowVendorModal(true);
               }}
               className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
@@ -483,8 +603,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
               Add Vendor
             </button>
           </div>
-
         </div>
+
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-6">
@@ -614,14 +734,7 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
                             <p className="text-xs text-slate-400">Score</p>
                           </div>
                         )}
-                        <div className="text-right">
-                          <p className="text-sm text-slate-400">Lead Time</p>
-                          <p className="text-white font-medium">{vendor.leadTimeDays} days</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-sm text-slate-400">Discount</p>
-                          <p className="text-green-400 font-medium">{vendor.discountPercent}%</p>
-                        </div>
+
                         {perf && (
                           <div className="text-right">
                             <p className="text-sm text-slate-400">Total Spent</p>
@@ -635,7 +748,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
                   
                   {isExpanded && (
                     <div className="border-t border-slate-700/50 p-4 bg-slate-900/30">
-                      <div className="grid md:grid-cols-4 gap-6">
+                      <div className="grid md:grid-cols-2 gap-6">
+
                         <div>
                           <h4 className="text-sm font-medium text-slate-400 mb-3">Contact Information</h4>
                           <div className="space-y-2 text-sm">
@@ -658,27 +772,7 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
                           </div>
                         </div>
                         
-                        <div>
-                          <h4 className="text-sm font-medium text-slate-400 mb-3">Pricing & Terms</h4>
-                          <div className="space-y-2 text-sm">
-                            <div className="flex justify-between">
-                              <span className="text-slate-400">Payment Terms</span>
-                              <span className="text-white">{vendor.paymentTerms}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-slate-400">Discount</span>
-                              <span className="text-green-400">{vendor.discountPercent}%</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-slate-400">Minimum Order</span>
-                              <span className="text-white">${vendor.minimumOrder}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-slate-400">Shipping</span>
-                              <span className="text-white">{vendor.shippingMethod}</span>
-                            </div>
-                          </div>
-                        </div>
+
                         
                         {perf && (
                           <div>
@@ -710,40 +804,93 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
                           </div>
                         )}
                         
-                        <div>
-                          <h4 className="text-sm font-medium text-slate-400 mb-3">Quick Actions</h4>
-                          <div className="space-y-2">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedVendorForPO(vendor.id);
-                                setNewPO({ ...defaultPO, vendorId: vendor.id, vendorName: vendor.name });
-                                setShowPOModal(true);
-                              }}
-                              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                            >
-                              <ShoppingCart className="w-4 h-4" />
-                              Create PO
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleReportQualityIssue(vendor.id);
-                              }}
-                              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30"
-                            >
-                              <AlertTriangle className="w-4 h-4" />
-                              Report Issue
-                            </button>
-                          </div>
-                        </div>
+
+
                       </div>
                       
-                      {vendor.notes && (
-                        <div className="mt-4 pt-4 border-t border-slate-700/50">
-                          <p className="text-sm text-slate-400">{vendor.notes}</p>
+                      {/* ═══ VENDOR NOTES LOG (Expanded Card View) ═══ */}
+                      <div className="mt-4 pt-4 border-t border-slate-700/50">
+                        <h4 className="text-sm font-medium text-slate-400 mb-3 flex items-center gap-2">
+                          <StickyNote className="w-4 h-4 text-orange-400" />
+                          Activity Notes
+                          {(() => {
+                            const notes = parseVendorNotes(vendor.notes);
+                            return notes.length > 0 ? (
+                              <span className="ml-1 text-xs bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded-full">
+                                {notes.length}
+                              </span>
+                            ) : null;
+                          })()}
+                        </h4>
+
+                        {/* Add new note input */}
+                        <div className="flex gap-2 mb-3" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="text"
+                            value={noteInputs[vendor.id] || ''}
+                            onChange={(e) => setNoteInputs(prev => ({ ...prev, [vendor.id]: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && (noteInputs[vendor.id] || '').trim()) {
+                                handleAddVendorNote(vendor.id);
+                              }
+                            }}
+                            placeholder="Add a note..."
+                            className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500/30"
+                          />
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAddVendorNote(vendor.id);
+                            }}
+                            disabled={!(noteInputs[vendor.id] || '').trim()}
+                            className="flex items-center gap-1.5 px-3 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <MessageSquarePlus className="w-4 h-4" />
+                            Add
+                          </button>
                         </div>
-                      )}
+
+                        {/* Notes list */}
+                        {(() => {
+                          const notes = parseVendorNotes(vendor.notes);
+                          if (notes.length === 0) {
+                            return (
+                              <p className="text-xs text-slate-500 italic py-2">No notes yet. Add one above to start tracking this vendor relationship.</p>
+                            );
+                          }
+                          return (
+                            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                              {notes.map((note) => (
+                                <div
+                                  key={note.id}
+                                  className="group bg-slate-800/60 rounded-lg p-3 border border-slate-700/40 hover:border-slate-600/60 transition-colors"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <p className="text-sm text-slate-200 flex-1 whitespace-pre-wrap">{note.text}</p>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteVendorNote(vendor.id, note.id);
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 transition-all shrink-0"
+                                      title="Delete note"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-1.5">
+                                    <span className="text-xs text-orange-400/80 font-medium">{note.author}</span>
+                                    <span className="text-xs text-slate-600">|</span>
+                                    <span className="text-xs text-slate-500">{formatNoteTimestamp(note.timestamp)}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </div>
+
                       
                       <div className="flex gap-3 mt-4 pt-4 border-t border-slate-700/50">
                         <button
@@ -833,8 +980,8 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
                     {categories.map(cat => (
                       <option key={cat} value={cat}>{cat}</option>
                     ))}
-                    <option value="Other">Other</option>
                   </select>
+
                 </div>
               </div>
               
@@ -916,15 +1063,82 @@ const VendorManagement: React.FC<VendorManagementProps> = ({ currentRole, onCrea
 
 
               
+              {/* ═══ VENDOR NOTES LOG (Modal) ═══ */}
               <div>
-                <label className="block text-sm text-slate-400 mb-1">Notes</label>
-                <textarea
-                  value={newVendor.notes}
-                  onChange={(e) => setNewVendor({ ...newVendor, notes: e.target.value })}
-                  rows={2}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                />
+                <label className="block text-sm text-slate-400 mb-2 flex items-center gap-2">
+                  <StickyNote className="w-3.5 h-3.5 text-orange-400" />
+                  Activity Notes
+                  {(() => {
+                    const notes = parseVendorNotes(newVendor.notes);
+                    return notes.length > 0 ? (
+                      <span className="text-xs bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded-full">
+                        {notes.length}
+                      </span>
+                    ) : null;
+                  })()}
+                </label>
+
+                {/* Add new note input */}
+                <div className="flex gap-2 mb-3">
+                  <input
+                    type="text"
+                    value={modalNoteInput}
+                    onChange={(e) => setModalNoteInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && modalNoteInput.trim()) {
+                        handleAddModalNote();
+                      }
+                    }}
+                    placeholder="Add a note..."
+                    className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500/30"
+                  />
+                  <button
+                    onClick={handleAddModalNote}
+                    disabled={!modalNoteInput.trim()}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <MessageSquarePlus className="w-4 h-4" />
+                    Add
+                  </button>
+                </div>
+
+                {/* Notes list */}
+                {(() => {
+                  const notes = parseVendorNotes(newVendor.notes);
+                  if (notes.length === 0) {
+                    return (
+                      <p className="text-xs text-slate-500 italic py-1">No notes yet. Add one above.</p>
+                    );
+                  }
+                  return (
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {notes.map((note) => (
+                        <div
+                          key={note.id}
+                          className="group bg-slate-900/60 rounded-lg p-2.5 border border-slate-700/40 hover:border-slate-600/60 transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm text-slate-200 flex-1 whitespace-pre-wrap">{note.text}</p>
+                            <button
+                              onClick={() => handleDeleteModalNote(note.id)}
+                              className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 transition-all shrink-0"
+                              title="Delete note"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs text-orange-400/80 font-medium">{note.author}</span>
+                            <span className="text-xs text-slate-600">|</span>
+                            <span className="text-xs text-slate-500">{formatNoteTimestamp(note.timestamp)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
+
             </div>
             
             <div className="flex gap-3 mt-6">

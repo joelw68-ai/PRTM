@@ -1,5 +1,57 @@
 // Vendor Management Data Types and Initial Data
 
+// ============ VENDOR NOTES LOG ============
+export interface VendorNote {
+  id: string;
+  text: string;
+  author: string;
+  timestamp: string; // ISO 8601 string
+}
+
+/**
+ * Parse the vendor.notes field into a VendorNote[] array.
+ * Handles:
+ *   - JSON array of VendorNote objects (new format)
+ *   - Plain text string (legacy format — converted to a single note entry)
+ *   - Empty/null/undefined (returns empty array)
+ */
+export const parseVendorNotes = (notesField: string | null | undefined): VendorNote[] => {
+  if (!notesField || notesField.trim() === '') return [];
+  try {
+    const parsed = JSON.parse(notesField);
+    if (Array.isArray(parsed)) {
+      // Validate each entry has the required fields
+      return parsed.filter(
+        (n: any) => n && typeof n.id === 'string' && typeof n.text === 'string'
+      );
+    }
+    // If it parsed but isn't an array, treat as legacy text
+    return [{
+      id: `legacy-${Date.now()}`,
+      text: notesField,
+      author: 'System (migrated)',
+      timestamp: new Date().toISOString()
+    }];
+  } catch {
+    // Not valid JSON — treat as legacy plain text
+    return [{
+      id: `legacy-${Date.now()}`,
+      text: notesField,
+      author: 'System (migrated)',
+      timestamp: new Date().toISOString()
+    }];
+  }
+};
+
+/**
+ * Serialize a VendorNote[] array back to a JSON string for storage.
+ */
+export const serializeVendorNotes = (notes: VendorNote[]): string => {
+  if (!notes || notes.length === 0) return '';
+  return JSON.stringify(notes);
+};
+
+
 export interface Vendor {
   id: string;
   name: string;
@@ -96,9 +148,19 @@ export const VENDOR_CATEGORIES = [
   'Machine Shop',
   'Safety Equipment',
   'Fuel Supplier',
-  'Tires',
+  'Wheels and Tires',
   'Electronics',
   'Tools',
   'Apparel',
+  'Oil Supplier',
+  'Engine Parts',
+  'Drivetrain Parts',
+  'Transmission Parts',
+  'Torque Converter Parts',
+  'Body Parts',
+  'Power Adder Parts',
+  'Chassis Parts',
+  'Suspension Parts',
   'Other'
 ];
+
