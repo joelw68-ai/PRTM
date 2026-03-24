@@ -192,40 +192,40 @@ export function useAccentStyles() {
   return {
     /** Background with low opacity — for active menu items, badges */
     activeBg: {
-      backgroundColor: `rgba(${colors.rgb}, 0.10)`,
+      backgroundColor: `rgba(${colors.rgb}, 0.15)`,
     } as React.CSSProperties,
     /** Border with medium opacity */
     activeBorder: {
-      borderColor: `rgba(${colors.rgb}, 0.35)`,
+      borderColor: `rgba(${colors.rgb}, 0.4)`,
     } as React.CSSProperties,
-    /** Active menu item: bg + border + text (dark text for light mode) */
+    /** Active menu item: bg + border + text */
     activeMenuItem: {
-      backgroundColor: `rgba(${colors.rgb}, 0.10)`,
-      borderColor: `rgba(${colors.rgb}, 0.35)`,
-      color: colors.dark,
+      backgroundColor: `rgba(${colors.rgb}, 0.15)`,
+      borderColor: `rgba(${colors.rgb}, 0.4)`,
+      color: colors.light,
     } as React.CSSProperties,
     /** Active submenu item */
     activeSubItem: {
-      backgroundColor: `rgba(${colors.rgb}, 0.08)`,
-      borderColor: `rgba(${colors.rgb}, 0.25)`,
-      color: colors.dark,
+      backgroundColor: `rgba(${colors.rgb}, 0.1)`,
+      borderColor: `rgba(${colors.rgb}, 0.3)`,
+      color: colors.light,
     } as React.CSSProperties,
     /** Icon color for active items */
     activeIcon: {
       color: colors.base,
     } as React.CSSProperties,
-    /** Text in accent color (use base for readability on light bg) */
+    /** Text in accent color */
     accentText: {
-      color: colors.base,
+      color: colors.light,
     } as React.CSSProperties,
     /** Gradient button */
     gradientBtn: {
       background: `linear-gradient(to right, ${colors.base}, ${colors.dark})`,
     } as React.CSSProperties,
-    /** Subtle badge background (dark text for light mode) */
+    /** Subtle badge background */
     badge: {
-      backgroundColor: `rgba(${colors.rgb}, 0.10)`,
-      color: colors.dark,
+      backgroundColor: `rgba(${colors.rgb}, 0.15)`,
+      color: colors.light,
     } as React.CSSProperties,
     /** Color indicator dot */
     dot: {
@@ -233,7 +233,7 @@ export function useAccentStyles() {
     } as React.CSSProperties,
     /** Ring/focus color */
     ring: {
-      boxShadow: `0 0 0 2px rgba(${colors.rgb}, 0.25)`,
+      boxShadow: `0 0 0 2px rgba(${colors.rgb}, 0.3)`,
     } as React.CSSProperties,
     /** Sidebar logo gradient */
     logoGradient: {
@@ -241,9 +241,9 @@ export function useAccentStyles() {
     } as React.CSSProperties,
     /** Selected car indicator (legacy compat) */
     carIndicator: {
-      backgroundColor: `rgba(${colors.rgb}, 0.10)`,
-      borderColor: `rgba(${colors.rgb}, 0.35)`,
-      color: colors.dark,
+      backgroundColor: `rgba(${colors.rgb}, 0.15)`,
+      borderColor: `rgba(${colors.rgb}, 0.4)`,
+      color: colors.light,
     } as React.CSSProperties,
     /** For user avatar gradient */
     avatarGradient: {
@@ -255,9 +255,8 @@ export function useAccentStyles() {
     } as React.CSSProperties,
     /** Hover style for menu items (slightly lighter bg) */
     hoverMenuItem: {
-      backgroundColor: `rgba(${colors.rgb}, 0.06)`,
-      color: colors.dark,
+      backgroundColor: `rgba(${colors.rgb}, 0.08)`,
+      color: colors.light,
     } as React.CSSProperties,
   };
 }
-

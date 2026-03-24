@@ -284,27 +284,27 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
     }
   };
 
-  // Common input class for light mode
-  const inputClass = "w-full pl-10 pr-4 py-3 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent";
-  const inputClassWithToggle = "w-full pl-10 pr-12 py-3 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent";
+  // Common input class for dark mode
+  const inputClass = "w-full pl-10 pr-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent";
+  const inputClassWithToggle = "w-full pl-10 pr-12 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={handleClose}
       />
       
       {/* Modal */}
-      <div className="relative w-full max-w-md mx-4 bg-white rounded-2xl shadow-2xl border border-gray-200 max-h-[90vh] overflow-y-auto">
+      <div className="relative w-full max-w-md mx-4 bg-slate-900 rounded-2xl shadow-2xl border border-slate-700 max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
           <div className="flex items-center gap-3">
             {(mode === 'forgot' || mode === 'confirmation-sent') && (
               <button
                 onClick={() => switchMode('login')}
-                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors mr-1"
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors mr-1"
               >
                 <ArrowLeft className="w-4 h-4" />
               </button>
@@ -317,17 +317,17 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
               {getIcon()}
             </div>
             <div>
-              <h2 className="text-xl font-bold text-gray-900">
+              <h2 className="text-xl font-bold text-white">
                 {getTitle()}
               </h2>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-slate-400">
                 {getSubtitle()}
               </p>
             </div>
           </div>
           <button
             onClick={handleClose}
-            className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors"
+            className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -337,19 +337,19 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
         {mode === 'auto-confirmed' ? (
           <div className="p-6 space-y-5">
             <div className="text-center">
-              <div className="w-16 h-16 mx-auto mb-4 bg-green-50 rounded-full flex items-center justify-center border border-green-200">
-                <CheckCircle className="w-8 h-8 text-green-500" />
+              <div className="w-16 h-16 mx-auto mb-4 bg-green-500/20 rounded-full flex items-center justify-center border border-green-500/30">
+                <CheckCircle className="w-8 h-8 text-green-400" />
               </div>
-              <p className="text-gray-900 font-semibold text-lg mb-2">
+              <p className="text-white font-semibold text-lg mb-2">
                 Welcome to Professional Racing Management!
               </p>
-              <p className="text-gray-500 text-sm">
+              <p className="text-slate-400 text-sm">
                 Your account has been created and you're now signed in. Redirecting to your dashboard...
               </p>
             </div>
             
             {success && (
-              <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700">
+              <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400">
                 <CheckCircle className="w-5 h-5 flex-shrink-0" />
                 <span className="text-sm">{success}</span>
               </div>
@@ -359,29 +359,29 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
           /* Email Confirmation Sent View */
           <div className="p-6 space-y-5">
             <div className="text-center">
-              <div className="w-16 h-16 mx-auto mb-4 bg-blue-50 rounded-full flex items-center justify-center border border-blue-200 animate-pulse">
-                <Mail className="w-8 h-8 text-blue-500" />
+              <div className="w-16 h-16 mx-auto mb-4 bg-blue-500/20 rounded-full flex items-center justify-center border border-blue-500/30 animate-pulse">
+                <Mail className="w-8 h-8 text-blue-400" />
               </div>
-              <p className="text-gray-600 mb-2">
+              <p className="text-slate-300 mb-2">
                 We sent a confirmation link to:
               </p>
-              <p className="text-gray-900 font-semibold text-lg mb-4">
+              <p className="text-white font-semibold text-lg mb-4">
                 {lastSignupEmail}
               </p>
-              <p className="text-gray-500 text-sm mb-2">
+              <p className="text-slate-400 text-sm mb-2">
                 Click the link in the email to verify your account and start using Professional Racing Management.
               </p>
             </div>
 
             {/* Error/Success Messages */}
             {error && (
-              <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700">
+              <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">
                 <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
                 <span className="text-sm">{error}</span>
               </div>
             )}
             {success && (
-              <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700">
+              <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400">
                 <CheckCircle className="w-5 h-5 flex-shrink-0" />
                 <span className="text-sm">{success}</span>
               </div>
@@ -391,7 +391,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
             <button
               onClick={handleResendConfirmation}
               disabled={isLoading || resendCooldown > 0}
-              className="w-full py-3 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full py-3 bg-slate-800 text-slate-300 font-medium rounded-lg hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isLoading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -404,17 +404,17 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
             </button>
 
             {/* Troubleshooting Section */}
-            <div className="bg-gray-50 rounded-lg border border-gray-200">
+            <div className="bg-slate-800/50 rounded-lg border border-slate-700">
               <button
                 onClick={() => setShowEmailTroubleshoot(!showEmailTroubleshoot)}
                 className="w-full flex items-center justify-between p-4 text-left"
               >
                 <div className="flex items-center gap-2">
-                  <Info className="w-4 h-4 text-gray-400" />
-                  <span className="text-sm font-medium text-gray-600">Didn't receive the email?</span>
+                  <Info className="w-4 h-4 text-slate-400" />
+                  <span className="text-sm font-medium text-slate-300">Didn't receive the email?</span>
                 </div>
                 <svg 
-                  className={`w-4 h-4 text-gray-400 transition-transform ${showEmailTroubleshoot ? 'rotate-180' : ''}`}
+                  className={`w-4 h-4 text-slate-400 transition-transform ${showEmailTroubleshoot ? 'rotate-180' : ''}`}
                   fill="none" viewBox="0 0 24 24" stroke="currentColor"
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -423,18 +423,18 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
               
               {showEmailTroubleshoot && (
                 <div className="px-4 pb-4 space-y-3">
-                  <ul className="text-sm text-gray-500 space-y-2">
+                  <ul className="text-sm text-slate-400 space-y-2">
                     <li className="flex items-start gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 flex-shrink-0" />
-                      <span>Check your <strong className="text-gray-700">spam/junk folder</strong> — confirmation emails sometimes end up there</span>
+                      <span>Check your <strong className="text-slate-300">spam/junk folder</strong> — confirmation emails sometimes end up there</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 flex-shrink-0" />
-                      <span>Make sure <strong className="text-gray-700">{lastSignupEmail}</strong> is spelled correctly</span>
+                      <span>Make sure <strong className="text-slate-300">{lastSignupEmail}</strong> is spelled correctly</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 flex-shrink-0" />
-                      <span>The email comes from <strong className="text-gray-700">noreply@mail.app.supabase.io</strong> — check if it's blocked</span>
+                      <span>The email comes from <strong className="text-slate-300">noreply@mail.app.supabase.io</strong> — check if it's blocked</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 flex-shrink-0" />
@@ -442,17 +442,17 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 flex-shrink-0" />
-                      <span>Try the <strong className="text-gray-700">Resend</strong> button above (limit: ~3 per hour on free tier)</span>
+                      <span>Try the <strong className="text-slate-300">Resend</strong> button above (limit: ~3 per hour on free tier)</span>
                     </li>
                   </ul>
                   
                   {/* Admin note for beta testers */}
-                  <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <div className="mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
                     <div className="flex items-start gap-2">
-                      <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                      <div className="text-xs text-amber-700">
+                      <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                      <div className="text-xs text-amber-300">
                         <p className="font-semibold mb-1">Beta Tester Note</p>
-                        <p className="text-amber-600">
+                        <p className="text-amber-400/80">
                           If emails aren't arriving, the project admin may need to verify that <strong>email confirmations are enabled</strong> in the Supabase Dashboard under Authentication &gt; Settings &gt; Email Auth. The Supabase free tier also limits emails to ~3 per hour.
                         </p>
                       </div>
@@ -464,13 +464,13 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
 
             {/* Try signing in anyway (in case they confirmed already) */}
             <div className="text-center space-y-2">
-              <p className="text-xs text-gray-400">Already confirmed your email?</p>
+              <p className="text-xs text-slate-500">Already confirmed your email?</p>
               <button
                 onClick={() => {
                   setEmail(lastSignupEmail);
                   switchMode('login');
                 }}
-                className="text-sm text-orange-600 hover:text-orange-500 font-medium"
+                className="text-sm text-orange-400 hover:text-orange-300 font-medium"
               >
                 Go to Sign In
               </button>
@@ -481,7 +481,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
           <form onSubmit={handleSubmit} className="p-6 space-y-4">
             {/* Error Message */}
             {error && (
-              <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700">
+              <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">
                 <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
                 <div className="text-sm">
                   <span>{error}</span>
@@ -490,7 +490,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                       type="button"
                       onClick={handleResendConfirmation}
                       disabled={resendCooldown > 0}
-                      className="block mt-1 text-orange-600 hover:text-orange-500 font-medium underline"
+                      className="block mt-1 text-orange-400 hover:text-orange-300 font-medium underline"
                     >
                       {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend confirmation email'}
                     </button>
@@ -501,7 +501,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
 
             {/* Success Message */}
             {success && (
-              <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700">
+              <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400">
                 <CheckCircle className="w-5 h-5 flex-shrink-0" />
                 <span className="text-sm">{success}</span>
               </div>
@@ -511,11 +511,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
             {mode === 'reset' ? (
               <>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
                     New Password
                   </label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                     <input
                       type={showNewPassword ? 'text' : 'password'}
                       value={newPassword}
@@ -527,7 +527,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                     <button
                       type="button"
                       onClick={() => setShowNewPassword(!showNewPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
                     >
                       {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
@@ -540,16 +540,16 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                           <div
                             key={i}
                             className={`h-1.5 flex-1 rounded-full transition-colors ${
-                              i <= passwordStrength.score ? passwordStrength.color : 'bg-gray-200'
+                              i <= passwordStrength.score ? passwordStrength.color : 'bg-slate-700'
                             }`}
                           />
                         ))}
                       </div>
                       <p className={`text-xs ${
-                        passwordStrength.score <= 1 ? 'text-red-500' :
-                        passwordStrength.score <= 2 ? 'text-orange-500' :
-                        passwordStrength.score <= 3 ? 'text-yellow-600' :
-                        'text-green-600'
+                        passwordStrength.score <= 1 ? 'text-red-400' :
+                        passwordStrength.score <= 2 ? 'text-orange-400' :
+                        passwordStrength.score <= 3 ? 'text-yellow-400' :
+                        'text-green-400'
                       }`}>
                         {passwordStrength.label}
                       </p>
@@ -558,11 +558,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
                     Confirm New Password
                   </label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                     <input
                       type="password"
                       value={confirmNewPassword}
@@ -573,7 +573,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                     />
                   </div>
                   {confirmNewPassword && newPassword !== confirmNewPassword && (
-                    <p className="text-xs text-red-500 mt-1">Passwords do not match</p>
+                    <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
                   )}
                 </div>
 
@@ -600,11 +600,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                 {/* Team Name (signup only) */}
                 {mode === 'signup' && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
                       Team Name
                     </label>
                     <div className="relative">
-                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                       <input
                         type="text"
                         value={teamName}
@@ -618,11 +618,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
 
                 {/* Email */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
                     Email Address
                   </label>
                   <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                     <input
                       type="email"
                       value={email}
@@ -639,21 +639,21 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                 {(mode === 'login' || mode === 'signup') && (
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <label className="block text-sm font-medium text-gray-700">
+                      <label className="block text-sm font-medium text-slate-300">
                         Password
                       </label>
                       {mode === 'login' && (
                         <button
                           type="button"
                           onClick={() => switchMode('forgot')}
-                          className="text-xs text-orange-600 hover:text-orange-500 font-medium"
+                          className="text-xs text-orange-400 hover:text-orange-300 font-medium"
                         >
                           Forgot password?
                         </button>
                       )}
                     </div>
                     <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                       <input
                         type={showPassword ? 'text' : 'password'}
                         value={password}
@@ -666,7 +666,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                       <button
                         type="button"
                         onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
                       >
                         {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
@@ -679,16 +679,16 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                             <div
                               key={i}
                               className={`h-1.5 flex-1 rounded-full transition-colors ${
-                                i <= passwordStrength.score ? passwordStrength.color : 'bg-gray-200'
+                                i <= passwordStrength.score ? passwordStrength.color : 'bg-slate-700'
                               }`}
                             />
                           ))}
                         </div>
                         <p className={`text-xs ${
-                          passwordStrength.score <= 1 ? 'text-red-500' :
-                          passwordStrength.score <= 2 ? 'text-orange-500' :
-                          passwordStrength.score <= 3 ? 'text-yellow-600' :
-                          'text-green-600'
+                          passwordStrength.score <= 1 ? 'text-red-400' :
+                          passwordStrength.score <= 2 ? 'text-orange-400' :
+                          passwordStrength.score <= 3 ? 'text-yellow-400' :
+                          'text-green-400'
                         }`}>
                           {passwordStrength.label}
                           {passwordStrength.score < 3 && ' — try adding uppercase, numbers, or symbols'}
@@ -701,11 +701,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                 {/* Confirm Password (signup only) */}
                 {mode === 'signup' && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
                       Confirm Password
                     </label>
                     <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                       <input
                         type="password"
                         value={confirmPassword}
@@ -717,7 +717,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                       />
                     </div>
                     {confirmPassword && password !== confirmPassword && (
-                      <p className="text-xs text-red-500 mt-1">Passwords do not match</p>
+                      <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
                     )}
                   </div>
                 )}
@@ -746,10 +746,10 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                 {(mode === 'login' || mode === 'signup') && (
                   <div className="relative my-2">
                     <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-gray-200" />
+                      <div className="w-full border-t border-slate-700" />
                     </div>
                     <div className="relative flex justify-center text-xs">
-                      <span className="px-3 bg-white text-gray-400 uppercase tracking-wider">or</span>
+                      <span className="px-3 bg-slate-900 text-slate-500 uppercase tracking-wider">or</span>
                     </div>
                   </div>
                 )}
@@ -759,23 +759,23 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                   <button
                     type="button"
                     onClick={handleDemoMode}
-                    className="w-full py-3 bg-gray-50 border border-gray-300 text-gray-600 font-medium rounded-lg hover:bg-gray-100 hover:text-gray-800 hover:border-gray-400 transition-all flex items-center justify-center gap-2 group"
+                    className="w-full py-3 bg-slate-800 border border-slate-600 text-slate-300 font-medium rounded-lg hover:bg-slate-700 hover:text-white hover:border-slate-500 transition-all flex items-center justify-center gap-2 group"
                   >
-                    <Play className="w-4 h-4 text-green-500 group-hover:text-green-600" />
+                    <Play className="w-4 h-4 text-green-500 group-hover:text-green-400" />
                     Try Demo Mode
-                    <span className="text-xs text-gray-400 group-hover:text-gray-500">— No account needed</span>
+                    <span className="text-xs text-slate-500 group-hover:text-slate-400">— No account needed</span>
                   </button>
                 )}
 
                 {/* Switch Mode */}
-                <div className="text-center text-sm text-gray-500">
+                <div className="text-center text-sm text-slate-400">
                   {mode === 'login' ? (
                     <>
                       Don't have an account?{' '}
                       <button
                         type="button"
                         onClick={() => switchMode('signup')}
-                        className="text-orange-600 hover:text-orange-500 font-medium"
+                        className="text-orange-400 hover:text-orange-300 font-medium"
                       >
                         Sign up
                       </button>
@@ -786,7 +786,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                       <button
                         type="button"
                         onClick={() => switchMode('login')}
-                        className="text-orange-600 hover:text-orange-500 font-medium"
+                        className="text-orange-400 hover:text-orange-300 font-medium"
                       >
                         Sign in
                       </button>
@@ -797,7 +797,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                       <button
                         type="button"
                         onClick={() => switchMode('login')}
-                        className="text-orange-600 hover:text-orange-500 font-medium"
+                        className="text-orange-400 hover:text-orange-300 font-medium"
                       >
                         Sign in
                       </button>
@@ -811,7 +811,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
 
         {/* Footer */}
         <div className="px-6 pb-6">
-          <p className="text-xs text-center text-gray-400">
+          <p className="text-xs text-center text-slate-500">
             By continuing, you agree to our Terms of Service and Privacy Policy.
           </p>
         </div>

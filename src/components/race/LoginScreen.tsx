@@ -16,7 +16,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenAuth }) => {
   const { enableDemoMode } = useAuth();
 
   return (
-    <div className="fixed inset-0 z-30 overflow-hidden dark-section">
+    <div className="fixed inset-0 z-30 overflow-hidden">
+
 
       {/* ── Background layers ── */}
       <div className="absolute inset-0">

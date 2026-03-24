@@ -6,7 +6,7 @@ interface TimeInputDarkProps extends Omit<React.InputHTMLAttributes<HTMLInputEle
 }
 
 /**
- * A light-themed time input with a custom Clock SVG icon.
+ * A dark-themed time input with a custom Clock SVG icon.
  * 
  * The native browser clock picker icon is COMPLETELY hidden using
  * display:none, opacity:0, and width:0 via the CSS class
@@ -38,7 +38,7 @@ const TimeInputDark: React.FC<TimeInputDarkProps> = ({ className = '', style, ..
   return (
     <div
       className="relative w-full"
-      style={{ backgroundColor: '#FFFFFF', borderRadius: '0.5rem', border: '1px solid #E2E8F0' }}
+      style={{ backgroundColor: '#1e293b', borderRadius: '0.5rem', border: '1px solid #334155' }}
     >
       <input
         ref={inputRef}
@@ -46,9 +46,8 @@ const TimeInputDark: React.FC<TimeInputDarkProps> = ({ className = '', style, ..
         {...props}
         className={`${finalClassName} time-input-dark-override`}
         style={{
-          colorScheme: 'light',
+          colorScheme: 'dark',
           paddingRight: '2.5rem',
-          color: '#0F172A',
           WebkitAppearance: 'none',
           ...style,
         }}
@@ -62,7 +61,7 @@ const TimeInputDark: React.FC<TimeInputDarkProps> = ({ className = '', style, ..
         aria-label="Open time picker"
         style={{ lineHeight: 0 }}
       >
-        <Clock className="w-4 h-4 text-slate-500" style={{ color: '#64748B' }} />
+        <Clock className="w-4 h-4 text-slate-400" />
       </button>
     </div>
   );

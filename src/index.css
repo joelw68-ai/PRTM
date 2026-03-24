@@ -6,52 +6,45 @@
 @tailwind utilities;
 
 @layer base {
-  /* ── LIGHT THEME (default) ──────────────────────────────
-     Main background: #F1F5F9  (very light grey)
-     Card background: #FFFFFF  (pure white)
-     Primary text:    #0F172A  (near-black)
-     Secondary text:  #475569  (dark grey)
-     Borders:         #E2E8F0  (light grey)
-  */
   :root {
-    --background: 210 40% 96%;
-    --foreground: 222 47% 11%;
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
 
-    --primary: 221 83% 53%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
 
-    --secondary: 210 40% 93%;
-    --secondary-foreground: 222 47% 11%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
 
-    --muted: 210 40% 93%;
-    --muted-foreground: 215 16% 40%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
 
-    --accent: 210 40% 93%;
-    --accent-foreground: 222 47% 11%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
 
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 100%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
 
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 221 83% 53%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
 
     --radius: 0.5rem;
 
-    --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 222 47% 11%;
-    --sidebar-primary: 221 83% 53%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 210 40% 95%;
-    --sidebar-accent-foreground: 222 47% 11%;
-    --sidebar-border: 214 32% 91%;
-    --sidebar-ring: 221 83% 53%;
+    --sidebar-background: 222.2 84% 4.9%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 210 40% 98%;
+    --sidebar-primary-foreground: 222.2 47.4% 11.2%;
+    --sidebar-accent: 217.2 32.6% 17.5%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 217.2 32.6% 17.5%;
+    --sidebar-ring: 212.7 26.8% 83.9%;
 
     /* Theme color CSS custom properties (defaults = orange) */
     --tc: #f97316;
@@ -64,44 +57,43 @@
     --tc-l: 53%;
   }
 
-  /* ── DARK CLASS — also light so the app is always light ── */
   .dark {
-    --background: 210 40% 96%;
-    --foreground: 222 47% 11%;
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
 
-    --primary: 221 83% 53%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
 
-    --secondary: 210 40% 93%;
-    --secondary-foreground: 222 47% 11%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
 
-    --muted: 210 40% 93%;
-    --muted-foreground: 215 16% 40%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
 
-    --accent: 210 40% 93%;
-    --accent-foreground: 222 47% 11%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
 
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 100%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
 
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 221 83% 53%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
 
-    --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 222 47% 11%;
-    --sidebar-primary: 221 83% 53%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 210 40% 95%;
-    --sidebar-accent-foreground: 222 47% 11%;
-    --sidebar-border: 214 32% 91%;
-    --sidebar-ring: 221 83% 53%;
+    --sidebar-background: 222.2 84% 4.9%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 210 40% 98%;
+    --sidebar-primary-foreground: 222.2 47.4% 11.2%;
+    --sidebar-accent: 217.2 32.6% 17.5%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 217.2 32.6% 17.5%;
+    --sidebar-ring: 212.7 26.8% 83.9%;
   }
 }
 
@@ -125,115 +117,12 @@
   }
 }
 
-/* ============================================================
-   GLOBAL LIGHT-MODE TEXT-WHITE OVERRIDE
-   ============================================================
-   The app was built with text-white for primary text on dark
-   backgrounds. Now that backgrounds are light, text-white must
-   become dark. We preserve actual white text inside coloured
-   containers (gradient buttons, badges, etc.) and inside the
-   login screen / dark-section areas.
-   ============================================================ */
-
-/* Step 1: Convert ALL text-white to dark */
-.text-white {
-  color: #0F172A !important;
-}
-
-/* Step 2: Preserve white text inside coloured / gradient containers */
-[class*="from-orange"] .text-white,
-[class*="from-orange"].text-white,
-[class*="from-red"] .text-white,
-[class*="from-red"].text-white,
-[class*="from-blue"] .text-white,
-[class*="from-blue"].text-white,
-[class*="from-green"] .text-white,
-[class*="from-green"].text-white,
-[class*="from-purple"] .text-white,
-[class*="from-purple"].text-white,
-[class*="from-amber"] .text-white,
-[class*="from-amber"].text-white,
-[class*="from-emerald"] .text-white,
-[class*="from-emerald"].text-white,
-[class*="from-cyan"] .text-white,
-[class*="from-cyan"].text-white,
-[class*="from-pink"] .text-white,
-[class*="from-pink"].text-white,
-[class*="bg-gradient"] .text-white,
-[class*="bg-gradient"].text-white,
-[class*="bg-red-5"] .text-white,
-[class*="bg-red-5"].text-white,
-[class*="bg-red-6"] .text-white,
-[class*="bg-red-6"].text-white,
-[class*="bg-orange-5"] .text-white,
-[class*="bg-orange-5"].text-white,
-[class*="bg-orange-6"] .text-white,
-[class*="bg-orange-6"].text-white,
-[class*="bg-amber-5"] .text-white,
-[class*="bg-amber-5"].text-white,
-[class*="bg-blue-5"] .text-white,
-[class*="bg-blue-5"].text-white,
-[class*="bg-blue-6"] .text-white,
-[class*="bg-blue-6"].text-white,
-[class*="bg-green-5"] .text-white,
-[class*="bg-green-5"].text-white,
-[class*="bg-purple-5"] .text-white,
-[class*="bg-purple-5"].text-white,
-[class*="bg-emerald-5"] .text-white,
-[class*="bg-emerald-5"].text-white,
-[class*="bg-cyan-5"] .text-white,
-[class*="bg-cyan-5"].text-white,
-[class*="bg-purple-6"] .text-white,
-[class*="bg-purple-6"].text-white,
-[class*="bg-purple-7"] .text-white,
-[class*="bg-purple-7"].text-white,
-[class*="bg-indigo-5"] .text-white,
-[class*="bg-indigo-5"].text-white,
-[class*="bg-indigo-6"] .text-white,
-[class*="bg-indigo-6"].text-white,
-[class*="bg-teal-5"] .text-white,
-[class*="bg-teal-5"].text-white,
-[class*="bg-rose-5"] .text-white,
-[class*="bg-rose-5"].text-white,
-[class*="bg-black"] .text-white,
-[class*="bg-black"].text-white {
-  color: #FFFFFF !important;
-}
-
-
-/* Step 3: Preserve white text inside the login/landing dark-section */
-.dark-section .text-white,
-.dark-section.text-white {
-  color: #FFFFFF !important;
-}
-
-/* Step 4: Preserve white text on toggle switch knobs (bg-white stays white) */
-.bg-white {
-  background-color: #FFFFFF !important;
-}
-
-/* Step 5: Preserve white text inside inline-style gradient backgrounds */
-[style*="gradient"] .text-white,
-[style*="gradient"].text-white,
-[style*="background"] .text-white:where([class*="rounded-full"]),
-[style*="backgroundColor"] .text-white {
-  color: #FFFFFF !important;
-}
-
-/* Step 6: Preserve white text inside elements with inline style backgrounds
-   (logo icons, avatar circles, etc. that use style={} for gradient bg) */
-[style*="linear-gradient"] .text-white,
-[style*="linear-gradient"].text-white {
-  color: #FFFFFF !important;
-}
-
-
 .markdown-editor {
   @apply font-mono text-base leading-relaxed;
 }
 
 .markdown-preview {
-  @apply prose max-w-none prose-blue;
+  @apply prose max-w-none prose-invert prose-blue;
 }
 
 .markdown-preview pre {
@@ -259,23 +148,23 @@
   @apply my-4 ml-6;
 }
 
-/* Custom scrollbar for light theme */
+/* Custom scrollbar for dark theme */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #F1F5F9;
+  background: #0f172a;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #CBD5E1;
+  background: #334155;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94A3B8;
+  background: #475569;
 }
 
 
@@ -328,8 +217,8 @@
 }
 
 /* ============================================================
-   DATE INPUT — LIGHT THEME
-   Force date/time inputs to use light color scheme
+   DATE INPUT — DARK THEME
+   Force date/time inputs to use dark color scheme
    ============================================================ */
 
 input[type="date"],
@@ -337,36 +226,34 @@ input[type="datetime-local"],
 input[type="time"],
 input[type="month"],
 input[type="week"] {
-  color-scheme: light !important;
-  color: #0F172A !important;
+  color-scheme: dark !important;
 }
 
 input[type="date"]:not(.date-input-dark-override)::-webkit-calendar-picker-indicator,
 input[type="datetime-local"]:not(.date-input-dark-override)::-webkit-calendar-picker-indicator,
 input[type="month"]:not(.date-input-dark-override)::-webkit-calendar-picker-indicator,
 input[type="week"]:not(.date-input-dark-override)::-webkit-calendar-picker-indicator {
-  filter: none !important;
-  opacity: 1 !important;
+  filter: invert(1) !important;
+  opacity: 0.7 !important;
   cursor: pointer !important;
 }
 
 input[type="time"]:not(.time-input-dark-override)::-webkit-calendar-picker-indicator {
-  filter: none !important;
-  opacity: 1 !important;
+  filter: invert(1) !important;
+  opacity: 0.7 !important;
   cursor: pointer !important;
 }
 
 /* date-input-white class used in other components */
 .date-input-white,
 input.date-input-white[type="date"] {
-  color-scheme: light !important;
-  color: #0F172A !important;
+  color-scheme: dark !important;
 }
 
 .date-input-white::-webkit-calendar-picker-indicator,
 input.date-input-white[type="date"]::-webkit-calendar-picker-indicator {
-  filter: none !important;
-  opacity: 1 !important;
+  filter: invert(1) !important;
+  opacity: 0.7 !important;
   cursor: pointer !important;
 }
 
@@ -374,8 +261,7 @@ input.date-input-white[type="date"]::-webkit-calendar-picker-indicator {
    DATEINPUTDARK COMPONENT — hide native calendar icon
    ============================================================ */
 .date-input-dark-override {
-  color-scheme: light !important;
-  color: #0F172A !important;
+  color-scheme: dark !important;
   -webkit-appearance: none !important;
   appearance: none !important;
 }
@@ -399,8 +285,7 @@ input.date-input-white[type="date"]::-webkit-calendar-picker-indicator {
    TIMEINPUTDARK COMPONENT — hide native clock icon
    ============================================================ */
 .time-input-dark-override {
-  color-scheme: light !important;
-  color: #0F172A !important;
+  color-scheme: dark !important;
   -webkit-appearance: none !important;
   appearance: none !important;
 }
@@ -439,20 +324,19 @@ input.todo-date-input[type="date"]::-webkit-calendar-picker-indicator {
 .todo-form input[type="date"],
 input.todo-date-input,
 input.todo-date-input[type="date"] {
-  color-scheme: light !important;
-  color: #0F172A !important;
+  color-scheme: dark !important;
 }
 
 /* ============================================================
    FINAL OVERRIDE for remaining native date inputs
    ============================================================ */
 input[type=date]:not(.date-input-dark-override)::-webkit-calendar-picker-indicator {
-  filter: none !important;
-  opacity: 1 !important;
+  filter: invert(1) !important;
+  opacity: 0.7 !important;
 }
 
 input[type=date]:not(.date-input-dark-override) {
-  color-scheme: light !important;
+  color-scheme: dark !important;
 }
 
 /* Ensure .date-input-dark-override ALWAYS wins */
@@ -471,82 +355,4 @@ input.time-input-dark-override[type="time"]::-webkit-calendar-picker-indicator {
   width: 0 !important;
   height: 0 !important;
   pointer-events: none !important;
-}
-
-/* ============================================================
-   ADDITIONAL LIGHT-MODE FIXES
-   ============================================================ */
-
-/* Ensure select dropdowns have dark text on light bg */
-select option {
-  background-color: #FFFFFF;
-  color: #0F172A;
-}
-
-/* Placeholder text should be medium grey */
-::placeholder {
-  color: #94A3B8 !important;
-}
-
-/* Fix textarea text color */
-textarea {
-  color: #0F172A;
-}
-
-input {
-  color: #0F172A;
-}
-
-/* ============================================================
-   RECHARTS LIGHT-MODE OVERRIDES
-   Force all Recharts chart grids, axes, and tooltips to use
-   light-mode colours. This overrides the hardcoded dark hex
-   values (e.g. #334155) that were set as inline SVG attributes.
-   ============================================================ */
-
-/* CartesianGrid lines → light grey */
-.recharts-cartesian-grid line {
-  stroke: #E2E8F0 !important;
-}
-
-/* Axis lines and ticks → medium-dark grey */
-.recharts-cartesian-axis-line,
-.recharts-cartesian-axis-tick-line {
-  stroke: #CBD5E1 !important;
-}
-
-/* Axis tick label text → dark grey for readability */
-.recharts-cartesian-axis-tick-value {
-  fill: #475569 !important;
-}
-
-/* Axis label text */
-.recharts-label {
-  fill: #475569 !important;
-}
-
-/* Legend text → dark */
-.recharts-legend-item-text {
-  color: #334155 !important;
-}
-
-/* Default tooltip wrapper — white bg, subtle shadow */
-.recharts-default-tooltip {
-  background-color: #FFFFFF !important;
-  border: 1px solid #E2E8F0 !important;
-  border-radius: 8px !important;
-  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1) !important;
-}
-
-.recharts-tooltip-label {
-  color: #0F172A !important;
-}
-
-.recharts-tooltip-item {
-  color: #334155 !important;
-}
-
-/* Bar fill opacity for light mode — make bars slightly more visible */
-.recharts-bar-rectangle {
-  opacity: 0.85;
 }

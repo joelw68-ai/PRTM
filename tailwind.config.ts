@@ -21,39 +21,6 @@ export default {
     },
     extend: {
       colors: {
-        /* ── Light-mode slate overrides ───────────────────────
-           The entire app was built with dark-mode slate classes
-           (bg-slate-800, text-slate-400, border-slate-700, etc.).
-           By remapping the scale, every existing class automatically
-           renders in light-mode colours without touching individual
-           component files.
-
-           Mapping logic:
-             slate-950  (was near-black)  → white
-             slate-900  (was darkest bg)  → very light grey
-             slate-800  (was main bg)     → light grey (#F1F5F9)
-             slate-700  (was borders)     → light border
-             slate-600  (was lighter bdr) → medium border
-             slate-500  (middle)          → kept as-is
-             slate-400  (was muted text)  → dark secondary text
-             slate-300  (was light text)  → dark text
-             slate-200  → kept
-             slate-100  → kept
-             slate-50   → kept
-        */
-        slate: {
-          50:  '#F8FAFC',
-          100: '#F1F5F9',
-          200: '#E2E8F0',
-          300: '#334155',
-          400: '#475569',
-          500: '#64748B',
-          600: '#CBD5E1',
-          700: '#E2E8F0',
-          800: '#F1F5F9',
-          900: '#F8FAFC',
-          950: '#FFFFFF',
-        },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',

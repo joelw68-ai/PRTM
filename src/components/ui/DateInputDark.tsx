@@ -6,7 +6,7 @@ interface DateInputDarkProps extends Omit<React.InputHTMLAttributes<HTMLInputEle
 }
 
 /**
- * A light-themed date input with a custom Calendar SVG icon.
+ * A dark-themed date input with a custom Calendar SVG icon.
  * 
  * The native browser calendar picker icon is COMPLETELY hidden using
  * display:none, opacity:0, and width:0 via the CSS class
@@ -38,7 +38,7 @@ const DateInputDark: React.FC<DateInputDarkProps> = ({ className = '', style, ..
   return (
     <div
       className="relative w-full"
-      style={{ backgroundColor: '#FFFFFF', borderRadius: '0.5rem', border: '1px solid #E2E8F0' }}
+      style={{ backgroundColor: '#1e293b', borderRadius: '0.5rem', border: '1px solid #334155' }}
     >
       <input
         ref={inputRef}
@@ -46,9 +46,8 @@ const DateInputDark: React.FC<DateInputDarkProps> = ({ className = '', style, ..
         {...props}
         className={`${finalClassName} date-input-dark-override`}
         style={{
-          colorScheme: 'light',
+          colorScheme: 'dark',
           paddingRight: '2.5rem',
-          color: '#0F172A',
           WebkitAppearance: 'none',
           ...style,
         }}
@@ -62,7 +61,7 @@ const DateInputDark: React.FC<DateInputDarkProps> = ({ className = '', style, ..
         aria-label="Open date picker"
         style={{ lineHeight: 0 }}
       >
-        <Calendar className="w-4 h-4 text-slate-500" style={{ color: '#64748B' }} />
+        <Calendar className="w-4 h-4 text-slate-400" />
       </button>
     </div>
   );

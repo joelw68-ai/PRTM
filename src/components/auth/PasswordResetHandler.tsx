@@ -50,31 +50,31 @@ const PasswordResetHandler: React.FC = () => {
 
   if (success) {
     return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-        <div className="bg-white rounded-2xl border border-gray-200 p-8 max-w-md mx-4 text-center shadow-xl">
-          <div className="w-16 h-16 mx-auto mb-4 bg-green-50 rounded-full flex items-center justify-center border border-green-200">
-            <CheckCircle className="w-8 h-8 text-green-500" />
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+        <div className="bg-slate-900 rounded-2xl border border-slate-700 p-8 max-w-md mx-4 text-center shadow-xl">
+          <div className="w-16 h-16 mx-auto mb-4 bg-green-500/20 rounded-full flex items-center justify-center border border-green-500/30">
+            <CheckCircle className="w-8 h-8 text-green-400" />
           </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-2">Password Updated!</h2>
-          <p className="text-gray-500">Your password has been successfully changed. Redirecting...</p>
+          <h2 className="text-xl font-bold text-white mb-2">Password Updated!</h2>
+          <p className="text-slate-400">Your password has been successfully changed. Redirecting...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl border border-gray-200 p-8 max-w-md mx-4 w-full shadow-xl">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-900 rounded-2xl border border-slate-700 p-8 max-w-md mx-4 w-full shadow-xl">
         <div className="text-center mb-6">
           <div className="w-14 h-14 mx-auto mb-4 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center">
             <ShieldCheck className="w-7 h-7 text-white" />
           </div>
-          <h2 className="text-xl font-bold text-gray-900">Set New Password</h2>
-          <p className="text-sm text-gray-500 mt-1">Choose a strong password for your account</p>
+          <h2 className="text-xl font-bold text-white">Set New Password</h2>
+          <p className="text-sm text-slate-400 mt-1">Choose a strong password for your account</p>
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 p-3 mb-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+          <div className="flex items-center gap-2 p-3 mb-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">
             <AlertCircle className="w-5 h-5 flex-shrink-0" />
             <span className="text-sm">{error}</span>
           </div>
@@ -82,21 +82,21 @@ const PasswordResetHandler: React.FC = () => {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">New Password</label>
+            <label className="block text-sm font-medium text-slate-300 mb-2">New Password</label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="At least 6 characters"
                 required
-                className="w-full pl-10 pr-12 py-3 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="w-full pl-10 pr-12 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -104,20 +104,20 @@ const PasswordResetHandler: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Confirm Password</label>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Confirm Password</label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Confirm your password"
                 required
-                className="w-full pl-10 pr-4 py-3 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               />
             </div>
             {confirmPassword && newPassword !== confirmPassword && (
-              <p className="text-xs text-red-500 mt-1">Passwords do not match</p>
+              <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
             )}
           </div>
 
@@ -139,7 +139,7 @@ const PasswordResetHandler: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowPasswordReset(false)}
-            className="w-full py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+            className="w-full py-2 text-sm text-slate-400 hover:text-white transition-colors"
           >
             Cancel
           </button>
