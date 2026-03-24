@@ -135,12 +135,15 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
             setError(result.error.message);
           }
         } else if (result.autoConfirmed) {
+          // User was auto-confirmed (email confirmation disabled in Supabase)
+          // They're now logged in automatically
           setSuccess('Account created successfully! You are now signed in.');
           setMode('auto-confirmed');
           setTimeout(() => {
             onClose();
           }, 2000);
         } else if (result.needsConfirmation) {
+          // Confirmation email was sent
           setLastSignupEmail(email);
           setMode('confirmation-sent');
           setEmail('');
@@ -284,27 +287,23 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
     }
   };
 
-  // Common input class for dark mode
-  const inputClass = "w-full pl-10 pr-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent";
-  const inputClassWithToggle = "w-full pl-10 pr-12 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent";
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
         onClick={handleClose}
       />
       
       {/* Modal */}
-      <div className="relative w-full max-w-md mx-4 bg-slate-900 rounded-2xl shadow-2xl border border-slate-700 max-h-[90vh] overflow-y-auto">
+      <div className="relative w-full max-w-md mx-4 bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-slate-700">
           <div className="flex items-center gap-3">
             {(mode === 'forgot' || mode === 'confirmation-sent') && (
               <button
                 onClick={() => switchMode('login')}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors mr-1"
+                className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors mr-1"
               >
                 <ArrowLeft className="w-4 h-4" />
               </button>
@@ -327,7 +326,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
           </div>
           <button
             onClick={handleClose}
-            className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+            className="p-2 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -337,7 +336,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
         {mode === 'auto-confirmed' ? (
           <div className="p-6 space-y-5">
             <div className="text-center">
-              <div className="w-16 h-16 mx-auto mb-4 bg-green-500/20 rounded-full flex items-center justify-center border border-green-500/30">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-green-500/20 to-emerald-500/20 rounded-full flex items-center justify-center border border-green-500/30">
                 <CheckCircle className="w-8 h-8 text-green-400" />
               </div>
               <p className="text-white font-semibold text-lg mb-2">
@@ -349,7 +348,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
             </div>
             
             {success && (
-              <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400">
+              <div className="flex items-center gap-2 p-3 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400">
                 <CheckCircle className="w-5 h-5 flex-shrink-0" />
                 <span className="text-sm">{success}</span>
               </div>
@@ -359,7 +358,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
           /* Email Confirmation Sent View */
           <div className="p-6 space-y-5">
             <div className="text-center">
-              <div className="w-16 h-16 mx-auto mb-4 bg-blue-500/20 rounded-full flex items-center justify-center border border-blue-500/30 animate-pulse">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-blue-500/20 to-indigo-500/20 rounded-full flex items-center justify-center border border-blue-500/30 animate-pulse">
                 <Mail className="w-8 h-8 text-blue-400" />
               </div>
               <p className="text-slate-300 mb-2">
@@ -375,13 +374,13 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
 
             {/* Error/Success Messages */}
             {error && (
-              <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">
+              <div className="flex items-start gap-2 p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400">
                 <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
                 <span className="text-sm">{error}</span>
               </div>
             )}
             {success && (
-              <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400">
+              <div className="flex items-center gap-2 p-3 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400">
                 <CheckCircle className="w-5 h-5 flex-shrink-0" />
                 <span className="text-sm">{success}</span>
               </div>
@@ -391,7 +390,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
             <button
               onClick={handleResendConfirmation}
               disabled={isLoading || resendCooldown > 0}
-              className="w-full py-3 bg-slate-800 text-slate-300 font-medium rounded-lg hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full py-3 bg-slate-700 text-white font-medium rounded-lg hover:bg-slate-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isLoading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -404,7 +403,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
             </button>
 
             {/* Troubleshooting Section */}
-            <div className="bg-slate-800/50 rounded-lg border border-slate-700">
+            <div className="bg-slate-900/50 rounded-lg border border-slate-700/50">
               <button
                 onClick={() => setShowEmailTroubleshoot(!showEmailTroubleshoot)}
                 className="w-full flex items-center justify-between p-4 text-left"
@@ -447,12 +446,12 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                   </ul>
                   
                   {/* Admin note for beta testers */}
-                  <div className="mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                  <div className="mt-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
                     <div className="flex items-start gap-2">
                       <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-                      <div className="text-xs text-amber-300">
+                      <div className="text-xs text-amber-300/90">
                         <p className="font-semibold mb-1">Beta Tester Note</p>
-                        <p className="text-amber-400/80">
+                        <p className="text-amber-300/70">
                           If emails aren't arriving, the project admin may need to verify that <strong>email confirmations are enabled</strong> in the Supabase Dashboard under Authentication &gt; Settings &gt; Email Auth. The Supabase free tier also limits emails to ~3 per hour.
                         </p>
                       </div>
@@ -481,7 +480,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
           <form onSubmit={handleSubmit} className="p-6 space-y-4">
             {/* Error Message */}
             {error && (
-              <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">
+              <div className="flex items-start gap-2 p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400">
                 <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
                 <div className="text-sm">
                   <span>{error}</span>
@@ -501,7 +500,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
 
             {/* Success Message */}
             {success && (
-              <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400">
+              <div className="flex items-center gap-2 p-3 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400">
                 <CheckCircle className="w-5 h-5 flex-shrink-0" />
                 <span className="text-sm">{success}</span>
               </div>
@@ -522,7 +521,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                       onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="At least 6 characters"
                       required
-                      className={inputClassWithToggle}
+                      className="w-full pl-10 pr-12 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     />
                     <button
                       type="button"
@@ -540,7 +539,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                           <div
                             key={i}
                             className={`h-1.5 flex-1 rounded-full transition-colors ${
-                              i <= passwordStrength.score ? passwordStrength.color : 'bg-slate-700'
+                              i <= passwordStrength.score ? passwordStrength.color : 'bg-slate-600'
                             }`}
                           />
                         ))}
@@ -569,7 +568,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                       onChange={(e) => setConfirmNewPassword(e.target.value)}
                       placeholder="Confirm your new password"
                       required
-                      className={inputClass}
+                      className="w-full pl-10 pr-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     />
                   </div>
                   {confirmNewPassword && newPassword !== confirmNewPassword && (
@@ -610,7 +609,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                         value={teamName}
                         onChange={(e) => setTeamName(e.target.value)}
                         placeholder="Enter your team name"
-                        className={inputClass}
+                        className="w-full pl-10 pr-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       />
                     </div>
                   </div>
@@ -630,7 +629,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                       placeholder="you@example.com"
                       required
                       autoComplete="email"
-                      className={inputClass}
+                      className="w-full pl-10 pr-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     />
                   </div>
                 </div>
@@ -661,7 +660,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                         placeholder={mode === 'signup' ? 'At least 6 characters' : 'Enter your password'}
                         required
                         autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                        className={inputClassWithToggle}
+                        className="w-full pl-10 pr-12 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       />
                       <button
                         type="button"
@@ -679,7 +678,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                             <div
                               key={i}
                               className={`h-1.5 flex-1 rounded-full transition-colors ${
-                                i <= passwordStrength.score ? passwordStrength.color : 'bg-slate-700'
+                                i <= passwordStrength.score ? passwordStrength.color : 'bg-slate-600'
                               }`}
                             />
                           ))}
@@ -713,7 +712,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                         placeholder="Confirm your password"
                         required
                         autoComplete="new-password"
-                        className={inputClass}
+                        className="w-full pl-10 pr-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       />
                     </div>
                     {confirmPassword && password !== confirmPassword && (
@@ -749,7 +748,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                       <div className="w-full border-t border-slate-700" />
                     </div>
                     <div className="relative flex justify-center text-xs">
-                      <span className="px-3 bg-slate-900 text-slate-500 uppercase tracking-wider">or</span>
+                      <span className="px-3 bg-slate-800 text-slate-500 uppercase tracking-wider">or</span>
                     </div>
                   </div>
                 )}
@@ -759,9 +758,9 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
                   <button
                     type="button"
                     onClick={handleDemoMode}
-                    className="w-full py-3 bg-slate-800 border border-slate-600 text-slate-300 font-medium rounded-lg hover:bg-slate-700 hover:text-white hover:border-slate-500 transition-all flex items-center justify-center gap-2 group"
+                    className="w-full py-3 bg-slate-700/50 border border-slate-600 text-slate-300 font-medium rounded-lg hover:bg-slate-700 hover:text-white hover:border-slate-500 transition-all flex items-center justify-center gap-2 group"
                   >
-                    <Play className="w-4 h-4 text-green-500 group-hover:text-green-400" />
+                    <Play className="w-4 h-4 text-green-400 group-hover:text-green-300" />
                     Try Demo Mode
                     <span className="text-xs text-slate-500 group-hover:text-slate-400">— No account needed</span>
                   </button>

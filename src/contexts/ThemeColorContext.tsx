@@ -206,7 +206,7 @@ export function useAccentStyles() {
     } as React.CSSProperties,
     /** Active submenu item */
     activeSubItem: {
-      backgroundColor: `rgba(${colors.rgb}, 0.1)`,
+      backgroundColor: `rgba(${colors.rgb}, 0.12)`,
       borderColor: `rgba(${colors.rgb}, 0.3)`,
       color: colors.light,
     } as React.CSSProperties,
@@ -241,8 +241,8 @@ export function useAccentStyles() {
     } as React.CSSProperties,
     /** Selected car indicator (legacy compat) */
     carIndicator: {
-      backgroundColor: `rgba(${colors.rgb}, 0.15)`,
-      borderColor: `rgba(${colors.rgb}, 0.4)`,
+      backgroundColor: `rgba(${colors.rgb}, 0.2)`,
+      borderColor: `rgba(${colors.rgb}, 0.5)`,
       color: colors.light,
     } as React.CSSProperties,
     /** For user avatar gradient */
@@ -252,11 +252,6 @@ export function useAccentStyles() {
     /** Version text */
     versionText: {
       color: colors.base,
-    } as React.CSSProperties,
-    /** Hover style for menu items (slightly lighter bg) */
-    hoverMenuItem: {
-      backgroundColor: `rgba(${colors.rgb}, 0.08)`,
-      color: colors.light,
     } as React.CSSProperties,
   };
 }

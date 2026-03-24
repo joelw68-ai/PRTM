@@ -50,9 +50,9 @@ const PasswordResetHandler: React.FC = () => {
 
   if (success) {
     return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-        <div className="bg-slate-900 rounded-2xl border border-slate-700 p-8 max-w-md mx-4 text-center shadow-xl">
-          <div className="w-16 h-16 mx-auto mb-4 bg-green-500/20 rounded-full flex items-center justify-center border border-green-500/30">
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-8 max-w-md mx-4 text-center">
+          <div className="w-16 h-16 mx-auto mb-4 bg-green-500/20 rounded-full flex items-center justify-center">
             <CheckCircle className="w-8 h-8 text-green-400" />
           </div>
           <h2 className="text-xl font-bold text-white mb-2">Password Updated!</h2>
@@ -63,8 +63,8 @@ const PasswordResetHandler: React.FC = () => {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-slate-900 rounded-2xl border border-slate-700 p-8 max-w-md mx-4 w-full shadow-xl">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="bg-slate-800 rounded-2xl border border-slate-700 p-8 max-w-md mx-4 w-full">
         <div className="text-center mb-6">
           <div className="w-14 h-14 mx-auto mb-4 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center">
             <ShieldCheck className="w-7 h-7 text-white" />
@@ -74,7 +74,7 @@ const PasswordResetHandler: React.FC = () => {
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 p-3 mb-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">
+          <div className="flex items-center gap-2 p-3 mb-4 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400">
             <AlertCircle className="w-5 h-5 flex-shrink-0" />
             <span className="text-sm">{error}</span>
           </div>
@@ -91,7 +91,7 @@ const PasswordResetHandler: React.FC = () => {
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="At least 6 characters"
                 required
-                className="w-full pl-10 pr-12 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="w-full pl-10 pr-12 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500"
               />
               <button
                 type="button"
@@ -113,7 +113,7 @@ const PasswordResetHandler: React.FC = () => {
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Confirm your password"
                 required
-                className="w-full pl-10 pr-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500"
               />
             </div>
             {confirmPassword && newPassword !== confirmPassword && (

@@ -569,12 +569,11 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 h-full bg-slate-900 border-r border-slate-700/50 z-40 transition-all duration-300 flex flex-col ${
+        className={`fixed top-0 left-0 h-full bg-slate-800/98 border-r border-slate-700/50 z-40 transition-all duration-300 flex flex-col ${
 
           collapsed ? 'w-16' : 'w-64'
         } ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
-
         {sidebarContent}
       </aside>
     </>

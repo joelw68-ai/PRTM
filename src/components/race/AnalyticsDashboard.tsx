@@ -441,15 +441,11 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
     URL.revokeObjectURL(url);
   };
 
-  // Dark-mode chart color constants
-  const GRID_COLOR = '#334155';    // dark grid lines
-  const AXIS_COLOR = '#94a3b8';    // medium axis labels
-
   // Custom tooltip for charts
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
-        <div className="bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-lg">
+        <div className="bg-slate-900 border border-slate-700 rounded-lg p-3 shadow-lg">
           <p className="text-white font-medium mb-2">{label}</p>
           {payload.map((entry: any, index: number) => (
             <p key={index} className="text-sm" style={{ color: entry.color }}>
@@ -461,8 +457,6 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
     }
     return null;
   };
-
-
 
   return (
     <section className="py-8 px-4">
