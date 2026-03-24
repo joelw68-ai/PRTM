@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { useApp } from '@/contexts/AppContext';
-import { fetchWeatherForWidget, WeatherWidgetData, calculateDewPoint, calculateSAECorrection, isWeatherConfigured } from '@/lib/weather';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  fetchWeatherForWidget,
+  WeatherWidgetData,
+  isWeatherConfigured,
+} from '@/lib/weather';
 import {
   Cloud,
   CloudRain,
@@ -15,7 +17,6 @@ import {
   RefreshCw,
   Loader2,
   MapPin,
-  AlertCircle,
   AlertTriangle,
   ChevronDown,
   ChevronUp,
@@ -23,190 +24,23 @@ import {
   Clock,
   CloudFog,
   Snowflake,
-  ArrowUp,
-  Settings,
-  Navigation
+  Crosshair,
+  Globe,
+  MapPinOff,
 } from 'lucide-react';
-import { Crosshair } from 'lucide-react';
 
 interface WeatherWidgetProps {
   onNavigate: (section: string) => void;
 }
 
-const WEATHER_CACHE_KEY = 'promod_weather_cache';
-const WEATHER_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
-const WEATHER_STALE_DURATION = 60 * 60 * 1000; // 1 hour — show stale cache on error
-const GPS_COORDS_KEY = 'promod_gps_coords';
-const GPS_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes — GPS coords don't change that fast
+const WEATHER_CACHE_KEY = 'promod_team_weather_cache';
+const WEATHER_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
-type LocationSource = 'gps' | 'ip' | 'home-track' | 'pending';
-
-// Get cached GPS coordinates
-function getCachedGPS(): { lat: number; lon: number } | null {
-  try {
-    const raw = localStorage.getItem(GPS_COORDS_KEY);
-    if (!raw) return null;
-    const { lat, lon, timestamp } = JSON.parse(raw);
-    if (Date.now() - timestamp > GPS_CACHE_DURATION) return null;
-    return { lat, lon };
-  } catch {
-    return null;
-  }
-}
-
-// Cache GPS coordinates
-function cacheGPS(lat: number, lon: number) {
-  try {
-    localStorage.setItem(GPS_COORDS_KEY, JSON.stringify({ lat, lon, timestamp: Date.now() }));
-  } catch {
-    // ignore
-  }
-}
-
-// Request GPS position with a promise wrapper
-function requestGPSPosition(timeoutMs: number = 10000): Promise<{ lat: number; lon: number }> {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('Geolocation not supported'));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const lat = Math.round(position.coords.latitude * 10000) / 10000;
-        const lon = Math.round(position.coords.longitude * 10000) / 10000;
-        resolve({ lat, lon });
-      },
-      (err) => {
-        reject(err);
-      },
-      { enableHighAccuracy: false, timeout: timeoutMs, maximumAge: GPS_CACHE_DURATION }
-    );
-  });
-}
-
-// ─── Smart Track Location Resolution ─────────────────────────────────────────
-// The homeTrack field stores a track NAME (e.g. "Milan Dragway", "Darana Milan
-// Dragway").  Passing that directly to WeatherAPI.com often geocodes to the
-// WRONG place (e.g. Darana → Darana, Kebbi, Nigeria instead of Milan, MI).
-//
-// This helper resolves the best geocodable string by:
-//   1. Matching the homeTrack name against saved tracks that have city/state/zip
-//   2. Falling back to the user's favorite saved track
-//   3. Stripping common venue words and returning a cleaner location string
-// ─────────────────────────────────────────────────────────────────────────────
-
-function resolveWeatherLocationFromTracks(
-  homeTrackName: string | undefined,
-  savedTracks: Array<{
-    name: string;
-    location?: string;
-    city?: string;
-    state?: string;
-    zip?: string;
-    isFavorite: boolean;
-  }>
-): string | null {
-  // Step 1: If we have saved tracks, try to find one matching the homeTrack name
-  if (homeTrackName && savedTracks.length > 0) {
-    const htLower = homeTrackName.toLowerCase().trim();
-    const nameMatch = savedTracks.find(t => {
-      const tName = t.name.toLowerCase().trim();
-      // Exact match, or one contains the other
-      return tName === htLower || tName.includes(htLower) || htLower.includes(tName);
-    });
-
-    if (nameMatch) {
-      const loc = extractBestLocation(nameMatch);
-      if (loc) {
-        console.log('[WeatherWidget] Resolved homeTrack via saved track name match:', homeTrackName, '→', loc);
-        return loc;
-      }
-    }
-  }
-
-  // Step 2: Use the favorite saved track (if any) — it's the user's primary track
-  if (savedTracks.length > 0) {
-    const favTrack = savedTracks.find(t => t.isFavorite);
-    if (favTrack) {
-      const loc = extractBestLocation(favTrack);
-      if (loc) {
-        console.log('[WeatherWidget] Resolved location via favorite saved track:', favTrack.name, '→', loc);
-        return loc;
-      }
-    }
-  }
-
-  // Step 3: Strip venue words from the homeTrack name to get a cleaner city name
-  if (homeTrackName) {
-    const cleaned = cleanTrackNameForGeocoding(homeTrackName);
-    if (cleaned && cleaned.length >= 2) {
-      console.log('[WeatherWidget] Cleaned homeTrack name for geocoding:', homeTrackName, '→', cleaned);
-      return cleaned;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Extract the best geocodable location string from a saved track.
- * Priority: zip code > city+state > location field
- * Zip codes are the most reliable for US geocoding (no ambiguity).
- */
-function extractBestLocation(track: {
-  city?: string;
-  state?: string;
-  zip?: string;
-  location?: string;
-}): string | null {
-  // Zip code is most reliable (e.g. "48160" → Milan, MI, no ambiguity)
-  if (track.zip && track.zip.trim().length >= 5) {
-    return track.zip.trim();
-  }
-  // City + State is very reliable (e.g. "Milan, MI")
-  if (track.city && track.city.trim() && track.state && track.state.trim()) {
-    return `${track.city.trim()}, ${track.state.trim()}`;
-  }
-  // Location field (e.g. "Milan, MI" or "Milan, Michigan")
-  if (track.location && track.location.trim().length >= 3) {
-    return track.location.trim();
-  }
-  return null;
-}
-
-/**
- * Strip common racing venue words from a track name to extract a geocodable
- * city/location.  E.g. "Milan Dragway" → "Milan", "South Georgia Motorsports
- * Park" → "South Georgia".
- */
-function cleanTrackNameForGeocoding(trackName: string): string {
-  // Common racing venue suffixes/words — sorted longest-first to avoid partial matches
-  const venueWords = [
-    'motorsports park', 'motorsport park', 'motor speedway', 'raceway park',
-    'drag strip', 'dragstrip', 'race park', 'racepark',
-    'international raceway', 'international dragway', 'international speedway',
-    'national dragway', 'national speedway', 'national raceway',
-    'dragway', 'raceway', 'speedway', 'drag way',
-    'motorsports', 'motorsport', 'racing', 'strip', 'dragplex',
-  ];
-
-  let cleaned = trackName;
-  for (const word of venueWords) {
-    // Case-insensitive replacement, word-boundary aware where possible
-    cleaned = cleaned.replace(new RegExp(word, 'gi'), ' ');
-  }
-
-  // Collapse whitespace and trim
-  cleaned = cleaned.replace(/\s+/g, ' ').trim();
-  // Remove leading/trailing non-alphanumeric chars
-  cleaned = cleaned.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '').trim();
-
-  return cleaned;
-}
-
+type LocationSource = 'gps' | 'ip' | 'none';
+type FetchState = 'idle' | 'locating' | 'fetching' | 'done' | 'denied' | 'error';
 
 // Get weather icon component based on conditions
-const getWeatherIcon = (conditions: string, isDay: boolean, size: string = 'w-8 h-8') => {
+const getWeatherIcon = (conditions: string, isDay: boolean = true, size: string = 'w-8 h-8') => {
   const lower = conditions.toLowerCase();
   if (lower.includes('rain') || lower.includes('drizzle')) return <CloudRain className={`${size} text-blue-400`} />;
   if (lower.includes('fog') || lower.includes('mist')) return <CloudFog className={`${size} text-slate-400`} />;
@@ -236,109 +70,26 @@ const getDAQuality = (da: number): { label: string; color: string } => {
 };
 
 const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
-  const { profile } = useAuth();
-  const { savedTracks } = useApp();
-
   const [weatherData, setWeatherData] = useState<WeatherWidgetData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [showForecast, setShowForecast] = useState(false);
+  const [fetchState, setFetchState] = useState<FetchState>('idle');
+  const [locationSource, setLocationSource] = useState<LocationSource>('none');
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
-  const [trackLocation, setTrackLocation] = useState<string>('');
-  const [locationSource, setLocationSource] = useState<LocationSource>('pending');
-  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [showForecast, setShowForecast] = useState(false);
+  const autoFetchedRef = useRef(false);
 
-  // Memoize the resolved home-track location so it only recalculates when
-  // profile.homeTrack or savedTracks actually change.
-  const resolvedHomeTrackLocation = useMemo(() => {
-    if (!profile?.homeTrack && savedTracks.length === 0) return null;
-    return resolveWeatherLocationFromTracks(profile?.homeTrack, savedTracks);
-  }, [profile?.homeTrack, savedTracks]);
-
-  // Resolve the best location: homeTrack (smart) > GPS > auto:ip
-  const getWeatherLocation = useCallback((): string => {
-    // Priority 1: Smart-resolved home track location (uses saved track city/state/zip)
-    if (resolvedHomeTrackLocation) {
-      setLocationSource('home-track');
-      return resolvedHomeTrackLocation;
-    }
-    
-    // Priority 2: GPS coordinates
-    if (gpsCoords) {
-      setLocationSource('gps');
-      return `${gpsCoords.lat},${gpsCoords.lon}`;
-    }
-    
-    // Priority 3: IP-based fallback
-    setLocationSource('ip');
-    return 'auto:ip';
-  }, [resolvedHomeTrackLocation, gpsCoords]);
-
-  // Request GPS on mount
-  useEffect(() => {
-    // If user has a resolved home track location, skip GPS entirely
-    if (resolvedHomeTrackLocation) {
-      setLocationSource('home-track');
-      return;
-    }
-
-    // Check cached GPS first
-    const cached = getCachedGPS();
-    if (cached) {
-      console.log('[WeatherWidget] Using cached GPS:', cached);
-      setGpsCoords(cached);
-      setLocationSource('gps');
-      return;
-    }
-
-    // Request fresh GPS
-    setLocationSource('pending');
-    requestGPSPosition(8000)
-      .then(({ lat, lon }) => {
-        console.log('[WeatherWidget] GPS acquired:', lat, lon);
-        cacheGPS(lat, lon);
-        setGpsCoords({ lat, lon });
-        setLocationSource('gps');
-      })
-      .catch((err) => {
-        console.warn('[WeatherWidget] GPS unavailable, falling back to IP:', err?.message || err);
-        setLocationSource('ip');
-      });
-  }, [resolvedHomeTrackLocation]);
-
-  // When the resolved location changes (e.g. user updates saved track data),
-  // clear the stale weather cache so we don't keep showing wrong-location data.
-  useEffect(() => {
-    if (!resolvedHomeTrackLocation) return;
-    try {
-      const cached = localStorage.getItem(WEATHER_CACHE_KEY);
-      if (cached) {
-        const { location: cachedLoc } = JSON.parse(cached);
-        if (cachedLoc && cachedLoc !== resolvedHomeTrackLocation) {
-          console.log('[WeatherWidget] Location changed from', cachedLoc, 'to', resolvedHomeTrackLocation, '— clearing stale cache');
-          localStorage.removeItem(WEATHER_CACHE_KEY);
-          setWeatherData(null);
-          setLastFetchTime(null);
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }, [resolvedHomeTrackLocation]);
-
-
-
-  // Load cached weather data (use stale cache up to 1 hour as fallback)
+  // ── Load cached data on mount ──
   useEffect(() => {
     try {
       const cached = localStorage.getItem(WEATHER_CACHE_KEY);
       if (cached) {
-        const { data, timestamp, location: cachedLocation } = JSON.parse(cached);
+        const { data, timestamp, source } = JSON.parse(cached);
         const age = Date.now() - timestamp;
-        if (age < WEATHER_STALE_DURATION && data) {
+        if (age < WEATHER_CACHE_DURATION && data) {
           setWeatherData(data);
-          setTrackLocation(cachedLocation || '');
           setLastFetchTime(new Date(timestamp));
+          setFetchState('done');
+          if (source) setLocationSource(source);
         }
       }
     } catch {
@@ -346,81 +97,145 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
     }
   }, []);
 
-
-  // Fetch weather data
-  const fetchWeather = useCallback(async (force: boolean = false) => {
-    const location = getWeatherLocation();
-    if (!location) {
-      setError('no-location');
-      return;
+  // ── Cache helper ──
+  const cacheWeather = useCallback((data: WeatherWidgetData, source: LocationSource) => {
+    try {
+      localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify({
+        data,
+        timestamp: Date.now(),
+        source,
+      }));
+    } catch {
+      // ignore
     }
+  }, []);
 
-    // Check cache unless forced
-    if (!force && weatherData && lastFetchTime) {
-      const age = Date.now() - lastFetchTime.getTime();
-      if (age < WEATHER_CACHE_DURATION) return;
-    }
-
+  // ── Fetch weather using a location string ──
+  const fetchWeatherWithLocation = useCallback(async (location: string, source: LocationSource) => {
     setIsLoading(true);
-    if (!weatherData) {
-      // Only clear error on first load; keep stale data visible during refresh
-      setError(null);
-    }
+    setFetchState('fetching');
 
     try {
+      console.log(`[WeatherWidget] Fetching weather for: ${location} (source: ${source})`);
       const data = await fetchWeatherForWidget(location);
       setWeatherData(data);
-      setTrackLocation(location);
       setLastFetchTime(new Date());
-      setError(null);
-      
-      // Cache the result
-      try {
-        localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify({
-          data,
-          timestamp: Date.now(),
-          location
-        }));
-      } catch {
-        // Ignore storage errors
-      }
+      setFetchState('done');
+      setLocationSource(source);
+      cacheWeather(data, source);
     } catch (err: any) {
-      // Use warn instead of error for expected network issues
-      console.warn('Weather widget: fetch failed —', err?.message || err);
-      // If we have cached data, show it with a subtle indicator
-      if (weatherData) {
-        setError('refresh-failed');
-      } else {
-        setError('unavailable');
+      console.warn('[WeatherWidget] Weather fetch error:', err?.message || err);
+      // If we have cached data, keep showing it
+      if (!weatherData) {
+        setFetchState('error');
       }
     } finally {
       setIsLoading(false);
     }
-  }, [getWeatherLocation, weatherData, lastFetchTime]);
+  }, [cacheWeather, weatherData]);
 
+  // ── Fetch weather via IP fallback ──
+  const fetchWeatherByIP = useCallback(async () => {
+    await fetchWeatherWithLocation('auto:ip', 'ip');
+  }, [fetchWeatherWithLocation]);
 
+  // ── Fetch weather via GPS geolocation ──
+  const fetchWeatherByGPS = useCallback(async () => {
+    setIsLoading(true);
+    setFetchState('locating');
 
-  // Auto-fetch on mount and when location changes
-  useEffect(() => {
-    const location = getWeatherLocation();
-    if (location) {
-      fetchWeather();
+    try {
+      // Step 1: Get GPS coordinates from browser
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error('Geolocation is not supported by your browser'));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: false,
+          timeout: 12000,
+          maximumAge: 5 * 60 * 1000, // 5 min cache
+        });
+      });
+
+      const lat = Math.round(position.coords.latitude * 10000) / 10000;
+      const lon = Math.round(position.coords.longitude * 10000) / 10000;
+      const locationStr = `${lat},${lon}`;
+
+      console.log('[WeatherWidget] GPS acquired:', lat, lon);
+
+      // Step 2: Fetch weather using the GPS coordinates
+      await fetchWeatherWithLocation(locationStr, 'gps');
+    } catch (err: any) {
+      console.warn('[WeatherWidget] GPS error:', err?.message || err, 'code:', err?.code);
+
+      // GeolocationPositionError codes:
+      // 1 = PERMISSION_DENIED
+      // 2 = POSITION_UNAVAILABLE
+      // 3 = TIMEOUT
+      if (err?.code === 1) {
+        // User denied location access
+        setFetchState('denied');
+        setIsLoading(false);
+        // Still try IP fallback silently so we show something
+        console.log('[WeatherWidget] GPS denied — falling back to IP location');
+        // Don't await — let it run in background
+        fetchWeatherByIP();
+        return;
+      } else if (err?.code === 2 || err?.code === 3) {
+        // GPS unavailable or timed out — fall back to IP
+        console.log('[WeatherWidget] GPS unavailable/timeout — falling back to IP');
+        await fetchWeatherByIP();
+        return;
+      } else if (err?.message?.includes('Geolocation is not supported')) {
+        // Browser doesn't support geolocation — fall back to IP
+        console.log('[WeatherWidget] Geolocation not supported — falling back to IP');
+        await fetchWeatherByIP();
+        return;
+      }
+
+      // Unknown error
+      if (!weatherData) {
+        setFetchState('error');
+      }
+      setIsLoading(false);
     }
-  }, [getWeatherLocation]);
+  }, [fetchWeatherWithLocation, fetchWeatherByIP, weatherData]);
 
-  // Auto-retry once after 5 seconds if first fetch fails with no cached data
-  useEffect(() => {
-    if (error === 'unavailable' && !weatherData && !isLoading) {
-      const retryTimer = setTimeout(() => {
-        fetchWeather(true);
-      }, 5000);
-      return () => clearTimeout(retryTimer);
+  // ── Refresh using last known source ──
+  const handleRefresh = useCallback(() => {
+    if (locationSource === 'gps') {
+      fetchWeatherByGPS();
+    } else {
+      // Try GPS first, fall back to IP
+      fetchWeatherByGPS();
     }
-  }, [error, weatherData, isLoading]);
+  }, [locationSource, fetchWeatherByGPS]);
+
+  // ── Auto-fetch on mount using GPS (with IP fallback) ──
+  useEffect(() => {
+    if (autoFetchedRef.current) return;
+    if (!isWeatherConfigured()) return;
+
+    // If we already have fresh cached data, skip auto-fetch
+    try {
+      const cached = localStorage.getItem(WEATHER_CACHE_KEY);
+      if (cached) {
+        const { timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < WEATHER_CACHE_DURATION) {
+          autoFetchedRef.current = true;
+          return;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    autoFetchedRef.current = true;
+    fetchWeatherByGPS();
+  }, []);
 
   // ─── API key not configured ─────────────────────────────────────────────────
-  // If the weather API key is missing, show a clear setup message instead of
-  // silently failing or showing a confusing "unavailable" state.
   if (!isWeatherConfigured()) {
     return (
       <div className="bg-slate-800/50 rounded-xl border border-amber-500/30 p-6">
@@ -450,18 +265,14 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
                 weatherapi.com
               </a>
             </p>
-            <p className="text-slate-600 text-[10px] mt-1.5 font-mono">
-              Vercel &rarr; Settings &rarr; Environment Variables &rarr; Add VITE_WEATHER_API_KEY &rarr; Redeploy
-            </p>
           </div>
         </div>
       </div>
     );
   }
 
-
-  // No location configured
-  if (error === 'no-location' && !weatherData) {
+  // ─── Location denied state (no cached data) ────────────────────────────────
+  if (fetchState === 'denied' && !weatherData) {
     return (
       <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6">
         <div className="flex items-center justify-between mb-4">
@@ -471,26 +282,29 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
           </h2>
         </div>
         <div className="text-center py-6">
-          <Cloud className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-400 mb-2">No track location configured</p>
-          <p className="text-slate-500 text-sm mb-4">
-            Set your home track in Team Profile or save a track to see live weather conditions and racing metrics.
+          <MapPinOff className="w-12 h-12 text-slate-500 mx-auto mb-3" />
+          <p className="text-slate-300 font-medium mb-2">Enable location access to see local weather</p>
+          <p className="text-slate-500 text-sm mb-4 max-w-xs mx-auto">
+            Allow location access in your browser to automatically see live weather conditions and racing metrics for your area.
           </p>
-          <div className="flex gap-3 justify-center">
-            <button
-              onClick={() => onNavigate('team')}
-              className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors"
-            >
-              <Settings className="w-4 h-4" />
-              Set Home Track
-            </button>
-          </div>
+          <button
+            onClick={fetchWeatherByGPS}
+            disabled={isLoading}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white rounded-lg text-sm font-medium transition-colors mx-auto disabled:cursor-not-allowed"
+          >
+            {isLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Crosshair className="w-4 h-4" />
+            )}
+            Try Again
+          </button>
         </div>
       </div>
     );
   }
 
-  // Loading state (first load only)
+  // ─── Loading state (first load — getting GPS / fetching weather) ────────────
   if (isLoading && !weatherData) {
     return (
       <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6">
@@ -502,14 +316,16 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
         </div>
         <div className="flex items-center justify-center py-8">
           <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
-          <span className="ml-3 text-slate-400">Fetching weather data...</span>
+          <span className="ml-3 text-slate-400">
+            {fetchState === 'locating' ? 'Getting your location...' : 'Fetching weather data...'}
+          </span>
         </div>
       </div>
     );
   }
 
-  // Weather unavailable — show a friendly retry state instead of hiding the widget
-  if (error === 'unavailable' && !weatherData) {
+  // ─── Error state (no cached data) ──────────────────────────────────────────
+  if (fetchState === 'error' && !weatherData) {
     return (
       <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6">
         <div className="flex items-center justify-between mb-4">
@@ -525,7 +341,7 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
             The weather service could not be reached. This usually resolves on its own.
           </p>
           <button
-            onClick={() => fetchWeather(true)}
+            onClick={handleRefresh}
             disabled={isLoading}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white rounded-lg text-sm font-medium transition-colors mx-auto disabled:cursor-not-allowed"
           >
@@ -542,7 +358,6 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
   }
 
   if (!weatherData) return null;
-
 
   const saeQuality = getSAEQuality(weatherData.saeCorrection);
   const daQuality = getDAQuality(weatherData.densityAltitude);
@@ -563,7 +378,7 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
               </span>
             )}
             <button
-              onClick={() => fetchWeather(true)}
+              onClick={handleRefresh}
               disabled={isLoading}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white text-sm rounded-lg transition-colors disabled:cursor-not-allowed"
             >
@@ -583,27 +398,22 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
           </span>
           {/* Location source indicator */}
           {locationSource === 'gps' && (
-            <span className="text-xs text-green-400/80 flex items-center gap-0.5 ml-1" title="Location from GPS (precise)">
+            <span className="text-[10px] text-green-400/80 bg-green-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5 ml-1" title="Using precise GPS location">
               <Crosshair className="w-2.5 h-2.5" />
               GPS
             </span>
           )}
           {locationSource === 'ip' && (
-            <span className="text-xs text-yellow-400/70 flex items-center gap-0.5 ml-1" title="Location from IP address (approximate — allow GPS for better accuracy)">
-              <Navigation className="w-2.5 h-2.5" />
+            <span className="text-[10px] text-blue-400/80 bg-blue-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5 ml-1" title="Using approximate IP-based location">
+              <Globe className="w-2.5 h-2.5" />
               IP
             </span>
           )}
-          {locationSource === 'home-track' && (
-            <span className="text-xs text-orange-400/70 flex items-center gap-0.5 ml-1" title="Using your home track setting">
-              <MapPin className="w-2.5 h-2.5" />
-              Home Track
-            </span>
-          )}
-          {locationSource === 'pending' && (
-            <span className="text-xs text-slate-500 flex items-center gap-0.5 ml-1" title="Requesting GPS location...">
-              <Loader2 className="w-2.5 h-2.5 animate-spin" />
-              locating
+          {/* GPS denied banner — shown when we fell back to IP after denial */}
+          {fetchState === 'denied' && locationSource === 'ip' && (
+            <span className="text-[10px] text-yellow-400/80 bg-yellow-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5 ml-1" title="GPS denied — using approximate IP location. Enable location access for precise weather.">
+              <MapPinOff className="w-2.5 h-2.5" />
+              Approx
             </span>
           )}
           {weatherData.localTime && (
@@ -614,22 +424,6 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
           )}
         </div>
       </div>
-
-      {/* Error banner */}
-      {error && error !== 'no-location' && error !== 'refresh-failed' && error !== 'unavailable' && (
-        <div className="flex items-center gap-2 px-6 py-2 bg-red-500/10 border-b border-red-500/20">
-          <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
-          <span className="text-red-400 text-sm">{error}</span>
-        </div>
-      )}
-
-      {error === 'refresh-failed' && (
-        <div className="flex items-center gap-2 px-6 py-2 bg-yellow-500/10 border-b border-yellow-500/20">
-          <AlertCircle className="w-4 h-4 text-yellow-400 flex-shrink-0" />
-          <span className="text-yellow-400 text-xs">Using cached data — refresh failed. Tap Refresh to retry.</span>
-        </div>
-      )}
-
 
       <div className="p-6">
         {/* Main Weather Display */}
@@ -681,8 +475,18 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
           </div>
         </div>
 
-        {/* Weather Details Grid */}
+        {/* Weather Details Grid — matches Pass Log fields */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+          {/* Temperature */}
+          <div className="p-2.5 bg-slate-900/40 rounded-lg">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Thermometer className="w-3.5 h-3.5 text-red-400" />
+              <span className="text-xs text-slate-500">Temperature</span>
+            </div>
+            <p className="text-white font-medium">{weatherData.temperature}°F</p>
+          </div>
+
+          {/* Humidity */}
           <div className="p-2.5 bg-slate-900/40 rounded-lg">
             <div className="flex items-center gap-1.5 mb-1">
               <Droplets className="w-3.5 h-3.5 text-blue-400" />
@@ -691,14 +495,16 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
             <p className="text-white font-medium">{weatherData.humidity}%</p>
           </div>
 
+          {/* Barometric Pressure */}
           <div className="p-2.5 bg-slate-900/40 rounded-lg">
             <div className="flex items-center gap-1.5 mb-1">
               <Gauge className="w-3.5 h-3.5 text-purple-400" />
-              <span className="text-xs text-slate-500">Barometer</span>
+              <span className="text-xs text-slate-500">Barometric Pressure</span>
             </div>
-            <p className="text-white font-medium">{weatherData.pressure.toFixed(2)}"</p>
+            <p className="text-white font-medium">{weatherData.pressure.toFixed(2)}" Hg</p>
           </div>
 
+          {/* Wind Speed & Direction */}
           <div className="p-2.5 bg-slate-900/40 rounded-lg">
             <div className="flex items-center gap-1.5 mb-1">
               <Wind className="w-3.5 h-3.5 text-cyan-400" />
@@ -712,14 +518,16 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
             )}
           </div>
 
+          {/* Dew Point */}
           <div className="p-2.5 bg-slate-900/40 rounded-lg">
             <div className="flex items-center gap-1.5 mb-1">
               <Thermometer className="w-3.5 h-3.5 text-green-400" />
               <span className="text-xs text-slate-500">Dew Point</span>
             </div>
-            <p className="text-white font-medium">{weatherData.dewPoint}°F</p>
+            <p className="text-white font-medium">{weatherData.dewPoint.toFixed(1)}°F</p>
           </div>
 
+          {/* Density Altitude */}
           <div className="p-2.5 bg-slate-900/40 rounded-lg">
             <div className="flex items-center gap-1.5 mb-1">
               <Mountain className="w-3.5 h-3.5 text-orange-400" />
@@ -728,14 +536,6 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
             <p className={`font-medium ${daQuality.color}`}>
               {weatherData.densityAltitude.toLocaleString()} ft
             </p>
-          </div>
-
-          <div className="p-2.5 bg-slate-900/40 rounded-lg">
-            <div className="flex items-center gap-1.5 mb-1">
-              <Eye className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-xs text-slate-500">Visibility</span>
-            </div>
-            <p className="text-white font-medium">{weatherData.visibility} mi</p>
           </div>
         </div>
 

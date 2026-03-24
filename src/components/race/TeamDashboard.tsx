@@ -364,7 +364,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
   );
 
   return (
-    <div className="bg-slate-950 min-h-screen">
+    <div className="bg-slate-900 min-h-screen">
+
       <div className="max-w-[1920px] mx-auto px-4 py-6">
         {/* ═══════════ Header ═══════════ */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">

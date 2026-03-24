@@ -59,23 +59,23 @@
 
 
   .dark {
-    --background: 222 47% 3%;
+    --background: 222 38% 12%;
     --foreground: 210 40% 98%;
 
-    --card: 222 47% 5%;
+    --card: 222 38% 15%;
     --card-foreground: 210 40% 98%;
 
-    --popover: 222 47% 5%;
+    --popover: 222 38% 15%;
     --popover-foreground: 210 40% 98%;
 
     --primary: 0 84% 60%;
     --primary-foreground: 210 40% 98%;
 
-    --secondary: 217.2 32.6% 12%;
+    --secondary: 217.2 32.6% 19%;
     --secondary-foreground: 210 40% 98%;
 
-    --muted: 217.2 32.6% 12%;
-    --muted-foreground: 215 20.2% 55%;
+    --muted: 217.2 32.6% 19%;
+    --muted-foreground: 215 20.2% 58%;
 
     --accent: 0 84% 60%;
     --accent-foreground: 210 40% 98%;
@@ -83,19 +83,21 @@
     --destructive: 0 62.8% 50%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 217.2 32.6% 15%;
-    --input: 217.2 32.6% 15%;
+    --border: 217.2 32.6% 23%;
+    --input: 217.2 32.6% 23%;
     --ring: 0 84% 60%;
 
-    --sidebar-background: 222 47% 5%;
+    --sidebar-background: 222 38% 14%;
     --sidebar-foreground: 210 40% 98%;
     --sidebar-primary: 0 84% 60%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 215 25% 15%;
+    --sidebar-accent: 215 25% 23%;
     --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 215 25% 15%;
+    --sidebar-border: 215 25% 23%;
     --sidebar-ring: 0 84% 60%;
   }
+
+
 }
 
 @layer base {
@@ -157,8 +159,10 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: rgb(15 23 42);
+  background: rgb(38 50 72);
 }
+
+
 
 ::-webkit-scrollbar-thumb {
   background: rgb(51 65 85);

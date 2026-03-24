@@ -270,7 +270,9 @@ const AppLayoutContent: React.FC = () => {
 
       case 'setup':
         return (
-          <div className="bg-slate-950">
+          <div className="bg-slate-800">
+
+
             <InitialSetup currentRole={currentRole} />
           </div>
         );
@@ -283,7 +285,8 @@ const AppLayoutContent: React.FC = () => {
 
       case 'timeline':
         return (
-          <div className="bg-slate-900/30">
+          <div className="bg-slate-800/30">
+
             <RaceDayTimeline />
           </div>
         );
@@ -300,21 +303,22 @@ const AppLayoutContent: React.FC = () => {
 
       case 'partsusage':
         return (
-          <div className="bg-slate-900/30">
+          <div className="bg-slate-800/30">
             <PartsUsageHistory />
           </div>
         );
 
       case 'borrowedloaned':
         return (
-          <div className="bg-slate-950">
+           <div className="bg-slate-800">
+
             <BorrowedLoanedParts onNavigate={handleNavigate} />
           </div>
         );
 
       case 'vendors':
         return (
-          <div className="bg-slate-900/30">
+          <div className="bg-slate-800/30">
             <VendorManagement currentRole={currentRole} />
           </div>
         );
@@ -324,7 +328,7 @@ const AppLayoutContent: React.FC = () => {
 
       case 'checklists':
         return (
-          <div className="bg-slate-900/30">
+          <div className="bg-slate-800/30">
             <div className="max-w-[1920px] mx-auto px-4 py-4">
               <div className="flex items-center justify-end gap-3 mb-2">
                 <label className="text-sm text-slate-400">Checking as:</label>
@@ -355,21 +359,23 @@ const AppLayoutContent: React.FC = () => {
 
       case 'todo':
         return (
-          <div className="bg-slate-950">
+          <div className="bg-slate-800">
+
             <ToDoList currentRole={currentRole} crewMemberName={selectedCrewMember?.name || 'Crew Member'} />
           </div>
         );
 
       case 'gallery':
         return (
-          <div className="bg-slate-900/30">
+          <div className="bg-slate-800/30">
             <MediaGallery currentRole={currentRole} />
           </div>
         );
 
       case 'backup':
         return (
-          <div className="bg-slate-950">
+          <div className="bg-slate-800">
+
             <div className="max-w-[1920px] mx-auto px-4 py-8">
               <BackupRestore currentRole={currentRole} />
             </div>
@@ -379,7 +385,7 @@ const AppLayoutContent: React.FC = () => {
       case 'admin':
         if (canAccessAdmin) {
           return (
-            <div className="bg-slate-900/30">
+            <div className="bg-slate-800/30">
               <AdminSettings currentRole={currentRole} />
             </div>
           );
@@ -388,7 +394,7 @@ const AppLayoutContent: React.FC = () => {
 
       case 'profile':
         return (
-          <div className="py-8 px-4 md:px-8 bg-slate-900/50">
+          <div className="py-8 px-4 md:px-8 bg-slate-800/50">
             <div className="max-w-7xl mx-auto">
               <TeamProfile currentRole={currentRole} />
             </div>
@@ -411,10 +417,9 @@ const AppLayoutContent: React.FC = () => {
 
   };
 
-  // If not authenticated and not in demo mode, show login screen
   if (!isAuthenticated && !isDemoMode) {
     return (
-      <div className="min-h-screen bg-slate-950">
+      <div className="min-h-screen bg-slate-800">
         <LoginScreen onOpenAuth={handleOpenAuth} />
 
         {/* Auth Modal */}
@@ -432,9 +437,11 @@ const AppLayoutContent: React.FC = () => {
 
 
 
+
   // Authenticated layout with sidebar
   return (
-    <div className={`min-h-screen bg-slate-950 ${isDemoMode ? 'pb-16' : ''}`}>
+    <div className={`min-h-screen bg-slate-800 ${isDemoMode ? 'pb-16' : ''}`}>
+
       {/* Sidebar */}
       <Sidebar
         activeSection={activeSection}
@@ -462,10 +469,12 @@ const AppLayoutContent: React.FC = () => {
 
         {/* Team Notes (always accessible but not in sidebar) */}
         {activeSection === 'notes' && (
-          <div className="bg-slate-950">
+          <div className="bg-slate-800">
             <TeamNotes currentRole={currentRole} />
           </div>
         )}
+
+
 
         {/* Render active section */}
         {renderSection()}

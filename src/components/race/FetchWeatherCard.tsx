@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Cloud,
   CloudRain,
@@ -16,6 +16,7 @@ import {
   RefreshCw,
   X,
   AlertTriangle,
+  Globe,
 } from 'lucide-react';
 import { fetchWeatherData, calculateDewPoint, isWeatherConfigured } from '@/lib/weather';
 
@@ -57,19 +58,22 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
-  const [gpsStatus, setGpsStatus] = useState<'idle' | 'locating' | 'fetching' | 'done' | 'error'>('idle');
+  const [fetchStatus, setFetchStatus] = useState<'idle' | 'fetching' | 'done' | 'error'>('idle');
+  const [locationSource, setLocationSource] = useState<'ip' | 'gps'>('ip');
+  const autoFetchedRef = useRef(false);
 
   // Load cached data on mount
   useEffect(() => {
     try {
       const cached = localStorage.getItem(FETCH_WEATHER_CACHE_KEY);
       if (cached) {
-        const { data, timestamp } = JSON.parse(cached);
+        const { data, timestamp, source } = JSON.parse(cached);
         const age = Date.now() - timestamp;
         if (age < FETCH_WEATHER_CACHE_DURATION && data) {
           setWeatherData(data);
           setLastFetchTime(new Date(timestamp));
-          setGpsStatus('done');
+          setFetchStatus('done');
+          if (source) setLocationSource(source);
         }
       }
     } catch {
@@ -77,10 +81,87 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
     }
   }, []);
 
-  const fetchWeather = useCallback(async () => {
+  // Auto-fetch weather on mount using IP location (no permission needed)
+  useEffect(() => {
+    if (autoFetchedRef.current) return;
+    if (!isWeatherConfigured()) return;
+
+    // If we already have fresh cached data, skip auto-fetch
+    try {
+      const cached = localStorage.getItem(FETCH_WEATHER_CACHE_KEY);
+      if (cached) {
+        const { timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < FETCH_WEATHER_CACHE_DURATION) {
+          autoFetchedRef.current = true;
+          return;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    autoFetchedRef.current = true;
+    fetchWeatherByIP();
+  }, []);
+
+  const processWeatherResult = useCallback((result: any, source: 'ip' | 'gps') => {
+    const data: LocalWeatherData = {
+      temperature: result.weather.temperature,
+      humidity: result.weather.humidity,
+      pressure: result.weather.pressure,
+      windSpeed: result.weather.windSpeed,
+      windDirection: result.weather.windDirection,
+      conditions: result.weather.conditions,
+      location: result.weather.location,
+      region: result.weather.region,
+      dewPoint: result.weather.dewPoint ?? calculateDewPoint(result.weather.temperature, result.weather.humidity),
+      saeCorrection: result.saeCorrection,
+      densityAltitude: result.densityAltitude,
+      correctedHP: result.correctedHP,
+    };
+
+    setWeatherData(data);
+    setLastFetchTime(new Date());
+    setFetchStatus('done');
+    setLocationSource(source);
+    setError(null);
+
+    // Cache
+    try {
+      localStorage.setItem(FETCH_WEATHER_CACHE_KEY, JSON.stringify({
+        data,
+        timestamp: Date.now(),
+        source,
+      }));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Fetch weather using IP-based location (auto:ip)
+  const fetchWeatherByIP = useCallback(async () => {
     setIsLoading(true);
     setError(null);
-    setGpsStatus('locating');
+    setFetchStatus('fetching');
+
+    try {
+      console.log('[FetchWeatherCard] Fetching weather via IP location (auto:ip)');
+      const result = await fetchWeatherData('auto:ip');
+      processWeatherResult(result, 'ip');
+    } catch (err: any) {
+      console.warn('[FetchWeatherCard] IP weather error:', err?.message || err);
+      setFetchStatus('error');
+      setError(err?.message || 'Failed to fetch weather. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [processWeatherResult]);
+
+  // Fetch weather using GPS for more precise location
+  const fetchWeatherByGPS = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    setFetchStatus('fetching');
 
     try {
       // Step 1: Get GPS coordinates from browser
@@ -101,65 +182,42 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
       const locationStr = `${lat},${lon}`;
 
       console.log('[FetchWeatherCard] GPS acquired:', lat, lon);
-      setGpsStatus('fetching');
 
-      // Step 2: Fetch weather using the existing weather lib
+      // Step 2: Fetch weather using the GPS coordinates
       const result = await fetchWeatherData(locationStr);
-
-      const data: LocalWeatherData = {
-        temperature: result.weather.temperature,
-        humidity: result.weather.humidity,
-        pressure: result.weather.pressure,
-        windSpeed: result.weather.windSpeed,
-        windDirection: result.weather.windDirection,
-        conditions: result.weather.conditions,
-        location: result.weather.location,
-        region: result.weather.region,
-        dewPoint: result.weather.dewPoint ?? calculateDewPoint(result.weather.temperature, result.weather.humidity),
-        saeCorrection: result.saeCorrection,
-        densityAltitude: result.densityAltitude,
-        correctedHP: result.correctedHP,
-      };
-
-      setWeatherData(data);
-      setLastFetchTime(new Date());
-      setGpsStatus('done');
-      setError(null);
-
-      // Cache
-      try {
-        localStorage.setItem(FETCH_WEATHER_CACHE_KEY, JSON.stringify({
-          data,
-          timestamp: Date.now(),
-        }));
-      } catch {
-        // ignore
-      }
+      processWeatherResult(result, 'gps');
     } catch (err: any) {
-      console.warn('[FetchWeatherCard] Error:', err?.message || err);
-      setGpsStatus('error');
+      console.warn('[FetchWeatherCard] GPS weather error:', err?.message || err);
+      setFetchStatus('error');
 
       if (err?.code === 1) {
-        setError('Location access denied. Please allow location access in your browser settings.');
+        setError('Location access denied. Weather is using your approximate IP location instead.');
+        // Fall back to IP-based weather silently
+        fetchWeatherByIP();
+        return;
       } else if (err?.code === 2) {
-        setError('Unable to determine your location. Please try again.');
+        setError('Unable to determine precise location. Using IP location instead.');
+        fetchWeatherByIP();
+        return;
       } else if (err?.code === 3) {
-        setError('Location request timed out. Please try again.');
-      } else if (err?.message?.includes('Geolocation is not supported')) {
-        setError('Your browser does not support geolocation.');
+        setError('GPS request timed out. Using IP location instead.');
+        fetchWeatherByIP();
+        return;
       } else {
         setError(err?.message || 'Failed to fetch weather. Please try again.');
       }
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [processWeatherResult, fetchWeatherByIP]);
 
   const clearWeather = useCallback(() => {
     setWeatherData(null);
     setLastFetchTime(null);
-    setGpsStatus('idle');
+    setFetchStatus('idle');
     setError(null);
+    setLocationSource('ip');
+    autoFetchedRef.current = false;
     try {
       localStorage.removeItem(FETCH_WEATHER_CACHE_KEY);
     } catch {
@@ -175,9 +233,8 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
     if (sae <= 1.040) return 'text-orange-400';
     return 'text-red-400';
   };
+
   // ─── API key not configured ─────────────────────────────────────────────────
-  // Show a clear, actionable message instead of letting the user click "Fetch
-  // Weather" only to get a confusing error.
   if (!isWeatherConfigured()) {
     return (
       <div className="bg-gradient-to-r from-amber-600/10 via-amber-600/10 to-amber-600/10 rounded-xl border border-amber-500/30 p-5">
@@ -209,49 +266,22 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
     );
   }
 
-
-  // If no data fetched yet, show the button-only state
-  if (!weatherData && !isLoading && gpsStatus !== 'error') {
-    return (
-      <div className="bg-gradient-to-r from-blue-600/20 via-cyan-600/20 to-blue-600/20 rounded-xl border border-blue-500/30 p-5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
-              <Cloud className="w-5 h-5 text-blue-400" />
-            </div>
-            <div>
-              <h3 className="text-white font-semibold text-sm">Local Weather</h3>
-              <p className="text-slate-400 text-xs">Get current conditions at your location</p>
-            </div>
-          </div>
-          <button
-            onClick={fetchWeather}
-            className="flex items-center gap-2 px-5 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-semibold text-sm transition-all shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 active:scale-95"
-          >
-            <Crosshair className="w-4 h-4" />
-            Fetch Weather
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Loading state
-  if (isLoading) {
+  // Loading state (first load — auto-fetching via IP)
+  if (isLoading && !weatherData) {
     return (
       <div className="bg-gradient-to-r from-blue-600/20 via-cyan-600/20 to-blue-600/20 rounded-xl border border-blue-500/30 p-5">
         <div className="flex items-center justify-center gap-3 py-2">
           <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
           <span className="text-slate-300 text-sm font-medium">
-            {gpsStatus === 'locating' ? 'Getting your location...' : 'Fetching weather data...'}
+            Fetching weather for your location...
           </span>
         </div>
       </div>
     );
   }
 
-  // Error state
-  if (gpsStatus === 'error' && !weatherData) {
+  // Error state (no cached data to show)
+  if (fetchStatus === 'error' && !weatherData) {
     return (
       <div className="bg-gradient-to-r from-red-600/10 via-red-600/10 to-red-600/10 rounded-xl border border-red-500/30 p-5">
         <div className="flex items-center justify-between">
@@ -265,7 +295,7 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
             </div>
           </div>
           <button
-            onClick={fetchWeather}
+            onClick={fetchWeatherByIP}
             className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm font-medium transition-colors flex-shrink-0 ml-3"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -285,21 +315,48 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
       <div className="bg-gradient-to-r from-blue-500/20 to-cyan-500/20 px-4 py-3 border-b border-slate-700/50">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Crosshair className="w-4 h-4 text-blue-400" />
+            {locationSource === 'gps' ? (
+              <Crosshair className="w-4 h-4 text-green-400" />
+            ) : (
+              <Globe className="w-4 h-4 text-blue-400" />
+            )}
             <h3 className="text-white font-semibold text-sm">Local Weather</h3>
             <span className="text-xs text-slate-500">
               <MapPin className="w-3 h-3 inline mr-0.5" />
               {weatherData.location}{weatherData.region ? `, ${weatherData.region}` : ''}
             </span>
+            {/* Location source badge */}
+            {locationSource === 'gps' ? (
+              <span className="text-[10px] text-green-400/80 bg-green-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Using precise GPS location">
+                <Crosshair className="w-2.5 h-2.5" />
+                GPS
+              </span>
+            ) : (
+              <span className="text-[10px] text-blue-400/80 bg-blue-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Using approximate IP-based location">
+                <Globe className="w-2.5 h-2.5" />
+                IP
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {lastFetchTime && (
               <span className="text-xs text-slate-500 hidden sm:inline">
                 {lastFetchTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </span>
             )}
+            {/* Use GPS for precision upgrade */}
+            {locationSource === 'ip' && (
+              <button
+                onClick={fetchWeatherByGPS}
+                disabled={isLoading}
+                className="p-1.5 rounded-md hover:bg-slate-700/50 text-slate-400 hover:text-green-400 transition-colors disabled:opacity-50"
+                title="Use GPS for precise location"
+              >
+                <Crosshair className={`w-3.5 h-3.5 ${isLoading ? 'animate-pulse' : ''}`} />
+              </button>
+            )}
             <button
-              onClick={fetchWeather}
+              onClick={locationSource === 'gps' ? fetchWeatherByGPS : fetchWeatherByIP}
               disabled={isLoading}
               className="p-1.5 rounded-md hover:bg-slate-700/50 text-slate-400 hover:text-blue-400 transition-colors disabled:opacity-50"
               title="Refresh weather"

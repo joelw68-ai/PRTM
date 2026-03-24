@@ -521,11 +521,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         {/* ═══════════════════════════════════════════════════════════
-            FETCH WEATHER — Quick GPS-based local weather
+            FETCH WEATHER — Auto-fetches using IP-based location
         ═══════════════════════════════════════════════════════════ */}
         <div className="mb-6">
           <FetchWeatherCard />
         </div>
+
 
         {/* ═══════════════════════════════════════════════════════════
             SECTION 2: PASS LOG SUMMARY

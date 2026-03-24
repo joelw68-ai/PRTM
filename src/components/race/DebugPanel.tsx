@@ -248,7 +248,8 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ isOpen, onClose }) => {
   const pendingCount = entries.filter(e => e.status === 'pending').length;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-[9999] bg-slate-950 border-t-2 border-orange-500/50 shadow-2xl shadow-black/50 max-h-[60vh] flex flex-col">
+    <div className="fixed bottom-0 left-0 right-0 z-[9999] bg-slate-900 border-t-2 border-orange-500/50 shadow-2xl shadow-black/50 max-h-[60vh] flex flex-col">
+
       {/* ================================================================ */}
       {/* Header                                                          */}
       {/* ================================================================ */}
