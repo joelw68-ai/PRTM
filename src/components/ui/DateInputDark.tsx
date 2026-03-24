@@ -42,7 +42,8 @@ const DateInputDark: React.FC<DateInputDarkProps> = ({ className = '', style, ..
   return (
     <div
       className="relative w-full"
-      style={{ backgroundColor: '#1a1a2e', borderRadius: '0.5rem' }}
+      style={{ backgroundColor: '#2d3f57', borderRadius: '0.5rem' }}
+
     >
       <input
         ref={inputRef}
