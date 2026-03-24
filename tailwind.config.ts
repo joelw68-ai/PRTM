@@ -21,17 +21,6 @@ export default {
     },
     extend: {
       colors: {
-        /* ── Global 20 % lighter slate overrides ───────────────
-           These replace Tailwind's default slate-600 through
-           slate-950 so every bg-slate-800, bg-slate-900, etc.
-           across the entire app becomes lighter automatically. */
-        slate: {
-          950: '#0c1222',
-          900: '#1a2744',
-          800: '#2d3f57',
-          700: '#44566e',
-          600: '#586a80',
-        },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
@@ -76,7 +65,6 @@ export default {
           ring: 'hsl(var(--sidebar-ring))'
         }
       },
-
       fontFamily: {
         mono: ['JetBrains Mono', 'monospace'],
         sans: ['Inter', 'sans-serif'],

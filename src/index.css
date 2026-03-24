@@ -59,27 +59,23 @@
 
 
   .dark {
-    /* ── 20 % lighter dark-mode palette ──────────────────────
-       Lightness values bumped ~5 pts from the previous iteration
-       so every semantic colour (bg-background, bg-card, etc.)
-       is noticeably lighter while still feeling "dark mode". */
-    --background: 222 38% 17%;
+    --background: 222 47% 3%;
     --foreground: 210 40% 98%;
 
-    --card: 222 38% 21%;
+    --card: 222 47% 5%;
     --card-foreground: 210 40% 98%;
 
-    --popover: 222 38% 21%;
+    --popover: 222 47% 5%;
     --popover-foreground: 210 40% 98%;
 
     --primary: 0 84% 60%;
     --primary-foreground: 210 40% 98%;
 
-    --secondary: 217.2 32.6% 25%;
+    --secondary: 217.2 32.6% 12%;
     --secondary-foreground: 210 40% 98%;
 
-    --muted: 217.2 32.6% 25%;
-    --muted-foreground: 215 20.2% 65%;
+    --muted: 217.2 32.6% 12%;
+    --muted-foreground: 215 20.2% 55%;
 
     --accent: 0 84% 60%;
     --accent-foreground: 210 40% 98%;
@@ -87,22 +83,19 @@
     --destructive: 0 62.8% 50%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 217.2 32.6% 30%;
-    --input: 217.2 32.6% 30%;
+    --border: 217.2 32.6% 15%;
+    --input: 217.2 32.6% 15%;
     --ring: 0 84% 60%;
 
-    --sidebar-background: 222 38% 20%;
+    --sidebar-background: 222 47% 5%;
     --sidebar-foreground: 210 40% 98%;
     --sidebar-primary: 0 84% 60%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 215 25% 30%;
+    --sidebar-accent: 215 25% 15%;
     --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 215 25% 30%;
+    --sidebar-border: 215 25% 15%;
     --sidebar-ring: 0 84% 60%;
   }
-
-
-
 }
 
 @layer base {
@@ -157,25 +150,24 @@
   @apply my-4 ml-6;
 }
 
-/* Custom scrollbar for dark theme — 20 % lighter to match new palette */
+/* Custom scrollbar for dark theme */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgb(50 64 88);
+  background: rgb(15 23 42);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgb(66 82 104);
+  background: rgb(51 65 85);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgb(88 104 126);
+  background: rgb(71 85 105);
 }
-
 
 /* Hide scrollbar utility */
 .scrollbar-hide {

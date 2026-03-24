@@ -20,8 +20,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenAuth }) => {
       {/* ── Background layers ── */}
       <div className="absolute inset-0">
         {/* Base dark fill – ensures solid backdrop if image is slow to load */}
-        <div className="absolute inset-0 bg-[#0e1524]" />
-
+        <div className="absolute inset-0 bg-[#070b14]" />
 
         {/* User's car photo – high opacity so the car is dramatically visible */}
         <div
