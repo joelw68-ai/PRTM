@@ -516,12 +516,21 @@ const Sidebar: React.FC<SidebarProps> = ({
                     Team Profile
                   </button>
                   <button
+                    onClick={() => { handleNavigate('account-settings'); setUserMenuOpen(false); }}
+                    className="w-full flex items-center gap-3 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  >
+                    <Settings className="w-4 h-4" />
+                    Account Settings
+                  </button>
+                  <div className="my-1 border-t border-slate-700" />
+                  <button
                     onClick={handleSignOut}
                     className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-slate-700 transition-colors"
                   >
                     <LogOut className="w-4 h-4" />
                     Sign Out
                   </button>
+
                 </div>
               </>
             )}

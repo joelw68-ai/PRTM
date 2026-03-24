@@ -51,6 +51,8 @@ import { InviteAcceptBanner } from './race/TeamInviteFlow';
 import BorrowedLoanedParts from './race/BorrowedLoanedParts';
 import RaceDayTimeline from './race/RaceDayTimeline';
 import TeamDashboard from './race/TeamDashboard';
+import ProfileSettings from './race/ProfileSettings';
+
 
 
 
@@ -403,6 +405,12 @@ const AppLayoutContent: React.FC = () => {
           <TeamDashboard currentRole={currentRole} onNavigate={handleNavigate} />
         );
 
+      case 'account-settings':
+        return (
+          <div className="bg-slate-950">
+            <ProfileSettings onNavigate={handleNavigate} />
+          </div>
+        );
 
 
       default:
