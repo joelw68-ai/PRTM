@@ -78,10 +78,11 @@ const AppLayoutContent: React.FC = () => {
   // Reorder list trigger
   const [reorderListTrigger, setReorderListTrigger] = useState(0);
 
-  // Set dark theme on mount
+  // Set light theme on mount
   useEffect(() => {
-    setTheme('dark');
+    setTheme('light');
   }, [setTheme]);
+
 
   // Show login alert popup after authentication
   useEffect(() => {

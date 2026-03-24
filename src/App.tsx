@@ -13,7 +13,8 @@ import InviteAcceptPage from "./pages/InviteAcceptPage";
 const queryClient = new QueryClient();
 
 const App = () => (
-  <ThemeProvider defaultTheme="system">
+  <ThemeProvider defaultTheme="light">
+
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />

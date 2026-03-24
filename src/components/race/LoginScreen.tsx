@@ -16,7 +16,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenAuth }) => {
   const { enableDemoMode } = useAuth();
 
   return (
-    <div className="fixed inset-0 z-30 overflow-hidden">
+    <div className="fixed inset-0 z-30 overflow-hidden dark-section">
+
       {/* ── Background layers ── */}
       <div className="absolute inset-0">
         {/* Base dark fill – ensures solid backdrop if image is slow to load */}

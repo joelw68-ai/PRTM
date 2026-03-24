@@ -442,11 +442,16 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
   };
 
   // Custom tooltip for charts
+  // Light-mode chart color constants
+  const GRID_COLOR = '#E2E8F0';    // light grey grid lines
+  const AXIS_COLOR = '#64748B';    // medium-dark axis labels
+
+  // Custom tooltip for charts
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
-        <div className="bg-slate-900 border border-slate-700 rounded-lg p-3 shadow-lg">
-          <p className="text-white font-medium mb-2">{label}</p>
+        <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-lg">
+          <p className="text-gray-900 font-medium mb-2">{label}</p>
           {payload.map((entry: any, index: number) => (
             <p key={index} className="text-sm" style={{ color: entry.color }}>
               {entry.name}: {typeof entry.value === 'number' ? entry.value.toFixed(3) : entry.value}
@@ -457,6 +462,7 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
     }
     return null;
   };
+
 
   return (
     <section className="py-8 px-4">
