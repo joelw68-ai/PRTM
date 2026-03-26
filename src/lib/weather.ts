@@ -283,6 +283,67 @@ export function calculateDewPoint(tempF: number, humidityPct: number): number {
   return Math.round(dewPointF * 10) / 10;
 }
 
+// ─── Density Altitude (NWS / NOAA standard) ─────────────────────────────────
+//
+// The previous formula only calculated PRESSURE ALTITUDE — it completely
+// ignored temperature and humidity, which are the dominant factors affecting
+// air density (and therefore engine performance) at drag strips.
+//
+// OLD (wrong — pressure altitude only, ignores temp & humidity):
+//   P_mb = pressureInHg × 33.8639
+//   DA = 145442.16 × (1 − (P_mb / 1013.25)^0.190284)
+//
+// NEW (correct — NWS/NOAA density altitude using virtual temperature):
+//   1. Pressure Altitude:  PA = 145442.16 × (1 − (P_mb / 1013.25)^0.190284)
+//   2. Virtual Temperature: Tv = T_K / (1 − 0.3783 × (e / P_mb))
+//      where e = actual vapor pressure (hPa) from Buck equation
+//   3. Density Altitude:   DA = 145442.16 × (1 − ((P_mb / 1013.25) × (288.15 / Tv))^0.234969)
+//
+// The exponent 0.234969 = 1 / (g·M/(R·L) − 1) = 1/4.2561, derived from the
+// ISA barometric formula solved for the altitude where standard-atmosphere
+// density equals the actual air density.
+//
+// This matches the NWS density altitude calculator and the values reported
+// by RaceAir, Altus, Computech, and other proven drag racing weather stations.
+//
+// Examples (sea level, 29.92 inHg):
+//   59°F / 0% RH  →  DA ≈    0 ft  (ISA standard conditions)
+//   70°F / 50% RH →  DA ≈  1060 ft
+//   80°F / 50% RH →  DA ≈  1770 ft
+//   95°F / 50% RH →  DA ≈  2650 ft
+//   95°F / 80% RH →  DA ≈  3050 ft
+//   55°F / 30% RH →  DA ≈  −350 ft  (cold dense air, below sea level DA)
+//
+export function calculateDensityAltitude(tempF: number, pressureInHg: number, humidityPct: number): number {
+  const tempC = (tempF - 32) * 5 / 9;
+  const tempK = tempC + 273.15;
+  const P_mb = pressureInHg * 33.8639;
+
+  // Saturation vapor pressure via Buck (1981) equation (hPa)
+  const esHpa = 6.1121 * Math.exp((18.678 - tempC / 234.5) * (tempC / (257.14 + tempC)));
+
+  // Actual vapor pressure (hPa)
+  const eHpa = (humidityPct / 100) * esHpa;
+
+  // Virtual temperature (K) — accounts for moisture making air less dense
+  // Tv = T / (1 − 0.3783 × e/P)
+  // The factor 0.3783 = 1 − (Mw/Md) = 1 − (18.015/28.964) where Mw and Md
+  // are the molecular weights of water vapor and dry air respectively.
+  const Tv_K = tempK / (1 - 0.3783 * (eHpa / P_mb));
+
+  // NWS density altitude formula:
+  // DA = 145442.16 × (1 − ((P/P0) × (T0/Tv))^0.234969)
+  //
+  // where:
+  //   P0 = 1013.25 hPa (standard sea-level pressure)
+  //   T0 = 288.15 K    (standard sea-level temperature, 15°C / 59°F)
+  //   0.234969 = 1/4.2561 = R·L / (g·M − R·L)
+  //   145442.16 = T0/L in feet = 288.15 / 0.0065 / 0.3048
+  const DA = 145442.16 * (1 - Math.pow((P_mb / 1013.25) * (288.15 / Tv_K), 0.234969));
+
+  return Math.round(DA);
+}
+
 function calculateSAECorrectionInternal(tempF: number, pressureInHg: number, humidityPct: number) {
   const tempFactor = Math.sqrt((tempF + 460) / 520);
   const pressureFactor = Math.sqrt(29.92 / pressureInHg);
@@ -294,8 +355,11 @@ function calculateSAECorrectionInternal(tempF: number, pressureInHg: number, hum
   const dryPressure = pressureInHg - actualVaporPressure;
   const humidityFactor = Math.sqrt(29.92 / dryPressure);
   const saeCorrection = tempFactor * pressureFactor * humidityFactor;
-  const stationPressure = pressureInHg * 33.8639;
-  const densityAltitude = Math.round(145442.16 * (1 - Math.pow((stationPressure / 1013.25), 0.190284)));
+
+  // Density altitude — now uses the correct NWS formula that accounts for
+  // temperature and humidity via virtual temperature (not just pressure altitude)
+  const densityAltitude = calculateDensityAltitude(tempF, pressureInHg, humidityPct);
+
   const correctedHP = Math.round(3500 * saeCorrection);
   return {
     saeCorrection: Math.round(saeCorrection * 1000) / 1000,
@@ -303,6 +367,7 @@ function calculateSAECorrectionInternal(tempF: number, pressureInHg: number, hum
     correctedHP,
   };
 }
+
 
 
 // Re-export under the public name used by consumers

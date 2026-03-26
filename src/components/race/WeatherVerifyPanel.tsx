@@ -19,7 +19,10 @@ import {
   calculateDewPoint,
   calculateWetBulb,
   calculateSTDCorrection,
+  calculateDensityAltitude,
 } from '@/lib/weather';
+
+
 
 interface WeatherVerifyPanelProps {
   onClose: () => void;
@@ -64,9 +67,13 @@ function computeAll(tempF: number, humidityPct: number, pressureInHg: number): C
   const pressureFactor = Math.sqrt(29.92 / pressureInHg);
   const humidityFactor = dryPressure_inHg > 0 ? Math.sqrt(29.92 / dryPressure_inHg) : 1;
   const saeCorrection = tempFactor * pressureFactor * humidityFactor;
-  const stationPressure = pressureInHg * 33.8639;
-  const densityAltitude = Math.round(145442.16 * (1 - Math.pow((stationPressure / 1013.25), 0.190284)));
+
+  // Density altitude — uses the correct NWS/NOAA formula that accounts for
+  // temperature and humidity via virtual temperature (not just pressure altitude)
+  const densityAltitude = calculateDensityAltitude(tempF, pressureInHg, humidityPct);
+
   const correctedHP = Math.round(3500 * saeCorrection);
+
 
   return {
     tempF, humidityPct, pressureInHg, tempC,

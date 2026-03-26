@@ -15,7 +15,8 @@ import { isConnectivityError } from '@/lib/offlineQueue';
 import { useAuth } from '@/contexts/AuthContext';
 
 import { CrewRole } from '@/lib/permissions';
-import { fetchWeatherData, calculateDewPoint, calculateVaporPressure, calculateWaterGrains, calculateWetBulb, calculateSTDCorrection } from '@/lib/weather';
+import { fetchWeatherData, calculateDewPoint, calculateVaporPressure, calculateWaterGrains, calculateWetBulb, calculateSTDCorrection, calculateDensityAltitude } from '@/lib/weather';
+
 
 import { SavedTrack, ComponentPart } from '@/lib/database';
 import * as db from '@/lib/database';
@@ -647,9 +648,10 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     
     const saeCorrection = tempFactor * pressureFactor * humidityFactor;
     
-    // Density altitude calculation
-    const stationPressure = pressure * 33.8639; // Convert to millibars
-    const densityAltitude = Math.round(145442.16 * (1 - Math.pow((stationPressure / 1013.25), 0.190284)));
+    // Density altitude — uses the correct NWS/NOAA formula that accounts for
+    // temperature and humidity via virtual temperature (not just pressure altitude)
+    const densityAltitude = calculateDensityAltitude(temp, pressure, humidity);
+
     
     // Corrected HP (assuming base 3500 HP)
     const correctedHP = Math.round(3500 * saeCorrection);
