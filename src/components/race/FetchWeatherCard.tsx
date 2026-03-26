@@ -16,7 +16,11 @@ import {
   RefreshCw,
   X,
   AlertTriangle,
+  AlertCircle,
   Globe,
+  Wifi,
+  Search,
+  RotateCcw,
 } from 'lucide-react';
 import { fetchWeatherData, calculateDewPoint, isWeatherConfigured } from '@/lib/weather';
 
@@ -39,7 +43,72 @@ interface LocalWeatherData {
 }
 
 const FETCH_WEATHER_CACHE_KEY = 'promod_fetch_weather_cache';
+const FETCH_WEATHER_CACHE_VERSION_KEY = 'promod_fetch_weather_cache_version';
+const FETCH_WEATHER_CACHE_VERSION = 'v4_manual_location'; // Bump this to invalidate old caches
 const FETCH_WEATHER_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+const GPS_TIMEOUT = 20000; // 20 seconds — high-accuracy GPS needs more time
+const WIFI_TIMEOUT = 10000; // 10 seconds — Wi-Fi/cell positioning is faster
+const MANUAL_LOCATION_KEY = 'promod_fetch_weather_manual_location';
+
+// Location method describes how the browser determined the user's position
+type LocationSource = 'gps' | 'wifi' | 'ip' | 'manual';
+
+// ── Smart geolocation with GPS → Wi-Fi fallback ──────────────────────────────
+// Tries high-accuracy (GPS hardware) first.  If that times out (common on
+// desktops without GPS), automatically retries with enableHighAccuracy: false
+// which uses Wi-Fi triangulation / cell towers — still much better than IP.
+function getPositionWithFallback(): Promise<{ position: GeolocationPosition; method: 'gps' | 'wifi' }> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation is not supported by your browser'));
+      return;
+    }
+
+    // ── Attempt 1: High-accuracy GPS ──
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const acc = position.coords.accuracy;
+        const method = acc <= 100 ? 'gps' as const : 'wifi' as const;
+        console.log(`[FetchWeatherGeo] High-accuracy position acquired (${acc.toFixed(0)}m) → method: ${method}`);
+        resolve({ position, method });
+      },
+      (gpsError) => {
+        if (gpsError.code === 3) {
+          // TIMEOUT — GPS hardware not available or too slow (common on desktops)
+          console.log('[FetchWeatherGeo] High-accuracy GPS timed out — falling back to Wi-Fi/cell positioning...');
+
+          // ── Attempt 2: Wi-Fi / cell tower positioning ──
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              const acc = position.coords.accuracy;
+              console.log(`[FetchWeatherGeo] Wi-Fi/cell position acquired (${acc.toFixed(0)}m)`);
+              resolve({ position, method: 'wifi' });
+            },
+            (wifiError) => {
+              console.warn('[FetchWeatherGeo] Wi-Fi/cell positioning also failed:', wifiError.message, '(code:', wifiError.code, ')');
+              reject(wifiError);
+            },
+            {
+              enableHighAccuracy: false,
+              timeout: WIFI_TIMEOUT,
+              maximumAge: 0,
+            }
+          );
+        } else {
+          // PERMISSION_DENIED (1) or POSITION_UNAVAILABLE (2) — no point retrying
+          console.warn('[FetchWeatherGeo] Geolocation error (no fallback):', gpsError.message, '(code:', gpsError.code, ')');
+          reject(gpsError);
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: GPS_TIMEOUT,
+        maximumAge: 0,
+      }
+    );
+  });
+}
+
 
 // Get weather icon component based on conditions
 const getWeatherIcon = (conditions: string, size: string = 'w-6 h-6') => {
@@ -53,18 +122,200 @@ const getWeatherIcon = (conditions: string, size: string = 'w-6 h-6') => {
   return <CloudSun className={`${size} text-slate-300`} />;
 };
 
+// ── Location source badge ─────────────────────────────────────────────────────
+const LocationSourceBadge: React.FC<{ source: LocationSource }> = ({ source }) => {
+  if (source === 'gps') {
+    return (
+      <span
+        className="text-[10px] text-green-400/80 bg-green-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5"
+        title="Precise GPS location (satellite positioning)"
+      >
+        <Crosshair className="w-2.5 h-2.5" />
+        GPS
+      </span>
+    );
+  }
+  if (source === 'wifi') {
+    return (
+      <span
+        className="text-[10px] text-sky-400/80 bg-sky-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5"
+        title="Wi-Fi / cell tower location (GPS hardware unavailable)"
+      >
+        <Wifi className="w-2.5 h-2.5" />
+        Wi-Fi
+      </span>
+    );
+  }
+  if (source === 'manual') {
+    return (
+      <span
+        className="text-[10px] text-amber-400/80 bg-amber-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5"
+        title="Manually entered location"
+      >
+        <MapPin className="w-2.5 h-2.5" />
+        Manual
+      </span>
+    );
+  }
+  // 'ip'
+  return (
+    <span
+      className="text-[10px] text-blue-400/80 bg-blue-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5"
+      title="Approximate IP-based location"
+    >
+      <Globe className="w-2.5 h-2.5" />
+      IP
+    </span>
+  );
+};
+
+
+// ── Manual location input form ────────────────────────────────────────────────
+const ManualLocationForm: React.FC<{
+  onSubmit: (location: string) => void;
+  isLoading: boolean;
+  error: string | null;
+  compact?: boolean;
+}> = ({ onSubmit, isLoading, error, compact }) => {
+  const [input, setInput] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => inputRef.current?.focus(), 100);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = input.trim();
+
+    if (!trimmed) {
+      setValidationError('Please enter a city/state or zip code.');
+      return;
+    }
+    if (trimmed.length < 2) {
+      setValidationError('Location must be at least 2 characters.');
+      return;
+    }
+
+    setValidationError(null);
+    onSubmit(trimmed);
+  };
+
+  if (compact) {
+    return (
+      <form onSubmit={handleSubmit} className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={input}
+            onChange={(e) => { setInput(e.target.value); setValidationError(null); }}
+            placeholder="City, ST or zip..."
+            className="w-full pl-8 pr-3 py-1.5 bg-slate-900/60 border border-slate-600/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/30"
+            disabled={isLoading}
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={isLoading || !input.trim()}
+          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors disabled:cursor-not-allowed flex items-center gap-1.5"
+        >
+          {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MapPin className="w-3.5 h-3.5" />}
+          Go
+        </button>
+        {(validationError || error) && (
+          <span className="text-xs text-red-400 whitespace-nowrap">{validationError || error}</span>
+        )}
+      </form>
+    );
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="flex items-center gap-2 mb-2">
+        <MapPin className="w-4 h-4 text-amber-400" />
+        <span className="text-sm font-medium text-slate-300">Enter location manually</span>
+      </div>
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={input}
+            onChange={(e) => { setInput(e.target.value); setValidationError(null); }}
+            placeholder="e.g. Hartsville, SC  or  29550"
+            className="w-full pl-10 pr-4 py-2.5 bg-slate-900/60 border border-slate-600/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/30"
+            disabled={isLoading}
+          />
+        </div>
+        {(validationError || error) && (
+          <div className="flex items-center gap-1.5 text-xs text-red-400">
+            <AlertCircle className="w-3 h-3 flex-shrink-0" />
+            {validationError || error}
+          </div>
+        )}
+        <button
+          type="submit"
+          disabled={isLoading || !input.trim()}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors disabled:cursor-not-allowed"
+        >
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <MapPin className="w-4 h-4" />
+          )}
+          Fetch Weather
+        </button>
+        <p className="text-[11px] text-slate-500 text-center">
+          Enter a city &amp; state, zip code, or airport code
+        </p>
+      </form>
+    </div>
+  );
+};
+
+
 const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
   const [weatherData, setWeatherData] = useState<LocalWeatherData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [fetchStatus, setFetchStatus] = useState<'idle' | 'fetching' | 'done' | 'error'>('idle');
-  const [locationSource, setLocationSource] = useState<'ip' | 'gps'>('ip');
+  const [locationSource, setLocationSource] = useState<LocationSource>('ip');
+  const [manualLocationError, setManualLocationError] = useState<string | null>(null);
+  const [showManualInput, setShowManualInput] = useState(false);
+  const [savedManualLocation, setSavedManualLocation] = useState<string | null>(null);
   const autoFetchedRef = useRef(false);
 
-  // Load cached data on mount
+  // ── Load saved manual location on mount ──
   useEffect(() => {
     try {
+      const saved = localStorage.getItem(MANUAL_LOCATION_KEY);
+      if (saved) {
+        setSavedManualLocation(saved);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // ── Invalidate stale cache on version mismatch & load cached data on mount ──
+  useEffect(() => {
+    try {
+      const storedVersion = localStorage.getItem(FETCH_WEATHER_CACHE_VERSION_KEY);
+
+      if (storedVersion !== FETCH_WEATHER_CACHE_VERSION) {
+        console.log('[FetchWeatherCard] Cache version mismatch — clearing stale weather cache',
+          { stored: storedVersion, current: FETCH_WEATHER_CACHE_VERSION });
+        localStorage.removeItem(FETCH_WEATHER_CACHE_KEY);
+        localStorage.setItem(FETCH_WEATHER_CACHE_VERSION_KEY, FETCH_WEATHER_CACHE_VERSION);
+        return;
+      }
+
       const cached = localStorage.getItem(FETCH_WEATHER_CACHE_KEY);
       if (cached) {
         const { data, timestamp, source } = JSON.parse(cached);
@@ -81,7 +332,8 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
     }
   }, []);
 
-  // Auto-fetch weather on mount using IP location (no permission needed)
+
+  // Auto-fetch weather on mount — use saved manual location, or IP
   useEffect(() => {
     if (autoFetchedRef.current) return;
     if (!isWeatherConfigured()) return;
@@ -101,10 +353,24 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
     }
 
     autoFetchedRef.current = true;
+
+    // Check for saved manual location first
+    try {
+      const savedManual = localStorage.getItem(MANUAL_LOCATION_KEY);
+      if (savedManual) {
+        console.log('[FetchWeatherCard] Using saved manual location:', savedManual);
+        setSavedManualLocation(savedManual);
+        fetchWeatherByManualLocation(savedManual);
+        return;
+      }
+    } catch {
+      // ignore
+    }
+
     fetchWeatherByIP();
   }, []);
 
-  const processWeatherResult = useCallback((result: any, source: 'ip' | 'gps') => {
+  const processWeatherResult = useCallback((result: any, source: LocationSource) => {
     const data: LocalWeatherData = {
       temperature: result.weather.temperature,
       humidity: result.weather.humidity,
@@ -125,6 +391,8 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
     setFetchStatus('done');
     setLocationSource(source);
     setError(null);
+    setManualLocationError(null);
+    setShowManualInput(false);
 
     // Cache
     try {
@@ -157,53 +425,67 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
     }
   }, [processWeatherResult]);
 
-  // Fetch weather using GPS for more precise location
+  // Fetch weather using a manual location string
+  const fetchWeatherByManualLocation = useCallback(async (locationStr: string) => {
+    setIsLoading(true);
+    setError(null);
+    setManualLocationError(null);
+    setFetchStatus('fetching');
+
+    try {
+      console.log('[FetchWeatherCard] Fetching weather for manual location:', locationStr);
+      const result = await fetchWeatherData(locationStr);
+      processWeatherResult(result, 'manual');
+    } catch (err: any) {
+      console.warn('[FetchWeatherCard] Manual location weather error:', err?.message || err);
+      setManualLocationError(err?.message || 'Could not find weather for that location.');
+      // Don't set fetchStatus to 'error' — keep showing the form
+      if (!weatherData) {
+        setFetchStatus('error');
+        setError(err?.message || 'Failed to fetch weather for that location.');
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, [processWeatherResult, weatherData]);
+
+  // Fetch weather using GPS with smart GPS → Wi-Fi → IP fallback chain
   const fetchWeatherByGPS = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     setFetchStatus('fetching');
 
     try {
-      // Step 1: Get GPS coordinates from browser
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        if (!navigator.geolocation) {
-          reject(new Error('Geolocation is not supported by your browser'));
-          return;
-        }
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: false,
-          timeout: 12000,
-          maximumAge: 5 * 60 * 1000, // 5 min cache
-        });
-      });
+      // Step 1: Get position using the smart fallback chain (GPS → Wi-Fi)
+      const { position, method } = await getPositionWithFallback();
 
-      const lat = Math.round(position.coords.latitude * 10000) / 10000;
-      const lon = Math.round(position.coords.longitude * 10000) / 10000;
+      const lat = Math.round(position.coords.latitude * 1000000) / 1000000;
+      const lon = Math.round(position.coords.longitude * 1000000) / 1000000;
       const locationStr = `${lat},${lon}`;
 
-      console.log('[FetchWeatherCard] GPS acquired:', lat, lon);
+      console.log('[FetchWeatherCard] Position acquired:', lat, lon,
+        'accuracy:', position.coords.accuracy.toFixed(0), 'm',
+        'method:', method);
 
-      // Step 2: Fetch weather using the GPS coordinates
+      // Step 2: Fetch weather using the coordinates
       const result = await fetchWeatherData(locationStr);
-      processWeatherResult(result, 'gps');
+      processWeatherResult(result, method);
     } catch (err: any) {
-      console.warn('[FetchWeatherCard] GPS weather error:', err?.message || err);
-      setFetchStatus('error');
+      console.warn('[FetchWeatherCard] GPS/Wi-Fi weather error:', err?.message || err);
 
       if (err?.code === 1) {
-        setError('Location access denied. Weather is using your approximate IP location instead.');
-        // Fall back to IP-based weather silently
+        // PERMISSION_DENIED — fall back to IP silently
+        setError('Location access denied. Using approximate IP location instead.');
         fetchWeatherByIP();
         return;
-      } else if (err?.code === 2) {
-        setError('Unable to determine precise location. Using IP location instead.');
-        fetchWeatherByIP();
-        return;
-      } else if (err?.code === 3) {
-        setError('GPS request timed out. Using IP location instead.');
+      } else if (err?.code === 2 || err?.code === 3) {
+        // POSITION_UNAVAILABLE or TIMEOUT (both GPS and Wi-Fi failed) — fall back to IP
+        console.log('[FetchWeatherCard] Both GPS and Wi-Fi failed — falling back to IP location');
+        setError(null); // Clear error since we're falling back gracefully
         fetchWeatherByIP();
         return;
       } else {
+        setFetchStatus('error');
         setError(err?.message || 'Failed to fetch weather. Please try again.');
       }
     } finally {
@@ -211,15 +493,61 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
     }
   }, [processWeatherResult, fetchWeatherByIP]);
 
+  // ── Handle manual location submission ──
+  const handleManualLocationSubmit = useCallback((location: string) => {
+    console.log('[FetchWeatherCard] Manual location submitted:', location);
+
+    // Save to localStorage for persistence
+    try {
+      localStorage.setItem(MANUAL_LOCATION_KEY, location);
+    } catch {
+      // ignore
+    }
+    setSavedManualLocation(location);
+
+    fetchWeatherByManualLocation(location);
+  }, [fetchWeatherByManualLocation]);
+
+  // ── Reset to auto-detect (clear manual location, go back to IP) ──
+  const handleResetToAutoDetect = useCallback(() => {
+    console.log('[FetchWeatherCard] Resetting to auto-detect location');
+
+    // Clear manual location from storage
+    try {
+      localStorage.removeItem(MANUAL_LOCATION_KEY);
+      localStorage.removeItem(FETCH_WEATHER_CACHE_KEY);
+    } catch {
+      // ignore
+    }
+
+    setSavedManualLocation(null);
+    setShowManualInput(false);
+    setManualLocationError(null);
+    setLocationSource('ip');
+    setWeatherData(null);
+    setLastFetchTime(null);
+    setError(null);
+    setFetchStatus('idle');
+    autoFetchedRef.current = false;
+
+    // Re-fetch via IP
+    fetchWeatherByIP();
+  }, [fetchWeatherByIP]);
+
+
   const clearWeather = useCallback(() => {
     setWeatherData(null);
     setLastFetchTime(null);
     setFetchStatus('idle');
     setError(null);
     setLocationSource('ip');
+    setShowManualInput(false);
+    setManualLocationError(null);
+    setSavedManualLocation(null);
     autoFetchedRef.current = false;
     try {
       localStorage.removeItem(FETCH_WEATHER_CACHE_KEY);
+      localStorage.removeItem(MANUAL_LOCATION_KEY);
     } catch {
       // ignore
     }
@@ -266,7 +594,7 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
     );
   }
 
-  // Loading state (first load — auto-fetching via IP)
+  // Loading state (first load — auto-fetching)
   if (isLoading && !weatherData) {
     return (
       <div className="bg-gradient-to-r from-blue-600/20 via-cyan-600/20 to-blue-600/20 rounded-xl border border-blue-500/30 p-5">
@@ -280,7 +608,7 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
     );
   }
 
-  // Error state (no cached data to show)
+  // Error state (no cached data to show) — includes manual location fallback
   if (fetchStatus === 'error' && !weatherData) {
     return (
       <div className="bg-gradient-to-r from-red-600/10 via-red-600/10 to-red-600/10 rounded-xl border border-red-500/30 p-5">
@@ -302,6 +630,12 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
             Retry
           </button>
         </div>
+        {/* Manual location fallback */}
+        <ManualLocationForm
+          onSubmit={handleManualLocationSubmit}
+          isLoading={isLoading}
+          error={manualLocationError}
+        />
       </div>
     );
   }
@@ -317,6 +651,10 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
           <div className="flex items-center gap-2">
             {locationSource === 'gps' ? (
               <Crosshair className="w-4 h-4 text-green-400" />
+            ) : locationSource === 'wifi' ? (
+              <Wifi className="w-4 h-4 text-sky-400" />
+            ) : locationSource === 'manual' ? (
+              <MapPin className="w-4 h-4 text-amber-400" />
             ) : (
               <Globe className="w-4 h-4 text-blue-400" />
             )}
@@ -326,17 +664,7 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
               {weatherData.location}{weatherData.region ? `, ${weatherData.region}` : ''}
             </span>
             {/* Location source badge */}
-            {locationSource === 'gps' ? (
-              <span className="text-[10px] text-green-400/80 bg-green-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Using precise GPS location">
-                <Crosshair className="w-2.5 h-2.5" />
-                GPS
-              </span>
-            ) : (
-              <span className="text-[10px] text-blue-400/80 bg-blue-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Using approximate IP-based location">
-                <Globe className="w-2.5 h-2.5" />
-                IP
-              </span>
-            )}
+            <LocationSourceBadge source={locationSource} />
           </div>
           <div className="flex items-center gap-1.5">
             {lastFetchTime && (
@@ -344,19 +672,34 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
                 {lastFetchTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </span>
             )}
-            {/* Use GPS for precision upgrade */}
+            {/* Reset to auto-detect (only when using manual) */}
+            {locationSource === 'manual' && (
+              <button
+                onClick={handleResetToAutoDetect}
+                disabled={isLoading}
+                className="p-1.5 rounded-md hover:bg-slate-700/50 text-amber-400/70 hover:text-amber-400 transition-colors disabled:opacity-50"
+                title="Reset to auto-detect location"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              </button>
+            )}
+            {/* Use GPS for precision upgrade (show when on IP) */}
             {locationSource === 'ip' && (
               <button
                 onClick={fetchWeatherByGPS}
                 disabled={isLoading}
                 className="p-1.5 rounded-md hover:bg-slate-700/50 text-slate-400 hover:text-green-400 transition-colors disabled:opacity-50"
-                title="Use GPS for precise location"
+                title="Use GPS/Wi-Fi for precise location"
               >
                 <Crosshair className={`w-3.5 h-3.5 ${isLoading ? 'animate-pulse' : ''}`} />
               </button>
             )}
             <button
-              onClick={locationSource === 'gps' ? fetchWeatherByGPS : fetchWeatherByIP}
+              onClick={locationSource === 'manual' && savedManualLocation
+                ? () => fetchWeatherByManualLocation(savedManualLocation)
+                : locationSource !== 'ip'
+                  ? fetchWeatherByGPS
+                  : fetchWeatherByIP}
               disabled={isLoading}
               className="p-1.5 rounded-md hover:bg-slate-700/50 text-slate-400 hover:text-blue-400 transition-colors disabled:opacity-50"
               title="Refresh weather"
@@ -372,6 +715,31 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
             </button>
           </div>
         </div>
+        {/* Change location link */}
+        <div className="flex items-center justify-between mt-1">
+          <div />
+          <button
+            onClick={() => setShowManualInput(!showManualInput)}
+            className={`text-[11px] transition-colors ${
+              locationSource === 'manual'
+                ? 'text-amber-400/70 hover:text-amber-400'
+                : 'text-slate-500 hover:text-amber-400'
+            }`}
+          >
+            {showManualInput ? 'Cancel' : 'Change location'}
+          </button>
+        </div>
+        {/* Inline manual location input (compact) */}
+        {showManualInput && (
+          <div className="mt-2 pt-2 border-t border-slate-700/50">
+            <ManualLocationForm
+              onSubmit={handleManualLocationSubmit}
+              isLoading={isLoading}
+              error={manualLocationError}
+              compact
+            />
+          </div>
+        )}
       </div>
 
       {/* Weather Data Grid */}
