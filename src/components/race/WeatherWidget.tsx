@@ -25,6 +25,7 @@ import {
   Wifi,
   Search,
   RotateCcw,
+  Globe,
 } from 'lucide-react';
 
 
@@ -42,7 +43,7 @@ const MANUAL_LOCATION_KEY = 'promod_weather_widget_manual_location';
 
 
 // Location method describes how the browser determined the user's position
-type LocationMethod = 'gps' | 'wifi' | 'manual' | null;
+type LocationMethod = 'gps' | 'wifi' | 'ip' | 'manual' | null;
 type LocationStatus = 'pending' | 'granted' | 'denied' | 'unavailable' | 'error';
 
 // ── Smart geolocation with GPS → Wi-Fi fallback ──────────────────────────────
@@ -164,6 +165,17 @@ const LocationMethodBadge: React.FC<{ method: LocationMethod }> = ({ method }) =
       >
         <Wifi className="w-2.5 h-2.5" />
         Wi-Fi
+      </span>
+    );
+  }
+  if (method === 'ip') {
+    return (
+      <span
+        className="text-xs text-slate-400/80 flex items-center gap-0.5 ml-1"
+        title="Approximate IP-based location"
+      >
+        <Globe className="w-2.5 h-2.5" />
+        IP
       </span>
     );
   }
@@ -380,6 +392,7 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
       setWeatherData(data);
       setLastFetchTime(new Date());
       setLocationMethod(method);
+      setLocationStatus('granted');
       setError(null);
       setShowManualInput(false);
 
@@ -480,18 +493,14 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
         fetchWeatherByCoords(lat, lon, method, true);
       })
       .catch((err: any) => {
-        console.warn('[WeatherWidget] Auto-detect failed after reset:', err?.message, '(code:', err?.code, ')');
+        console.warn('[WeatherWidget] Auto-detect failed after reset — falling back to IP:', err?.message, '(code:', err?.code, ')');
         if (!mountedRef.current) return;
 
-        if (err?.code === 1) {
-          setLocationStatus('denied');
-        } else if (err?.code === 2) {
-          setLocationStatus('unavailable');
-        } else {
-          setLocationStatus('error');
-        }
+        // Fall back to IP-based location instead of dead-end error
+        setGeoStatusText('Using IP-based location...');
+        fetchWeatherByLocation('auto:ip', 'ip', true);
       });
-  }, [fetchWeatherByCoords]);
+  }, [fetchWeatherByCoords, fetchWeatherByLocation]);
 
   // ── Request geolocation on mount (with GPS → Wi-Fi fallback) ──
   // If a manual location is saved, use that instead of GPS
@@ -514,9 +523,11 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
       // ignore
     }
 
-    // Check if geolocation is supported
+    // Check if geolocation is supported — if not, fall back to IP
     if (!navigator.geolocation) {
-      setLocationStatus('unavailable');
+      console.log('[WeatherWidget] Geolocation not supported — falling back to IP location');
+      setGeoStatusText('Using IP-based location...');
+      fetchWeatherByLocation('auto:ip', 'ip', true);
       return;
     }
 
@@ -540,16 +551,14 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
         fetchWeatherByCoords(lat, lon, method);
       })
       .catch((err: any) => {
-        console.warn('[WeatherWidget] Geolocation failed after fallback chain:', err?.message, '(code:', err?.code, ')');
+        console.warn('[WeatherWidget] Geolocation failed — falling back to IP location:', err?.message, '(code:', err?.code, ')');
         if (!mountedRef.current) return;
 
-        if (err?.code === 1) {
-          setLocationStatus('denied');
-        } else if (err?.code === 2) {
-          setLocationStatus('unavailable');
-        } else {
-          setLocationStatus('error');
-        }
+        // ── CRITICAL FIX: Always fall back to IP-based location ──
+        // Instead of showing an error dead-end, use WeatherAPI's auto:ip
+        // which resolves location from the user's IP address.
+        setGeoStatusText('Using IP-based location...');
+        fetchWeatherByLocation('auto:ip', 'ip', true);
       });
   }, [fetchWeatherByCoords, fetchWeatherByLocation]);
 
@@ -562,10 +571,16 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
       return;
     }
 
+    // If using IP location, just re-fetch via IP
+    if (locationMethod === 'ip' || !navigator.geolocation) {
+      fetchWeatherByLocation('auto:ip', 'ip', true);
+      return;
+    }
+
     if (coords) {
       // We already have coordinates — just re-fetch weather
       fetchWeatherByCoords(coords.lat, coords.lon, locationMethod, true);
-    } else if (navigator.geolocation) {
+    } else {
       // Re-request location with fallback chain
       setLocationStatus('pending');
       setIsLoading(true);
@@ -577,9 +592,6 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
         .then(({ position, method }) => {
           const lat = Math.round(position.coords.latitude * 1000000) / 1000000;
           const lon = Math.round(position.coords.longitude * 1000000) / 1000000;
-          console.log('[WeatherWidget] Refresh location acquired:', lat, lon,
-            'accuracy:', position.coords.accuracy.toFixed(0), 'm',
-            'method:', method);
           if (!mountedRef.current) return;
           setCoords({ lat, lon });
           setLocationStatus('granted');
@@ -588,12 +600,9 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
         })
         .catch((err: any) => {
           if (!mountedRef.current) return;
-          setIsLoading(false);
-          if (err?.code === 1) {
-            setLocationStatus('denied');
-          } else {
-            setLocationStatus('error');
-          }
+          // Fall back to IP instead of showing error
+          console.warn('[WeatherWidget] Refresh geolocation failed — falling back to IP:', err?.message);
+          fetchWeatherByLocation('auto:ip', 'ip', true);
         });
     }
   }, [coords, locationMethod, savedManualLocation, fetchWeatherByCoords, fetchWeatherByLocation]);
