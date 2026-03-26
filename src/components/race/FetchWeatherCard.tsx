@@ -22,10 +22,13 @@ import {
   Search,
   RotateCcw,
 } from 'lucide-react';
-import { fetchWeatherData, calculateDewPoint, isWeatherConfigured } from '@/lib/weather';
+import { fetchWeatherData, calculateDewPoint, calculateSAECorrection, calculateDensityAltitude, isWeatherConfigured } from '@/lib/weather';
 
 
-interface FetchWeatherCardProps {}
+interface FetchWeatherCardProps {
+  trackElevation?: number;
+}
+
 
 interface LocalWeatherData {
   temperature: number;
@@ -279,7 +282,8 @@ const ManualLocationForm: React.FC<{
 };
 
 
-const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
+const FetchWeatherCard: React.FC<FetchWeatherCardProps> = ({ trackElevation = 0 }) => {
+
   const [weatherData, setWeatherData] = useState<LocalWeatherData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -371,6 +375,26 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
   }, []);
 
   const processWeatherResult = useCallback((result: any, source: LocationSource) => {
+    // fetchWeatherData returns DA/SAE without elevation correction (it doesn't
+    // know the track elevation).  If we have a track elevation, recalculate
+    // DA and SAE using the elevation-corrected station pressure.
+    let sae = result.saeCorrection;
+    let da = result.densityAltitude;
+    let hp = result.correctedHP;
+
+    if (trackElevation > 0 && result.weather.pressure && result.weather.temperature) {
+      const corrected = calculateSAECorrection(
+        result.weather.temperature,
+        result.weather.pressure,
+        result.weather.humidity,
+        trackElevation
+      );
+      sae = corrected.saeCorrection;
+      da = corrected.densityAltitude;
+      hp = corrected.correctedHP;
+      console.log(`[FetchWeatherCard] Recalculated DA with elevation ${trackElevation} ft: ${da} ft (was ${result.densityAltitude} ft)`);
+    }
+
     const data: LocalWeatherData = {
       temperature: result.weather.temperature,
       humidity: result.weather.humidity,
@@ -381,9 +405,9 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
       location: result.weather.location,
       region: result.weather.region,
       dewPoint: result.weather.dewPoint ?? calculateDewPoint(result.weather.temperature, result.weather.humidity),
-      saeCorrection: result.saeCorrection,
-      densityAltitude: result.densityAltitude,
-      correctedHP: result.correctedHP,
+      saeCorrection: sae,
+      densityAltitude: da,
+      correctedHP: hp,
     };
 
     setWeatherData(data);
@@ -404,7 +428,8 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = () => {
     } catch {
       // ignore
     }
-  }, []);
+  }, [trackElevation]);
+
 
   // Fetch weather using IP-based location (auto:ip)
   const fetchWeatherByIP = useCallback(async () => {

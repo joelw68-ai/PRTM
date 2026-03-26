@@ -31,7 +31,9 @@ import {
 
 interface WeatherWidgetProps {
   onNavigate: (section: string) => void;
+  trackElevation?: number;
 }
+
 
 const WEATHER_CACHE_KEY = 'promod_weather_widget_cache';
 const WEATHER_CACHE_VERSION_KEY = 'promod_weather_widget_cache_version';
@@ -304,7 +306,8 @@ const ManualLocationForm: React.FC<{
 };
 
 
-const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
+const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate, trackElevation = 0 }) => {
+
   const [weatherData, setWeatherData] = useState<WeatherWidgetData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -384,8 +387,9 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate }) => {
     setManualLocationError(null);
 
     try {
-      console.log('[WeatherWidget] Fetching weather for location:', locationStr, '(method:', method, ')');
-      const data = await fetchWeatherForWidget(locationStr);
+      console.log('[WeatherWidget] Fetching weather for location:', locationStr, '(method:', method, ', elevation:', trackElevation, 'ft)');
+      const data = await fetchWeatherForWidget(locationStr, trackElevation);
+
 
       if (!mountedRef.current) return;
 

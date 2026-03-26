@@ -31,7 +31,9 @@ interface RaceDayWeatherCardProps {
   trackName: string;
   eventDate: string;
   eventTitle: string;
+  trackElevation?: number;
 }
+
 
 // Get weather icon component based on conditions
 const getWeatherIcon = (conditions: string, size: string = 'w-6 h-6') => {
@@ -76,8 +78,10 @@ const RaceDayWeatherCard: React.FC<RaceDayWeatherCardProps> = ({
   trackLocation,
   trackName,
   eventDate,
-  eventTitle
+  eventTitle,
+  trackElevation = 0
 }) => {
+
   const [forecast, setForecast] = useState<RaceDayForecastData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,8 +100,11 @@ const RaceDayWeatherCard: React.FC<RaceDayWeatherCardProps> = ({
     try {
       // Use trackLocation (city, state) first, fall back to trackName
       const location = trackLocation || trackName;
-      const data = await fetchRaceDayForecast(location, eventDate);
+      // Pass track elevation so fetchRaceDayForecast converts SLP → station
+      // pressure before computing DA/SAE — matches Computech readings.
+      const data = await fetchRaceDayForecast(location, eventDate, trackElevation);
       setForecast(data);
+
     } catch (err: any) {
       console.error('Race day weather error:', err);
       setError(err.message || 'Failed to fetch weather forecast');
@@ -108,7 +115,8 @@ const RaceDayWeatherCard: React.FC<RaceDayWeatherCardProps> = ({
 
   useEffect(() => {
     fetchForecast();
-  }, [trackLocation, trackName, eventDate]);
+  }, [trackLocation, trackName, eventDate, trackElevation]);
+
 
   // Format the event date for display using the centralized utility
   const formatDate = (dateStr: string) => {
@@ -189,6 +197,7 @@ const RaceDayWeatherCard: React.FC<RaceDayWeatherCardProps> = ({
   return (
     <div className="bg-gradient-to-br from-blue-500/10 to-cyan-500/10 rounded-xl border border-blue-500/20 overflow-hidden">
       {/* Header */}
+
       <div className="px-4 py-3 border-b border-blue-500/20 bg-blue-500/5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -217,12 +226,24 @@ const RaceDayWeatherCard: React.FC<RaceDayWeatherCardProps> = ({
             <MapPin className="w-3 h-3" />
             {forecast.location}{forecast.region ? `, ${forecast.region}` : ''}
           </span>
+          {/* Track elevation indicator */}
+          {trackElevation > 0 ? (
+            <span className="flex items-center gap-1 text-orange-400/80" title={`Track elevation: ${trackElevation.toLocaleString()} ft — DA corrected for station pressure`}>
+              <Mountain className="w-3 h-3" />
+              {trackElevation.toLocaleString()} ft elev.
+            </span>
+          ) : (
+            <span className="text-slate-500/70 text-[10px] italic" title="Set track elevation in Initial Setup or Manage Tracks for accurate DA">
+              Set elevation in Initial Setup for accurate DA
+            </span>
+          )}
           <span className="flex items-center gap-1">
             <CalendarDays className="w-3 h-3" />
             {getDaysLabel(forecast.daysUntilEvent)}
           </span>
         </div>
       </div>
+
 
       <div className="p-4">
         {/* Main Weather Overview */}

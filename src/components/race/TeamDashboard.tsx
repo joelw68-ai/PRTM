@@ -47,8 +47,9 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
     passLogs, engines, superchargers, cylinderHeads, drivetrainComponents,
     maintenanceItems, sfiCertifications, partsInventory,
     preRunChecklist, betweenRoundsChecklist, postRunChecklist,
-    teamMembers, refreshData
+    teamMembers, savedTracks, refreshData
   } = useApp();
+
 
   // Single-car mode — no car selection needed
   const selectedCarId: string | null = null;
@@ -695,8 +696,13 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
 
           {/* ── Column 2: Weather + Component Status ── */}
           <div className="lg:col-span-1 space-y-6">
-            {/* Weather Widget */}
-            <WeatherWidget onNavigate={onNavigate} />
+            <WeatherWidget onNavigate={onNavigate} trackElevation={(() => {
+              const favTrack = savedTracks.find((t: any) => t.isFavorite && (t.elevation || 0) > 0);
+              if (favTrack) return favTrack.elevation || 0;
+              const anyTrack = savedTracks.find((t: any) => (t.elevation || 0) > 0);
+              return anyTrack?.elevation || 0;
+            })()} />
+
 
             {/* Component Status Overview */}
             <div className={`bg-slate-800/50 rounded-xl border transition-all duration-500 ${

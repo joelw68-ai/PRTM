@@ -271,8 +271,6 @@ export interface HourlyForecast {
   densityAltitude: number;
 }
 
-// ─── Pure calculation helpers (no API calls) ─────────────────────────────────
-
 export function calculateDewPoint(tempF: number, humidityPct: number): number {
   const tempC = (tempF - 32) * 5 / 9;
   const a = 17.27;
@@ -283,30 +281,77 @@ export function calculateDewPoint(tempF: number, humidityPct: number): number {
   return Math.round(dewPointF * 10) / 10;
 }
 
+// ─── Sea-Level Pressure → Station Pressure conversion ────────────────────────
+//
+// Weather APIs (WeatherAPI.com, OpenWeatherMap, etc.) report "barometric
+// pressure" which is actually the sea-level corrected pressure (QNH in
+// aviation terms).  This is the pressure adjusted as if the station were at
+// sea level, so that weather maps show meaningful isobars.
+//
+// Drag racing weather stations (Computech, RaceAir, Altus, Kestrel) measure
+// STATION PRESSURE — the actual atmospheric pressure at the sensor's
+// elevation.  Station pressure is always LOWER than sea-level pressure at
+// any elevation above sea level.
+//
+// The density altitude formula requires STATION PRESSURE to produce correct
+// results.  Using sea-level corrected pressure in the DA formula gives a DA
+// that is too low by roughly the track's physical elevation.
+//
+// Conversion (ISA barometric formula):
+//   P_station = P_slp × (1 − L × h / T0)^(g·M/(R·L))
+//
+// Where:
+//   L  = 0.0065 K/m   (ISA temperature lapse rate)
+//   T0 = 288.15 K     (ISA sea-level temperature)
+//   g  = 9.80665 m/s²
+//   M  = 0.0289644 kg/mol (molar mass of dry air)
+//   R  = 8.31447 J/(mol·K)
+//   g·M/(R·L) = 5.2561
+//   h  = elevation in meters = elevationFt × 0.3048
+//
+// Simplified:
+//   P_station = P_slp × (1 − elevationFt / 145442.16)^5.2561
+//
+// Examples:
+//   500 ft elevation, 29.92" SLP → 29.38" station pressure
+//   1000 ft elevation, 29.92" SLP → 28.86" station pressure
+//
+export function convertSLPtoStationPressure(slpInHg: number, elevationFt: number): number {
+  if (elevationFt <= 0) return slpInHg;
+  return slpInHg * Math.pow(1 - elevationFt / 145442.16, 5.2561);
+}
+
 // ─── Density Altitude (NWS / NOAA standard) ─────────────────────────────────
 //
-// The previous formula only calculated PRESSURE ALTITUDE — it completely
-// ignored temperature and humidity, which are the dominant factors affecting
-// air density (and therefore engine performance) at drag strips.
+// Computes density altitude using the NWS/NOAA formula with virtual
+// temperature to account for moisture in the air.
 //
-// OLD (wrong — pressure altitude only, ignores temp & humidity):
-//   P_mb = pressureInHg × 33.8639
-//   DA = 145442.16 × (1 − (P_mb / 1013.25)^0.190284)
+// IMPORTANT — pressureInHg and elevationFt:
 //
-// NEW (correct — NWS/NOAA density altitude using virtual temperature):
-//   1. Pressure Altitude:  PA = 145442.16 × (1 − (P_mb / 1013.25)^0.190284)
+//   • If pressureInHg comes from a WEATHER API (WeatherAPI.com, etc.), it is
+//     sea-level corrected pressure (QNH).  You MUST pass the track elevation
+//     in elevationFt so the function can convert to station pressure first.
+//
+//   • If pressureInHg comes from a DRAG RACING WEATHER STATION (Computech,
+//     RaceAir, Altus, Kestrel), it is already station pressure.  Pass
+//     elevationFt = 0 (or omit it) so no conversion is applied.
+//
+//   • If you're unsure, pass the elevation — the conversion is a no-op at
+//     elevation 0, and at any positive elevation it corrects the pressure
+//     downward to match what a station barometer would read.
+//
+// Formula:
+//   1. Convert SLP → station pressure (if elevation > 0)
 //   2. Virtual Temperature: Tv = T_K / (1 − 0.3783 × (e / P_mb))
 //      where e = actual vapor pressure (hPa) from Buck equation
-//   3. Density Altitude:   DA = 145442.16 × (1 − ((P_mb / 1013.25) × (288.15 / Tv))^0.234969)
+//   3. Density Altitude: DA = 145442.16 × (1 − ((P/P0) × (T0/Tv))^0.234969)
 //
-// The exponent 0.234969 = 1 / (g·M/(R·L) − 1) = 1/4.2561, derived from the
-// ISA barometric formula solved for the altitude where standard-atmosphere
-// density equals the actual air density.
+// The exponent 0.234969 = 1/4.2561 = R·L / (g·M − R·L)
 //
 // This matches the NWS density altitude calculator and the values reported
-// by RaceAir, Altus, Computech, and other proven drag racing weather stations.
+// by Computech, RaceAir, Altus, and other proven drag racing weather stations.
 //
-// Examples (sea level, 29.92 inHg):
+// Examples (sea level, 29.92 inHg STATION pressure):
 //   59°F / 0% RH  →  DA ≈    0 ft  (ISA standard conditions)
 //   70°F / 50% RH →  DA ≈  1060 ft
 //   80°F / 50% RH →  DA ≈  1770 ft
@@ -314,10 +359,21 @@ export function calculateDewPoint(tempF: number, humidityPct: number): number {
 //   95°F / 80% RH →  DA ≈  3050 ft
 //   55°F / 30% RH →  DA ≈  −350 ft  (cold dense air, below sea level DA)
 //
-export function calculateDensityAltitude(tempF: number, pressureInHg: number, humidityPct: number): number {
+export function calculateDensityAltitude(
+  tempF: number,
+  pressureInHg: number,
+  humidityPct: number,
+  elevationFt: number = 0
+): number {
+  // Step 0: If elevation is provided, convert sea-level pressure to station pressure.
+  // This is the critical fix — weather APIs report SLP, but DA requires station pressure.
+  const stationPressureInHg = elevationFt > 0
+    ? convertSLPtoStationPressure(pressureInHg, elevationFt)
+    : pressureInHg;
+
   const tempC = (tempF - 32) * 5 / 9;
   const tempK = tempC + 273.15;
-  const P_mb = pressureInHg * 33.8639;
+  const P_mb = stationPressureInHg * 33.8639;
 
   // Saturation vapor pressure via Buck (1981) equation (hPa)
   const esHpa = 6.1121 * Math.exp((18.678 - tempC / 234.5) * (tempC / (257.14 + tempC)));
@@ -344,21 +400,34 @@ export function calculateDensityAltitude(tempF: number, pressureInHg: number, hu
   return Math.round(DA);
 }
 
-function calculateSAECorrectionInternal(tempF: number, pressureInHg: number, humidityPct: number) {
+function calculateSAECorrectionInternal(
+  tempF: number,
+  pressureInHg: number,
+  humidityPct: number,
+  elevationFt: number = 0
+) {
+  // For SAE correction, we also need station pressure — the correction factor
+  // measures how far current conditions deviate from standard (29.92" at sea level).
+  // If the API gives us SLP ≈ 29.92 at any elevation, the pressure factor would
+  // always be ~1.0, which is wrong.  Converting to station pressure gives the
+  // correct pressure factor for the actual air the engine is breathing.
+  const stationPressure = elevationFt > 0
+    ? convertSLPtoStationPressure(pressureInHg, elevationFt)
+    : pressureInHg;
+
   const tempFactor = Math.sqrt((tempF + 460) / 520);
-  const pressureFactor = Math.sqrt(29.92 / pressureInHg);
+  const pressureFactor = Math.sqrt(29.92 / stationPressure);
   // Use the accurate Buck equation for saturation vapor pressure (same as
   // calculateVaporPressure and calculateWaterGrains).  The old cubic polynomial
   // overestimated SVP by ~30-40%, which inflated the humidity correction.
   const satVaporPressure = accurateSatVaporPressureInHg(tempF);
   const actualVaporPressure = (humidityPct / 100) * satVaporPressure;
-  const dryPressure = pressureInHg - actualVaporPressure;
+  const dryPressure = stationPressure - actualVaporPressure;
   const humidityFactor = Math.sqrt(29.92 / dryPressure);
   const saeCorrection = tempFactor * pressureFactor * humidityFactor;
 
-  // Density altitude — now uses the correct NWS formula that accounts for
-  // temperature and humidity via virtual temperature (not just pressure altitude)
-  const densityAltitude = calculateDensityAltitude(tempF, pressureInHg, humidityPct);
+  // Density altitude — uses station pressure (already converted above)
+  const densityAltitude = calculateDensityAltitude(tempF, stationPressure, humidityPct, 0);
 
   const correctedHP = Math.round(3500 * saeCorrection);
   return {
@@ -367,6 +436,7 @@ function calculateSAECorrectionInternal(tempF: number, pressureInHg: number, hum
     correctedHP,
   };
 }
+
 
 
 
@@ -655,7 +725,7 @@ export async function fetchWeatherData(
 
 // ─── Fetch extended weather data for the dashboard widget ────────────────────
 
-export async function fetchWeatherForWidget(location: string): Promise<WeatherWidgetData> {
+export async function fetchWeatherForWidget(location: string, elevationFt: number = 0): Promise<WeatherWidgetData> {
   const data = await callWeatherApi({
     endpoint: 'forecast',
     location,
@@ -672,7 +742,8 @@ export async function fetchWeatherForWidget(location: string): Promise<WeatherWi
   const humidity = current.humidity as number;
   const pressureInHg = current.pressure_in as number;
 
-  const saeData = calculateSAECorrectionInternal(tempF, pressureInHg, humidity);
+  // Pass elevation so SLP → station pressure conversion is applied
+  const saeData = calculateSAECorrectionInternal(tempF, pressureInHg, humidity, elevationFt);
   const dewPoint = calculateDewPoint(tempF, humidity);
 
   const forecast = data.forecast as Record<string, unknown> | undefined;
@@ -686,7 +757,8 @@ export async function fetchWeatherForWidget(location: string): Promise<WeatherWi
     for (let i = currentHour + 1; i <= Math.min(currentHour + 6, 23); i++) {
       const hour = hours[i];
       if (hour) {
-        const hSae = calculateSAECorrectionInternal(hour.temp_f as number, hour.pressure_in as number, hour.humidity as number);
+        // Pass elevation for hourly forecast DA/SAE too
+        const hSae = calculateSAECorrectionInternal(hour.temp_f as number, hour.pressure_in as number, hour.humidity as number, elevationFt);
         const hDew = calculateDewPoint(hour.temp_f as number, hour.humidity as number);
         const hCondition = (hour.condition as Record<string, unknown>) || {};
         hourlyForecast.push({
@@ -732,6 +804,7 @@ export async function fetchWeatherForWidget(location: string): Promise<WeatherWi
     lastUpdated: (current.last_updated as string) || new Date().toISOString(),
   };
 }
+
 
 // ─── Race Day Forecast ───────────────────────────────────────────────────────
 
@@ -783,8 +856,10 @@ export interface RaceDayHour {
 
 export async function fetchRaceDayForecast(
   location: string,
-  eventDate: string
+  eventDate: string,
+  elevationFt: number = 0
 ): Promise<RaceDayForecastData> {
+
   // Derive "today" from local date components via getLocalDateString() to avoid
   // the UTC-midnight off-by-one bug that occurs when using new Date() directly.
   const todayStr = getLocalDateString();
@@ -851,7 +926,8 @@ export async function fetchRaceDayForecast(
     const hTempF = h.temp_f as number;
     const hHumidity = h.humidity as number;
     const hPressure = (h.pressure_in as number) || 29.92;
-    const saeData = calculateSAECorrectionInternal(hTempF, hPressure, hHumidity);
+    const saeData = calculateSAECorrectionInternal(hTempF, hPressure, hHumidity, elevationFt);
+
     const hDewPoint = calculateDewPoint(hTempF, hHumidity);
     const hCondition = (h.condition as Record<string, unknown>) || {};
 

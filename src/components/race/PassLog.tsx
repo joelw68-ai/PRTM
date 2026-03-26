@@ -15,7 +15,8 @@ import { isConnectivityError } from '@/lib/offlineQueue';
 import { useAuth } from '@/contexts/AuthContext';
 
 import { CrewRole } from '@/lib/permissions';
-import { fetchWeatherData, calculateDewPoint, calculateVaporPressure, calculateWaterGrains, calculateWetBulb, calculateSTDCorrection, calculateDensityAltitude } from '@/lib/weather';
+import { fetchWeatherData, calculateDewPoint, calculateVaporPressure, calculateWaterGrains, calculateWetBulb, calculateSTDCorrection, calculateDensityAltitude, calculateSAECorrection, convertSLPtoStationPressure } from '@/lib/weather';
+
 
 
 import { SavedTrack, ComponentPart } from '@/lib/database';
@@ -112,8 +113,10 @@ import {
   Square,
   FlaskConical,
   Package,
-  Undo2
+  Undo2,
+  Mountain
 } from 'lucide-react';
+
 
 
 
@@ -183,6 +186,15 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
   const autoFetchTriggered = useRef(false);
   const trackSelectRef = useRef<HTMLSelectElement>(null);
+  // ═══════════════════════════════════════════════════════════════════
+  // TRACK ELEVATION — critical for correct Density Altitude calculation
+  // ═══════════════════════════════════════════════════════════════════
+  // Weather APIs report sea-level corrected pressure (QNH), but DA requires
+  // station pressure (QFE).  When we know the track elevation, we convert
+  // SLP → station pressure before computing DA, matching what Computech,
+  // RaceAir, and Altus weather stations report.
+  const [trackElevation, setTrackElevation] = useState<number>(0);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [expandedPass, setExpandedPass] = useState<string | null>(null);
@@ -468,11 +480,35 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       setTrackCity(parsed.city);
       setTrackState(parsed.state);
 
+      // Store track elevation for DA correction
+      const elev = selectedTrack.elevation || 0;
+      setTrackElevation(elev);
+      console.log(`[PassLog] Track selected: ${selectedTrack.name}, elevation: ${elev} ft`);
+
       setFormData(prev => ({
         ...prev,
         track: selectedTrack.name,
         location: selectedTrack.location
       }));
+
+      // If we already have weather data, recalculate DA/SAE with the new elevation
+      if (formData.weather?.pressure && formData.weather?.temperature && elev > 0) {
+        const corrected = calculateSAECorrection(
+          formData.weather.temperature,
+          formData.weather.pressure,
+          formData.weather.humidity || 50,
+          elev
+        );
+        setFormData(prev => ({
+          ...prev,
+          track: selectedTrack.name,
+          location: selectedTrack.location,
+          saeCorrection: corrected.saeCorrection,
+          densityAltitude: corrected.densityAltitude,
+          correctedHP: corrected.correctedHP,
+        }));
+        console.log(`[PassLog] Recalculated DA with elevation ${elev} ft: ${corrected.densityAltitude} ft`);
+      }
 
       // Increment visit count
       incrementTrackVisit(trackId);
@@ -483,6 +519,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       trackSelectRef.current.value = '';
     }
   };
+
 
 
   // Save current track as preset
@@ -571,6 +608,26 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       const data = await fetchWeatherData(location, formData.date, formData.time);
 
       if (data?.weather) {
+        // The API returns sea-level corrected pressure.  If we know the track
+        // elevation, recalculate DA/SAE using station pressure so the values
+        // match what a Computech/RaceAir at the track would show.
+        let sae = data.saeCorrection;
+        let da = data.densityAltitude;
+        let hp = data.correctedHP;
+
+        if (trackElevation > 0) {
+          const corrected = calculateSAECorrection(
+            data.weather.temperature,
+            data.weather.pressure,
+            data.weather.humidity,
+            trackElevation
+          );
+          sae = corrected.saeCorrection;
+          da = corrected.densityAltitude;
+          hp = corrected.correctedHP;
+          console.log(`[PassLog fetchWeather] Elevation-corrected DA: ${da} ft (elev: ${trackElevation} ft, SLP: ${data.weather.pressure}" → station: ${convertSLPtoStationPressure(data.weather.pressure, trackElevation).toFixed(2)}")`);
+        }
+
         // Update weather fields
         setFormData(prev => ({
           ...prev,
@@ -583,10 +640,11 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
             windDirection: data.weather.windDirection,
             conditions: data.weather.conditions
           },
-          saeCorrection: data.saeCorrection,
-          densityAltitude: data.densityAltitude,
-          correctedHP: data.correctedHP
+          saeCorrection: sae,
+          densityAltitude: da,
+          correctedHP: hp
         }));
+
 
         const locationName = data.weather.location 
           ? `${data.weather.location}${data.weather.region ? `, ${data.weather.region}` : ''}`
@@ -627,42 +685,27 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
 
   // Calculate SAE correction factor manually based on weather inputs.
-  // Uses the shared calculateVaporPressure() (Buck equation) for the
-  // humidity correction — consistent with the displayed Vapor Pressure,
-  // Water Grains, and STD Correction values.
+  // Now uses track elevation to convert API sea-level pressure to station
+  // pressure, matching Computech/RaceAir readings.
   const calculateSAE = () => {
     const temp = formData.weather?.temperature || 70;
     const humidity = formData.weather?.humidity || 50;
     const pressure = formData.weather?.pressure || 29.92;
     
-    // SAE J607 correction factor calculation
-    // Standard conditions: 60°F, 29.92" Hg, 0% humidity
-    const tempFactor = Math.sqrt((temp + 460) / 520);
-    const pressureFactor = Math.sqrt(29.92 / pressure);
+    // Use the shared calculateSAECorrection which handles elevation-based
+    // SLP → station pressure conversion internally
+    const corrected = calculateSAECorrection(temp, pressure, humidity, trackElevation);
     
-    // Vapor pressure via the accurate Buck equation (shared function)
-    // — replaces the old inaccurate cubic polynomial that was inline here
-    const actualVaporPressure = calculateVaporPressure(temp, humidity);
-    const dryPressure = pressure - actualVaporPressure;
-    const humidityFactor = Math.sqrt(29.92 / dryPressure);
-    
-    const saeCorrection = tempFactor * pressureFactor * humidityFactor;
-    
-    // Density altitude — uses the correct NWS/NOAA formula that accounts for
-    // temperature and humidity via virtual temperature (not just pressure altitude)
-    const densityAltitude = calculateDensityAltitude(temp, pressure, humidity);
-
-    
-    // Corrected HP (assuming base 3500 HP)
-    const correctedHP = Math.round(3500 * saeCorrection);
+    console.log(`[PassLog calculateSAE] temp=${temp}°F, pressure=${pressure}" (SLP), humidity=${humidity}%, elevation=${trackElevation} ft → DA=${corrected.densityAltitude} ft, SAE=${corrected.saeCorrection}`);
     
     setFormData(prev => ({
       ...prev,
-      saeCorrection: Math.round(saeCorrection * 1000) / 1000,
-      densityAltitude,
-      correctedHP
+      saeCorrection: corrected.saeCorrection,
+      densityAltitude: corrected.densityAltitude,
+      correctedHP: corrected.correctedHP
     }));
   };
+
 
 
 
@@ -2198,7 +2241,31 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                       <span className="text-slate-400">Corrected HP</span>
                       <span className="text-white font-mono">{formData.correctedHP}</span>
                     </div>
-                  </div>
+                    {trackElevation > 0 && (
+                      <div className="flex justify-between items-center pt-1 border-t border-slate-700/30 mt-1">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="text-slate-500 flex items-center gap-1 cursor-help">
+                              <Mountain className="w-3 h-3" />
+                              Track Elev.
+                              <Info className="w-3 h-3" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs bg-slate-900 border-slate-700 text-white">
+                            <p className="text-sm">
+                              Track elevation from saved track settings. Used to convert the weather API's sea-level barometric pressure to station pressure for accurate DA calculation — matching your Computech/RaceAir readings.
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <span className="text-orange-400/80 font-mono text-xs">{trackElevation.toLocaleString()} ft</span>
+                      </div>
+                    )}
+                    {trackElevation === 0 && (
+                      <p className="text-[10px] text-slate-600 mt-1 leading-tight">
+                        Set track elevation in Manage Tracks for accurate DA
+                      </p>
+                    )}
+                    </div>
 
                   {/* Calculated Weather Data */}
                   <div className="bg-slate-900/50 rounded-lg p-3 space-y-2 text-sm">

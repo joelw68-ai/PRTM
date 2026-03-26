@@ -522,10 +522,18 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         {/* ═══════════════════════════════════════════════════════════
             FETCH WEATHER — Auto-fetches using IP-based location
+            Elevation correction: uses favorite track or first track with elevation > 0
         ═══════════════════════════════════════════════════════════ */}
         <div className="mb-6">
-          <FetchWeatherCard />
+          <FetchWeatherCard trackElevation={(() => {
+            const favTrack = savedTracks.find((t: any) => t.isFavorite && (t.elevation || 0) > 0);
+            if (favTrack) return favTrack.elevation || 0;
+            const anyTrack = savedTracks.find((t: any) => (t.elevation || 0) > 0);
+            return anyTrack?.elevation || 0;
+          })()} />
         </div>
+
+
 
 
         {/* ═══════════════════════════════════════════════════════════
@@ -1185,8 +1193,14 @@ const Dashboard: React.FC<DashboardProps> = ({
             SECTION 12: WEATHER WIDGET (Sidebar utility)
         ═══════════════════════════════════════════════════════════ */}
         <div className="mb-6">
-          <WeatherWidget onNavigate={onNavigate} />
+          <WeatherWidget onNavigate={onNavigate} trackElevation={(() => {
+            const favTrack = savedTracks.find((t: any) => t.isFavorite && (t.elevation || 0) > 0);
+            if (favTrack) return favTrack.elevation || 0;
+            const anyTrack = savedTracks.find((t: any) => (t.elevation || 0) > 0);
+            return anyTrack?.elevation || 0;
+          })()} />
         </div>
+
 
 
 

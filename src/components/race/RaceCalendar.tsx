@@ -784,14 +784,28 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
             )}
 
             {/* Race Day Weather Card - shown when event is selected */}
-            {selectedEvent && (selectedEvent.trackLocation || selectedEvent.trackName) && (
-              <RaceDayWeatherCard
-                trackLocation={selectedEvent.trackLocation}
-                trackName={selectedEvent.trackName}
-                eventDate={selectedEvent.startDate}
-                eventTitle={selectedEvent.title}
-              />
-            )}
+            {selectedEvent && (selectedEvent.trackLocation || selectedEvent.trackName) && (() => {
+              // Look up the saved track to get its elevation for SLP → station pressure correction.
+              // Match by name (case-insensitive) first, then fall back to location match.
+              const matchedTrack = savedTracks.find(
+                t => t.name.toLowerCase() === selectedEvent.trackName.toLowerCase() &&
+                     t.location.toLowerCase() === selectedEvent.trackLocation.toLowerCase()
+              ) || savedTracks.find(
+                t => t.name.toLowerCase() === selectedEvent.trackName.toLowerCase()
+              );
+              const elevation = matchedTrack?.elevation || 0;
+
+              return (
+                <RaceDayWeatherCard
+                  trackLocation={selectedEvent.trackLocation}
+                  trackName={selectedEvent.trackName}
+                  eventDate={selectedEvent.startDate}
+                  eventTitle={selectedEvent.title}
+                  trackElevation={elevation}
+                />
+              );
+            })()}
+
 
 
             {/* Upcoming Events */}
