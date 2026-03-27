@@ -147,13 +147,16 @@ const toMaintenanceItem = (row: any): MaintenanceItem => ({
   passInterval: row.pass_interval || 0,
   currentPasses: row.current_passes || 0,
   lastService: row.last_service || '',
+  lastServiceTime: row.last_service_time || '',
   nextServicePasses: row.next_service_passes || 0,
   status: row.status || 'Good',
   priority: row.priority || 'Medium',
   notes: row.notes || '',
   estimatedCost: row.estimated_cost,
+  threshold: row.threshold != null ? Number(row.threshold) : undefined,
   car_id: row.car_id || ''
 });
+
 
 
 const toSFICertification = (row: any): SFICertification => ({
@@ -602,8 +605,19 @@ export const fetchMaintenanceItems = async (userId?: string): Promise<Maintenanc
   return parseRows(data, MaintenanceItemRowSchema, 'maintenance_items').map(toMaintenanceItem);
 };
 
+/**
+ * upsertMaintenanceItem — Create or update a maintenance item.
+ *
+ * RESILIENT COLUMN HANDLING:
+ * The `threshold` (INTEGER) and `last_service_time` (TEXT) columns may not exist
+ * in the database if the user hasn't run the latest migration.
+ *
+ * Strategy: Try with all columns first. If PostgREST rejects the payload
+ * because of unknown columns, retry WITHOUT threshold and last_service_time.
+ */
 export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: string): Promise<void> => {
-  const payload: any = {
+  // Build the base payload (columns that always exist)
+  const basePayload: any = {
     id: item.id,
     component: item.component,
     category: emptyToNull(item.category),
@@ -618,11 +632,44 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
     car_id: emptyToNull(item.car_id)
   };
   
-  if (userId) payload.user_id = userId;
+  if (userId) basePayload.user_id = userId;
+
+  // Build the full payload including new columns (threshold, last_service_time)
+  const fullPayload: any = {
+    ...basePayload,
+    threshold: item.threshold != null ? item.threshold : null,
+    last_service_time: emptyToNull(item.lastServiceTime),
+  };
+
+  // Attempt 1: Try with all columns (including threshold, last_service_time)
+  const { error: fullError } = await supabase.from('maintenance_items').upsert(fullPayload);
   
-  const { error } = await supabase.from('maintenance_items').upsert(payload);
-  if (error) throw error;
+  if (!fullError) {
+    // Success — columns exist, all good
+    return;
+  }
+
+  // Check if the error is specifically about unknown columns
+  if (isUnknownColumnError(fullError)) {
+    console.warn(
+      '[upsertMaintenanceItem] threshold/last_service_time columns not found in DB — retrying without them.',
+      { code: fullError.code, message: fullError.message }
+    );
+
+    // Attempt 2: Retry with base payload only (no threshold, last_service_time)
+    const { error: baseError } = await supabase.from('maintenance_items').upsert(basePayload);
+    if (baseError) {
+      console.error('[upsertMaintenanceItem] Retry also failed:', baseError);
+      throw baseError;
+    }
+    // Success on retry — item saved without threshold/last_service_time columns
+    return;
+  }
+
+  // Not a column error — throw the original error
+  throw fullError;
 };
+
 
 
 export const deleteMaintenanceItem = async (id: string): Promise<void> => {
@@ -2939,3 +2986,85 @@ export const deleteComponentExtraFieldsByComponentId = async (componentId: strin
   const { error } = await supabase.from('component_extra_fields').delete().eq('component_id', componentId);
   if (error) throw error;
 };
+
+
+
+
+// ════════════════════════════════════════════════════════════════════════
+// RE-EXPORT: database-extra.ts
+// ════════════════════════════════════════════════════════════════════════
+// All additional table operations (misc_expenses, user_profiles, chassis_setups,
+// vendor_invoices, invoice_line_items, cost_reports, parts_usage_log,
+// borrowed_loaned_parts, race_cars, chassis_setup_user_presets, transmissions,
+// audit_logs) are defined in database-extra.ts and re-exported here so that
+// consumers can import everything from '@/lib/database'.
+
+export {
+  // Misc Expenses
+  fetchMiscExpenses,
+  upsertMiscExpense,
+  deleteMiscExpense,
+  // User Profiles
+  fetchUserProfile,
+  upsertUserProfile,
+  deleteUserProfile,
+  // Chassis Setups
+  fetchChassisSetups,
+  upsertChassisSetup,
+  deleteChassisSetup,
+  // Vendor Invoices
+  fetchVendorInvoices,
+  upsertVendorInvoice,
+  deleteVendorInvoice,
+  updateVendorInvoiceStatus,
+  // Invoice Line Items
+  fetchInvoiceLineItems,
+  upsertInvoiceLineItem,
+  deleteInvoiceLineItem,
+  deleteInvoiceLineItemsByInvoice,
+  // Cost Reports
+  fetchCostReports,
+  insertCostReport,
+  deleteCostReport,
+  // Parts Usage Log
+  fetchPartsUsageLog,
+  insertPartsUsageLog,
+  deletePartsUsageLogEntry,
+  // Borrowed / Loaned Parts
+  fetchBorrowedLoanedParts,
+  upsertBorrowedLoanedPart,
+  deleteBorrowedLoanedPart,
+  returnBorrowedLoanedPart,
+  // Race Cars
+  fetchRaceCars,
+  upsertRaceCar,
+  deleteRaceCar,
+  // Chassis Setup User Presets
+  fetchChassisSetupPresets,
+  upsertChassisSetupPreset,
+  deleteChassisSetupPreset,
+  // Transmissions
+  fetchTransmissions,
+  upsertTransmission,
+  deleteTransmission,
+  // Audit Logs
+  fetchAuditLogs,
+  insertAuditLog,
+  deleteAuditLog,
+} from './database-extra';
+
+// Re-export types
+export type {
+  MiscExpense,
+  UserProfile,
+  ChassisSetup,
+  VendorInvoice,
+  InvoiceLineItem as InvoiceLineItemRecord,
+  CostReport,
+  PartsUsageLogEntry,
+  BorrowedLoanedPart,
+  RaceCar,
+  ChassisSetupPreset,
+  Transmission,
+  AuditLogEntry,
+} from './database-extra';

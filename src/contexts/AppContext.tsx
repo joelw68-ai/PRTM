@@ -286,10 +286,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Tracks database save operations and updates the save status indicator
   // In demo mode, skip actual database operations but still update status
   // offlineInfo: optional info to queue the operation for offline replay
+  // errorToastMessage: optional — when provided, shows a visible toast.error on DB save failure
   const trackSave = useCallback(async (
     operation: () => Promise<void>,
     label?: string,
-    offlineInfo?: { type: QueueOperationType; data: any }
+    offlineInfo?: { type: QueueOperationType; data: any },
+    errorToastMessage?: string
   ) => {
     // In demo mode, skip database operations entirely - just update local state
     if (isDemoMode) {
@@ -369,9 +371,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         console.error(`Save error${label ? ` (${label})` : ''}:`, error);
         setSaveStatus('error');
         setLastSaveError(errorMsg);
+        
+        // Show a visible toast.error if the caller provided a message
+        if (errorToastMessage) {
+          toast.error(errorToastMessage, {
+            description: 'Check your connection and try again.',
+            duration: 8000,
+          });
+        }
       }
     }
   }, [isDemoMode, offlineSync.queueOperation, offlineSync.reportConnectivityError, offlineSync.reportSuccess, user?.id]);
+
 
 
 
@@ -502,20 +513,42 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         safeFetch(db.fetchTeamMembers(userId), [] as TeamMember[], 'team_members'),
         safeFetch(db.fetchSavedTracks(userId), [] as SavedTrack[], 'saved_tracks')
       ]);
-
       
       if (!mountedRef.current) return;
       
+      // ═══════════════════════════════════════════════════════════════
+      // MERGE STRATEGY: For data types that support optimistic adds,
+      // merge DB data with any local-only items (items added optimistically
+      // that may not have been persisted to DB yet). This prevents newly
+      // added items from "disappearing" when a background sync replaces
+      // state with DB data that doesn't yet include the pending item.
+      //
+      // The merge works by: starting with DB data, then appending any
+      // local items whose IDs are NOT in the DB result set.
+      // ═══════════════════════════════════════════════════════════════
+      const mergeWithLocal = <T extends { id: string }>(dbItems: T[], localItems: T[]): T[] => {
+        if (dbItems.length === 0 && localItems.length === 0) return [];
+        if (dbItems.length === 0) return localItems; // keep local items if DB returned nothing
+        const dbIds = new Set(dbItems.map(item => item.id));
+        const localOnly = localItems.filter(item => !dbIds.has(item.id));
+        if (localOnly.length > 0) {
+          console.log(`[backgroundSync] Merging ${localOnly.length} local-only item(s) with ${dbItems.length} DB item(s)`);
+        }
+        return [...dbItems, ...localOnly];
+      };
+
       // For authenticated users (or login transitions): always replace state with DB data
       // For unauthenticated: only replace if DB returned data (keeps sample data as fallback)
       if (isAuthenticated || isLoginTransition) {
         // Always set — even empty arrays — so user sees their real data
+        // BUT merge maintenance items to preserve optimistic adds
         setEngines(dbEngines.length > 0 ? dbEngines : []);
         setSuperchargers(dbSuperchargers.length > 0 ? dbSuperchargers : []);
         setCylinderHeads(dbCylinderHeads.length > 0 ? dbCylinderHeads : []);
-        setMaintenanceItems(dbMaintenanceItems.length > 0 ? dbMaintenanceItems : []);
-        setSFICertifications(dbSFICertifications.length > 0 ? dbSFICertifications : []);
-        setPassLogs(dbPassLogs.length > 0 ? dbPassLogs : []);
+        setMaintenanceItems(prev => mergeWithLocal(dbMaintenanceItems, prev));
+        setSFICertifications(prev => mergeWithLocal(dbSFICertifications, prev));
+        setPassLogs(prev => mergeWithLocal(dbPassLogs, prev));
+
 
 
         setEngineSwapLogs(dbEngineSwapLogs.length > 0 ? dbEngineSwapLogs : []);
@@ -529,9 +562,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (dbEngines.length > 0) setEngines(dbEngines);
         if (dbSuperchargers.length > 0) setSuperchargers(dbSuperchargers);
         if (dbCylinderHeads.length > 0) setCylinderHeads(dbCylinderHeads);
-        if (dbMaintenanceItems.length > 0) setMaintenanceItems(dbMaintenanceItems);
-        if (dbSFICertifications.length > 0) setSFICertifications(dbSFICertifications);
-        if (dbPassLogs.length > 0) setPassLogs(dbPassLogs);
+        if (dbMaintenanceItems.length > 0) setMaintenanceItems(prev => mergeWithLocal(dbMaintenanceItems, prev));
+        if (dbSFICertifications.length > 0) setSFICertifications(prev => mergeWithLocal(dbSFICertifications, prev));
+        if (dbPassLogs.length > 0) setPassLogs(prev => {
+          const dbIds = new Set(dbPassLogs.map(item => item.id));
+          const localOnly = prev.filter(item => !dbIds.has(item.id));
+          return localOnly.length > 0 ? [...dbPassLogs, ...localOnly] : dbPassLogs;
+        });
+
 
 
         if (dbEngineSwapLogs.length > 0) setEngineSwapLogs(dbEngineSwapLogs);
@@ -541,6 +579,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (dbPartsInventory.length > 0) setPartsInventory(dbPartsInventory);
         if (dbTrackWeatherHistory.length > 0) setTrackWeatherHistory(dbTrackWeatherHistory);
       }
+
       // These three always replace (they start empty, no sample data)
       setRaceEvents(dbRaceEvents);
       setTeamMembers(dbTeamMembers);
@@ -647,12 +686,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ]);
 
       
+      
       if (dbEngines.length > 0) setEngines(dbEngines);
       if (dbSuperchargers.length > 0) setSuperchargers(dbSuperchargers);
       if (dbCylinderHeads.length > 0) setCylinderHeads(dbCylinderHeads);
-      if (dbMaintenanceItems.length > 0) setMaintenanceItems(dbMaintenanceItems);
-      if (dbSFICertifications.length > 0) setSFICertifications(dbSFICertifications);
-      if (dbPassLogs.length > 0) setPassLogs(dbPassLogs);
+      // Use merge strategy for maintenance items and SFI certs to preserve optimistic adds
+      if (dbMaintenanceItems.length > 0) {
+        setMaintenanceItems(prev => {
+          const dbIds = new Set(dbMaintenanceItems.map(item => item.id));
+          const localOnly = prev.filter(item => !dbIds.has(item.id));
+          return localOnly.length > 0 ? [...dbMaintenanceItems, ...localOnly] : dbMaintenanceItems;
+        });
+      }
+      if (dbSFICertifications.length > 0) {
+        setSFICertifications(prev => {
+          const dbIds = new Set(dbSFICertifications.map(item => item.id));
+          const localOnly = prev.filter(item => !dbIds.has(item.id));
+          return localOnly.length > 0 ? [...dbSFICertifications, ...localOnly] : dbSFICertifications;
+        });
+      }
+      // Use merge strategy for pass logs to preserve optimistic adds and local-only entries
+      if (dbPassLogs.length > 0) {
+        setPassLogs(prev => {
+          const dbIds = new Set(dbPassLogs.map(item => item.id));
+          const localOnly = prev.filter(item => !dbIds.has(item.id));
+          return localOnly.length > 0 ? [...dbPassLogs, ...localOnly] : dbPassLogs;
+        });
+      }
+
+
 
 
       if (dbEngineSwapLogs.length > 0) setEngineSwapLogs(dbEngineSwapLogs);
@@ -1347,8 +1409,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const addMaintenanceItem = useCallback(async (item: MaintenanceItem) => {
     setMaintenanceItems(prev => [...prev, item]);
-    await trackSave(() => db.upsertMaintenanceItem(item, user?.id), 'addMaintenance');
+    await trackSave(
+      () => db.upsertMaintenanceItem(item, user?.id),
+      'addMaintenance',
+      undefined,
+      'Maintenance item saved locally but failed to sync to database — it may disappear on refresh.'
+    );
   }, [user?.id, trackSave]);
+
 
   // ============ SOFT-DELETE WITH UNDO FOR MAINTENANCE ITEMS ============
   const deleteMaintenanceItem = useCallback(async (id: string) => {
@@ -1393,7 +1461,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const addSFICertification = useCallback(async (cert: SFICertification) => {
     setSFICertifications(prev => [...prev, cert]);
-    await trackSave(() => db.upsertSFICertification(cert, user?.id), 'addSFICert');
+    await trackSave(
+      () => db.upsertSFICertification(cert, user?.id),
+      'addSFICert',
+      undefined,
+      'SFI certification saved locally but failed to sync to database — it may disappear on refresh.'
+    );
   }, [user?.id, trackSave]);
 
   const updateSFICertification = useCallback(async (id: string, cert: Partial<SFICertification>) => {
@@ -1409,8 +1482,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const addPartInventory = useCallback(async (part: PartInventoryItem) => {
     setPartsInventory(prev => [...prev, part]);
-    await trackSave(() => db.upsertPartInventory(part, user?.id), 'addPart');
+    await trackSave(
+      () => db.upsertPartInventory(part, user?.id),
+      'addPart',
+      undefined,
+      'Part saved locally but failed to sync to database — it may disappear on refresh.'
+    );
   }, [user?.id, trackSave]);
+
 
   // ============ SOFT-DELETE WITH UNDO FOR PARTS INVENTORY ============
   // When a part is deleted, it is immediately hidden from the UI (soft-delete)

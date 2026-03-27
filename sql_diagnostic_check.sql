@@ -459,7 +459,8 @@ BEGIN
 
   -- 27. team_invites (NEW)
   _table_name := 'team_invites';
-  _cols := ARRAY['id','user_id','email','role','permissions','token','status','invited_by_name','team_name','created_at','expires_at','accepted_at'];
+  _cols := ARRAY['id','team_owner_id','email','role','permissions','token','status','invited_by_name','team_name','created_at','expires_at','accepted_at'];
+
 
   _total_tables := _total_tables + 1;
   SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=_table_name) INTO _exists;

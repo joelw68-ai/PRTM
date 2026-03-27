@@ -418,7 +418,7 @@ END $$;
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.team_invites (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id         UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  team_owner_id   UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   email           TEXT NOT NULL,
   role            TEXT DEFAULT 'Crew',
   permissions     JSONB DEFAULT '["view"]'::jsonb,
@@ -431,19 +431,52 @@ CREATE TABLE IF NOT EXISTS public.team_invites (
   accepted_at     TIMESTAMPTZ
 );
 
+-- Migration: rename user_id → team_owner_id for existing tables
+-- If the table was created with the old schema (user_id), add team_owner_id
+-- and copy data over so the app code works with the new column name.
+DO $$
+BEGIN
+  -- If table has user_id but NOT team_owner_id, add the new column and copy data
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'team_invites' AND column_name = 'user_id'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'team_invites' AND column_name = 'team_owner_id'
+  ) THEN
+    ALTER TABLE public.team_invites ADD COLUMN team_owner_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+    UPDATE public.team_invites SET team_owner_id = user_id WHERE team_owner_id IS NULL;
+    ALTER TABLE public.team_invites ALTER COLUMN team_owner_id SET NOT NULL;
+    RAISE NOTICE 'Migrated team_invites.user_id → team_owner_id';
+  END IF;
+END $$;
+
 ALTER TABLE public.team_invites ENABLE ROW LEVEL SECURITY;
+
+-- Drop old policies that reference user_id (safe if they don't exist)
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Owners manage own team_invites' AND tablename = 'team_invites') THEN
-    CREATE POLICY "Owners manage own team_invites" ON public.team_invites FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  DROP POLICY IF EXISTS "Owners manage own team_invites" ON public.team_invites;
+EXCEPTION WHEN others THEN NULL;
+END $$;
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users can view invites sent to them" ON public.team_invites;
+EXCEPTION WHEN others THEN NULL;
+END $$;
+
+-- Recreate policies using team_owner_id
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Owners manage own team_invites v2' AND tablename = 'team_invites') THEN
+    CREATE POLICY "Owners manage own team_invites v2" ON public.team_invites FOR ALL USING (auth.uid() = team_owner_id) WITH CHECK (auth.uid() = team_owner_id);
   END IF;
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can view invites sent to them' AND tablename = 'team_invites') THEN
-    CREATE POLICY "Users can view invites sent to them" ON public.team_invites FOR SELECT
-      USING (auth.uid() = user_id OR email = (SELECT email FROM auth.users WHERE id = auth.uid()));
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can view invites sent to them v2' AND tablename = 'team_invites') THEN
+    CREATE POLICY "Users can view invites sent to them v2" ON public.team_invites FOR SELECT
+      USING (auth.uid() = team_owner_id OR email = (SELECT email FROM auth.users WHERE id = auth.uid()));
   END IF;
 END $$;
+
 
 
 
@@ -674,7 +707,8 @@ CREATE INDEX IF NOT EXISTS idx_drivetrain_swap_user_id  ON public.drivetrain_swa
 CREATE INDEX IF NOT EXISTS idx_fuel_log_user_id         ON public.fuel_log_entries(user_id);
 CREATE INDEX IF NOT EXISTS idx_fuel_log_team_id         ON public.fuel_log_entries(team_id);
 CREATE INDEX IF NOT EXISTS idx_fuel_log_date            ON public.fuel_log_entries(date DESC);
-CREATE INDEX IF NOT EXISTS idx_team_invites_owner       ON public.team_invites(user_id);
+CREATE INDEX IF NOT EXISTS idx_team_invites_owner       ON public.team_invites(team_owner_id);
+
 
 CREATE INDEX IF NOT EXISTS idx_team_invites_token       ON public.team_invites(token);
 CREATE INDEX IF NOT EXISTS idx_team_invites_email       ON public.team_invites(email);

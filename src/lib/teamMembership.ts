@@ -34,7 +34,7 @@ export interface TeamMembership {
 
 const toTeamInvite = (row: any): TeamInvite => ({
   id: row.id,
-  teamOwnerId: row.user_id,
+  teamOwnerId: row.team_owner_id,
 
   email: row.email,
   role: row.role || 'Crew',
@@ -47,6 +47,7 @@ const toTeamInvite = (row: any): TeamInvite => ({
   expiresAt: row.expires_at,
   acceptedAt: row.accepted_at
 });
+
 
 const toTeamMembership = (row: any): TeamMembership => ({
   id: row.id,
@@ -66,7 +67,7 @@ export const fetchTeamInvites = async (userId: string): Promise<TeamInvite[]> =>
   const { data, error } = await supabase
     .from('team_invites')
     .select('*')
-    .eq('user_id', userId)
+    .eq('team_owner_id', userId)
     .order('created_at', { ascending: false });
   
   if (error) {
@@ -80,7 +81,7 @@ export const fetchTeamInvites = async (userId: string): Promise<TeamInvite[]> =>
 /**
  * Create a team invite.
  * - Generates a unique token client-side
- * - Explicitly sets user_id (the current user's auth ID) on team_invites
+ * - Explicitly sets team_owner_id (the current user's auth ID) on team_invites
  * - Explicitly sets expires_at (7 days from now)
  * - Does NOT query auth.users at all
  * - Returns the invite record and a shareable link in /invite/TOKEN format
@@ -117,7 +118,7 @@ export const sendTeamInvite = async (params: {
     .from('team_invites')
     .insert({
       id: inviteId,                          // Explicitly set — never null
-      user_id: user.id,                      // Explicitly set — no DEFAULT needed
+      team_owner_id: user.id,                // Explicitly set — no DEFAULT needed
 
       email: params.email,
       role: params.role,
@@ -139,6 +140,7 @@ export const sendTeamInvite = async (params: {
 
   return { invite: toTeamInvite(data), inviteLink };
 };
+
 
 
 export const revokeTeamInvite = async (inviteId: string): Promise<void> => {

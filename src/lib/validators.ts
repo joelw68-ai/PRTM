@@ -712,7 +712,7 @@ export const TeamMembershipRowSchema = z.object({
 
 export const TeamInviteRowSchema = z.object({
   id: z.string(),
-  user_id: z.string(),
+  team_owner_id: z.string(),
 
   email: z.string(),
   role: ns,
@@ -725,6 +725,7 @@ export const TeamInviteRowSchema = z.object({
   expires_at: z.string(),
   accepted_at: ns,
 }).passthrough();
+
 
 // ─── Parts Usage Log ──────────────────────────────────────────
 

@@ -203,7 +203,12 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
       if (editingMaintenance) {
         await updateMaintenanceItem(editingMaintenance.id, itemToSave);
       } else {
-        const id = `MT-${String(maintenanceItems.length + 1).padStart(3, '0')}`;
+        // Use crypto.randomUUID for globally unique IDs — avoids collisions
+        // from length-based sequential IDs (MT-001, MT-002, …) which can
+        // collide after deletes, imports, or multi-device usage.
+        const id = typeof crypto !== 'undefined' && crypto.randomUUID
+          ? `MT-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
+          : `MT-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
         await addMaintenanceItem({ ...itemToSave, id });
       }
     } catch (error) {
@@ -214,6 +219,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
       setNewMaintenance(defaultMaintenance);
     }
   };
+
 
 
 
@@ -247,9 +253,15 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
       if (editingSFI) {
         await updateSFICertification(editingSFI.id, sfiToSave);
       } else {
-        const id = `SFI-${String(sfiCertifications.length + 1).padStart(3, '0')}`;
+        // Use crypto.randomUUID for globally unique IDs — avoids collisions
+        // from length-based sequential IDs (SFI-001, SFI-002, …) which can
+        // collide after deletes, imports, or multi-device usage.
+        const id = typeof crypto !== 'undefined' && crypto.randomUUID
+          ? `SFI-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
+          : `SFI-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
         await addSFICertification({ ...sfiToSave, id });
       }
+
     } catch (error) {
       console.error('Error saving SFI certification:', error);
     } finally {
