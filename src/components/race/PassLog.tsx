@@ -218,6 +218,20 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   // View mode: table or timeline
   const [viewMode, setViewMode] = useState<'table' | 'timeline'>('table');
 
+  // ═══════════════════════════════════════════════════════════════════
+  // REACTION TIME STRING STATE — allows typing negative values
+  // ═══════════════════════════════════════════════════════════════════
+  // A controlled <input type="number"> with value={number} prevents
+  // typing "-" because valueAsNumber is NaN for the intermediate "-"
+  // string, and the NaN guard blocks the state update, causing React
+  // to re-render with the old numeric value (erasing the "-").
+  //
+  // Fix: use a separate string state for the input display value.
+  // We sync the numeric formData.reactionTime only when the string
+  // parses to a valid number.  On blur, we clean up the display.
+  const [rtInputStr, setRtInputStr] = useState<string>('0');
+
+
 
 
 
@@ -314,10 +328,12 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   const [formData, setFormData] = useState<Partial<PassLogEntry>>(getDefaultPassState());
 
   // Reset form when modal closes
+
   useEffect(() => {
     if (!showModal) {
       setEditingPassId(null);
       setFormData(getDefaultPassState());
+      setRtInputStr('0');
       setTrackCity('');
       setTrackState('');
       setWeatherError(null);
@@ -325,6 +341,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       setTrackSaveSuccess(null);
     }
   }, [showModal]);
+
 
 
   // Auto-fetch weather when opening the modal for a new pass (not editing)
@@ -419,10 +436,12 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   const handleAddNew = () => {
     setEditingPassId(null);
     setFormData(getDefaultPassState());
+    setRtInputStr('0');
     setTrackCity('');
     setTrackState('');
     setShowModal(true);
   };
+
 
 
   // Open modal for editing existing pass
@@ -461,12 +480,15 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       crewChief: pass.crewChief,
       aborted: pass.aborted
     });
+    // Sync the reaction time string state for the text input
+    setRtInputStr(String(pass.reactionTime));
     // Parse location into separate city/state for the split fields
     const parsed = parseCityState(pass.location || '');
     setTrackCity(parsed.city);
     setTrackState(parsed.state);
     setShowModal(true);
   };
+
 
 
   // Handle saved track selection — uses ref to reset the native <select> after picking
@@ -1321,8 +1343,21 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                           {pass.round && <span className="text-slate-400 text-sm ml-1">({pass.round})</span>}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <span className="text-purple-400 font-mono">{pass.reactionTime.toFixed(3)}</span>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className={`font-mono ${pass.reactionTime < 0 ? 'text-red-400 font-bold' : 'text-purple-400'}`}>
+                              {pass.reactionTime.toFixed(3)}
+                            </span>
+                            {pass.reactionTime < 0 && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-red-500/20 border border-red-500/40 rounded text-[10px] font-bold text-red-400 uppercase tracking-wider leading-none">
+                                <svg className="w-2.5 h-2.5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                                  <circle cx="12" cy="12" r="5" />
+                                </svg>
+                                RL
+                              </span>
+                            )}
+                          </span>
                         </td>
+
                         <td className="px-4 py-3 text-center">
                           <span className="text-white font-mono">{pass.sixtyFoot.toFixed(3)}</span>
                         </td>
@@ -1817,21 +1852,73 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                   
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-sm text-slate-400 mb-1">Reaction Time</label>
+                      <div className="flex items-center gap-2 mb-1">
+                        <label className="block text-sm text-slate-400">Reaction Time</label>
+                        {(formData.reactionTime ?? 0) < 0 && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-red-500/20 border border-red-500/40 rounded text-[10px] font-bold text-red-400 uppercase tracking-wider animate-pulse">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="10" />
+                              <line x1="12" y1="8" x2="12" y2="12" />
+                              <line x1="12" y1="16" x2="12.01" y2="16" />
+                            </svg>
+                            Red Light
+                          </span>
+                        )}
+                      </div>
+                      {/* ═══════════════════════════════════════════════════════
+                          TEXT INPUT for Reaction Time — allows negative values
+                          ═══════════════════════════════════════════════════════
+                          Uses type="text" with inputMode="decimal" instead of
+                          type="number" because controlled number inputs prevent
+                          typing "-" (the intermediate NaN blocks state updates).
+                          The rtInputStr state holds the raw string; we parse to
+                          a number and sync formData.reactionTime on every valid
+                          keystroke, and clean up the display on blur.
+                      */}
                       <input
-                        type="number"
-                        step="0.001"
-                        value={formData.reactionTime}
+                        type="text"
+                        inputMode="decimal"
+                        value={rtInputStr}
                         onChange={(e) => {
-                          const num = e.target.valueAsNumber;
+                          const val = e.target.value;
+                          setRtInputStr(val);
+                          // Parse and sync to formData when the string is a valid number
+                          // Allow intermediate states: "", "-", "-0", "-0.", "0.", etc.
+                          const num = parseFloat(val);
                           if (!isNaN(num)) {
-                            setFormData({...formData, reactionTime: num});
+                            setFormData(prev => ({...prev, reactionTime: num}));
                           }
                         }}
-                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono"
+                        onBlur={() => {
+                          // On blur, clean up the display to show the actual numeric value
+                          const num = parseFloat(rtInputStr);
+                          if (isNaN(num)) {
+                            // If the string isn't a valid number (e.g. just "-"), reset to 0
+                            setRtInputStr('0');
+                            setFormData(prev => ({...prev, reactionTime: 0}));
+                          } else {
+                            // Normalize display (e.g. "-.005" → "-0.005")
+                            setRtInputStr(String(num));
+                          }
+                        }}
+                        className={`w-full bg-slate-900 rounded-lg px-3 py-2 font-mono ${
+                          (formData.reactionTime ?? 0) < 0
+                            ? 'border-2 border-red-500 text-red-400 ring-1 ring-red-500/30'
+                            : 'border border-slate-600 text-white'
+                        }`}
+                        placeholder="0.000"
                       />
-
+                      {(formData.reactionTime ?? 0) < 0 && (
+                        <p className="text-[11px] text-red-400/80 mt-1 flex items-center gap-1">
+                          <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                          </svg>
+                          Foul start — negative RT recorded
+                        </p>
+                      )}
                     </div>
+
+
                     <div>
                       <label className="block text-sm text-slate-400 mb-1">60' Time</label>
                       <input
