@@ -3,9 +3,17 @@
  * 
  * Manages configurable alert thresholds for pass-count-based maintenance items.
  * Thresholds determine when alerts fire as components approach their service intervals.
+ * 
+ * PERSISTENCE STRATEGY (March 2026):
+ *   • localStorage: Fast, synchronous reads for immediate UI rendering.
+ *   • Database (maintenance_alert_settings table): Durable, cross-device sync.
+ *   • On load: Read from localStorage first (instant), then async-fetch from DB.
+ *   • On save: Write to both localStorage AND the database.
+ *   • If DB write fails (offline, table doesn't exist), localStorage is the fallback.
  */
 
 import { MaintenanceItem } from '@/data/proModData';
+import { supabase } from '@/lib/supabase';
 
 export interface AlertThreshold {
   percentage: number;  // e.g., 80, 90, 100
@@ -47,7 +55,7 @@ const DEFAULT_SETTINGS: MaintenanceAlertSettings = {
 };
 
 /**
- * Load alert settings from localStorage
+ * Load alert settings from localStorage (synchronous, fast)
  */
 export function loadAlertSettings(): MaintenanceAlertSettings {
   try {
@@ -68,7 +76,7 @@ export function loadAlertSettings(): MaintenanceAlertSettings {
 }
 
 /**
- * Save alert settings to localStorage
+ * Save alert settings to localStorage (synchronous)
  */
 export function saveAlertSettings(settings: MaintenanceAlertSettings): void {
   try {
@@ -77,6 +85,85 @@ export function saveAlertSettings(settings: MaintenanceAlertSettings): void {
     console.warn('Failed to save maintenance alert settings:', e);
   }
 }
+
+// ============ DATABASE PERSISTENCE ============
+
+/**
+ * Load alert settings from the database (async).
+ * Returns null if the table doesn't exist or no settings are found.
+ * The caller should fall back to localStorage/defaults if null.
+ */
+export async function loadAlertSettingsFromDB(userId?: string): Promise<MaintenanceAlertSettings | null> {
+  try {
+    const { data, error } = await supabase
+      .from('maintenance_alert_settings')
+      .select('*')
+      .eq('alert_type', 'global')
+      .maybeSingle();
+
+    if (error) {
+      // Table may not exist yet — silently return null
+      console.warn('[maintenanceAlerts] DB load failed (table may not exist):', error.message);
+      return null;
+    }
+
+    if (!data) return null;
+
+    // Reconstruct MaintenanceAlertSettings from the DB row
+    const settings: MaintenanceAlertSettings = {
+      enabled: data.is_enabled ?? true,
+      showToastNotifications: data.notify_toast ?? true,
+      showBellAlerts: data.notify_bell ?? true,
+      thresholds: DEFAULT_SETTINGS.thresholds.map(t => ({ ...t })), // Use defaults
+    };
+
+    // Also sync to localStorage so next load is instant
+    saveAlertSettings(settings);
+
+    return settings;
+  } catch (e) {
+    console.warn('[maintenanceAlerts] Unexpected error loading from DB:', e);
+    return null;
+  }
+}
+
+/**
+ * Save alert settings to the database (async, fire-and-forget safe).
+ * Also saves to localStorage for instant reads.
+ * Silently fails if the table doesn't exist.
+ */
+export async function saveAlertSettingsToDB(
+  settings: MaintenanceAlertSettings,
+  userId?: string
+): Promise<void> {
+  // Always save to localStorage first (synchronous, guaranteed)
+  saveAlertSettings(settings);
+
+  try {
+    const payload: Record<string, any> = {
+      id: 'global_settings',
+      alert_type: 'global',
+      is_enabled: settings.enabled,
+      notify_toast: settings.showToastNotifications,
+      notify_bell: settings.showBellAlerts,
+      threshold_pct: settings.thresholds.find(t => t.severity === 'info')?.percentage ?? 80,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (userId) payload.user_id = userId;
+
+    const { error } = await supabase
+      .from('maintenance_alert_settings')
+      .upsert(payload);
+
+    if (error) {
+      console.warn('[maintenanceAlerts] DB save failed (table may not exist):', error.message);
+    }
+  } catch (e) {
+    console.warn('[maintenanceAlerts] Unexpected error saving to DB:', e);
+  }
+}
+
 
 /**
  * Get the default settings (for reset)

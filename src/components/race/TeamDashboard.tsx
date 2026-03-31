@@ -37,8 +37,9 @@ interface ActivityItem {
   actor_role: string;
   category: string;
   metadata: Record<string, any>;
-  car_id: string;
+  car_id?: string; // Optional — single-car app
   created_at: string;
+
 }
 
 const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }) => {
@@ -112,11 +113,11 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
         action_label: actionLabel,
         description,
         actor_name: memberName,
-        actor_role: currentRole,
         category,
         metadata,
-        car_id: selectedCarId || null
+        // Single-car app — no car_id needed
       });
+
       if (error) console.warn('[TeamDashboard] Failed to log activity:', error);
     } catch (err) {
       console.warn('[TeamDashboard] Activity log error:', err);

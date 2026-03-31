@@ -514,11 +514,10 @@ const MaintenanceTemplates: React.FC<MaintenanceTemplatesProps> = ({ onApplyTemp
       const selectedItems = applyingTemplate.items.filter(i => applySelectedItems.has(i.id));
 
       for (const templateItem of selectedItems) {
-        // Check if a similar maintenance item already exists for this car
+        // Check if a similar maintenance item already exists (single-car app — no car_id filter)
         const existing = maintenanceItems.find(m =>
           m.component.toLowerCase() === templateItem.component.toLowerCase() &&
-          m.category === templateItem.category &&
-          (applyCarId ? m.car_id === applyCarId : true)
+          m.category === templateItem.category
         );
 
         if (existing) {
@@ -537,12 +536,13 @@ const MaintenanceTemplates: React.FC<MaintenanceTemplatesProps> = ({ onApplyTemp
           status: 'Good',
           priority: templateItem.priority,
           notes: templateItem.notes,
-          car_id: applyCarId || undefined,
         };
 
         await addMaintenanceItem(newItem);
         addedCount++;
       }
+
+
 
       setShowApplyModal(false);
       setApplyingTemplate(null);
@@ -1358,12 +1358,12 @@ const MaintenanceTemplates: React.FC<MaintenanceTemplatesProps> = ({ onApplyTemp
 
               <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-1">
                 {applyingTemplate.items.map(item => {
+
                   const isSelected = applySelectedItems.has(item.id);
-                  // Check if similar item already exists
+                  // Check if similar item already exists (single-car app — no car_id filter)
                   const alreadyExists = maintenanceItems.some(m =>
                     m.component.toLowerCase() === item.component.toLowerCase() &&
-                    m.category === item.category &&
-                    (applyCarId ? m.car_id === applyCarId : true)
+                    m.category === item.category
                   );
 
                   return (

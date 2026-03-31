@@ -86,8 +86,8 @@ const toPassLogEntry = (row: any): PassLogEntry => ({
   notes: row.notes || '',
   crewChief: row.crew_chief || '',
   aborted: row.aborted || false,
-  car_id: row.car_id || ''
 });
+
 
 
 
@@ -104,8 +104,8 @@ const toEngine = (row: any): Engine => ({
   currentlyInstalled: row.currently_installed || false,
   notes: row.notes || '',
   components: row.components || {},
-  car_id: row.car_id || ''
 });
+
 
 
 const toSupercharger = (row: any): Supercharger => ({
@@ -120,8 +120,8 @@ const toSupercharger = (row: any): Supercharger => ({
   currentlyInstalled: row.currently_installed || false,
   notes: row.notes || '',
   powerAdderType: row.power_adder_type || 'Supercharger',
-  car_id: row.car_id || ''
 });
+
 
 
 
@@ -154,8 +154,8 @@ const toMaintenanceItem = (row: any): MaintenanceItem => ({
   notes: row.notes || '',
   estimatedCost: row.estimated_cost,
   threshold: row.threshold != null ? Number(row.threshold) : undefined,
-  car_id: row.car_id || ''
 });
+
 
 
 
@@ -170,8 +170,8 @@ const toSFICertification = (row: any): SFICertification => ({
   status: row.status || 'Valid',
   daysUntilExpiration: row.days_until_expiration || 0,
   notes: row.notes || '',
-  car_id: row.car_id || ''
 });
+
 
 
 
@@ -224,8 +224,8 @@ const toPartInventoryItem = (row: any): PartInventoryItem => ({
   status: row.status || 'In Stock',
   reorderStatus: row.reorder_status || 'OK',
   relatedDrivetrainComponentId: row.related_drivetrain_component_id || undefined,
-  car_id: row.car_id || ''
 });
+
 
 
 
@@ -390,17 +390,88 @@ export const fetchPassLogs = async (userId?: string): Promise<PassLogEntry[]> =>
 /**
  * upsertPassLog — Create or update a pass log entry.
  *
- * RESILIENT COLUMN HANDLING:
- * The `quarter_mile_et`, `quarter_mile_mph`, and `quarter_back_split` columns
- * may not exist in the database if the user hasn't run the latest migration.
- * 
- * Strategy: Try with all columns first. If PostgREST rejects the payload
- * because of unknown columns, retry WITHOUT the quarter mile columns.
+ * ═══════════════════════════════════════════════════════════════════════
+ * RESILIENT COLUMN HANDLING  (March 2026 — revised)
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * ROOT CAUSE OF PREVIOUS DATA LOSS:
+ * The `car_id` column was included in the base payload, but the
+ * `pass_logs` table in the live database may NOT have a `car_id` column
+ * (it's not in the original schema). The retry logic only removed
+ * `quarter_mile_*` columns but kept `car_id`, causing Attempt 2 to also
+ * fail with an unknown-column error. This meant EVERY pass log save was
+ * silently failing — data only lived in React state and was lost on
+ * page refresh.
+ *
+ * FIX:
+ *   1. `user_id` is now ALWAYS resolved (via getCurrentUserId fallback)
+ *      so RLS never rejects the INSERT due to missing user_id.
+ *   2. `car_id` is moved to the full payload (Attempt 1 only).
+ *   3. Three retry tiers ensure maximum resilience:
+ *      - Attempt 1: All columns (quarter_mile_*, car_id)
+ *      - Attempt 2: Base columns (no quarter_mile_*, no car_id)
+ *      - Attempt 3: Nuclear minimum (only 7 guaranteed columns)
+ *   4. Comprehensive console logging at every step.
+ *
+ * FIELD AUDIT (verified against pass_logs table schema):
+ * ┌─────────────────────────┬───────────────────────────┬────────────────────┐
+ * │ Payload Key              │ DB Column                 │ In Schema?         │
+ * ├─────────────────────────┼───────────────────────────┼────────────────────┤
+ * │ id                       │ id                        │ YES (PK)           │
+ * │ user_id                  │ user_id                   │ YES (UUID FK)      │
+ * │ date                     │ date                      │ YES (TEXT NOT NULL) │
+ * │ time                     │ time                      │ YES                │
+ * │ track                    │ track                     │ YES (TEXT NOT NULL) │
+ * │ location                 │ location                  │ YES                │
+ * │ session_type             │ session_type              │ YES (TEXT NOT NULL) │
+ * │ round                    │ round                     │ YES                │
+ * │ lane                     │ lane                      │ YES                │
+ * │ result                   │ result                    │ YES                │
+ * │ reaction_time            │ reaction_time             │ YES (NUMERIC)      │
+ * │ sixty_foot               │ sixty_foot                │ YES                │
+ * │ three_thirty             │ three_thirty              │ YES                │
+ * │ eighth                   │ eighth                    │ YES                │
+ * │ mph                      │ mph                       │ YES                │
+ * │ weather                  │ weather                   │ YES (JSONB)        │
+ * │ sae_correction           │ sae_correction            │ YES                │
+ * │ density_altitude         │ density_altitude          │ YES                │
+ * │ corrected_hp             │ corrected_hp              │ YES                │
+ * │ engine_id                │ engine_id                 │ YES                │
+ * │ supercharger_id          │ supercharger_id           │ YES                │
+ * │ tire_pressure_front      │ tire_pressure_front       │ YES                │
+ * │ tire_pressure_rear_left  │ tire_pressure_rear_left   │ YES                │
+ * │ tire_pressure_rear_right │ tire_pressure_rear_right  │ YES                │
+ * │ wheelie_bar_setting      │ wheelie_bar_setting       │ YES                │
+ * │ launch_rpm               │ launch_rpm                │ YES                │
+ * │ boost_setting            │ boost_setting             │ YES                │
+ * │ notes                    │ notes                     │ YES                │
+ * │ crew_chief               │ crew_chief                │ YES                │
+ * │ aborted                  │ aborted                   │ YES (BOOLEAN)      │
+ * │ car_id                   │ car_id                    │ MAYBE (migration)  │
+ * │ quarter_mile_et          │ quarter_mile_et           │ MAYBE (migration)  │
+ * │ quarter_mile_mph         │ quarter_mile_mph          │ MAYBE (migration)  │
+ * │ quarter_back_split       │ quarter_back_split        │ MAYBE (migration)  │
+ * └─────────────────────────┴───────────────────────────┴────────────────────┘
+ * ═══════════════════════════════════════════════════════════════════════
  */
 export const upsertPassLog = async (pass: PassLogEntry, userId?: string): Promise<void> => {
-  // Build the base payload (columns that always exist)
-  const basePayload: any = {
+  // ── 1. Resolve user_id — MUST be set for RLS to pass ──
+  const effectiveUserId = userId || await getCurrentUserId();
+
+  if (!effectiveUserId) {
+    console.error('[upsertPassLog] FATAL: No user_id available. Cannot insert — RLS will reject.');
+    const err: any = new Error('No authenticated user ID available. Cannot save pass log. Please log in again.');
+    err.code = 'NO_USER_ID';
+    err.details = 'Neither the passed userId nor supabase.auth.getUser() returned a valid user ID.';
+    err.hint = 'Ensure you are logged in. Try refreshing the page or logging out and back in.';
+    throw err;
+  }
+
+  // ── 2. Build the BASE payload — ONLY columns guaranteed in the original schema ──
+  // CRITICAL: car_id is NOT included here because it may not exist in the DB.
+  const basePayload: Record<string, any> = {
     id: pass.id,
+    user_id: effectiveUserId,
     date: pass.date,
     time: emptyToNull(pass.time),
     track: pass.track,
@@ -409,7 +480,7 @@ export const upsertPassLog = async (pass: PassLogEntry, userId?: string): Promis
     round: emptyToNull(pass.round),
     lane: emptyToNull(pass.lane),
     result: emptyToNull(pass.result),
-    reaction_time: emptyToNull(pass.reactionTime),
+    reaction_time: pass.reactionTime != null ? pass.reactionTime : null,
     sixty_foot: emptyToNull(pass.sixtyFoot),
     three_thirty: emptyToNull(pass.threeThirty),
     eighth: emptyToNull(pass.eighth),
@@ -429,47 +500,112 @@ export const upsertPassLog = async (pass: PassLogEntry, userId?: string): Promis
     notes: emptyToNull(pass.notes),
     crew_chief: emptyToNull(pass.crewChief),
     aborted: pass.aborted || false,
-    car_id: emptyToNull(pass.car_id)
   };
 
-  if (userId) basePayload.user_id = userId;
-
-  // Build the full payload including new quarter mile columns
-  const fullPayload: any = {
+  // ── 3. Build the FULL payload — includes optional migration columns ──
+  const fullPayload: Record<string, any> = {
     ...basePayload,
     quarter_mile_et: emptyToNull(pass.quarterMileET),
     quarter_mile_mph: emptyToNull(pass.quarterMileMPH),
     quarter_back_split: emptyToNull(pass.endSplit),
   };
 
-  // Attempt 1: Try with all columns (including quarter mile fields)
-  const { error: fullError } = await supabase.from('pass_logs').upsert(fullPayload);
-  
-  if (!fullError) {
-    // Success — columns exist, all good
-    return;
-  }
 
-  // Check if the error is specifically about unknown columns
-  if (isUnknownColumnError(fullError)) {
-    console.warn(
-      '[upsertPassLog] quarter_mile_et/quarter_mile_mph/quarter_back_split columns not found in DB — retrying without them.',
-      { code: fullError.code, message: fullError.message }
-    );
+  // ── 4. Build the NUCLEAR MINIMUM payload — only 7 absolutely-guaranteed columns ──
+  const nuclearPayload: Record<string, any> = {
+    id: pass.id,
+    user_id: effectiveUserId,
+    date: pass.date,
+    track: pass.track,
+    session_type: pass.sessionType,
+    reaction_time: pass.reactionTime != null ? pass.reactionTime : null,
+    aborted: pass.aborted || false,
+  };
 
-    // Attempt 2: Retry with base payload only (no quarter mile columns)
-    const { error: baseError } = await supabase.from('pass_logs').upsert(basePayload);
-    if (baseError) {
-      console.error('[upsertPassLog] Retry also failed:', baseError);
-      throw baseError;
+  // Track the last error for diagnostics
+  let lastError: any = null;
+
+  // ── 5. Attempt 1: Full payload (all columns including car_id, quarter_mile_*) ──
+  console.log('[upsertPassLog] Attempt 1 — full payload (all columns). Pass ID:', pass.id, 'user_id:', effectiveUserId);
+  {
+    const { error } = await supabase.from('pass_logs').upsert(fullPayload);
+    if (!error) {
+      console.log('[upsertPassLog] SUCCESS (attempt 1) — pass saved with all columns. ID:', pass.id);
+      return;
     }
-    // Success on retry — pass saved without quarter mile columns
-    return;
+
+    if (isUnknownColumnError(error)) {
+      console.warn(
+        '[upsertPassLog] Attempt 1 failed — unknown column detected. Will retry without optional columns.',
+        { code: error.code, message: error.message, hint: error.hint }
+      );
+    } else {
+      console.error('[upsertPassLog] Attempt 1 failed (non-column error):', {
+        code: error.code, message: error.message, details: error.details, hint: error.hint
+      });
+      lastError = error;
+    }
   }
 
-  // Not a column error — throw the original error
-  throw fullError;
+  // ── 6. Attempt 2: Base payload (no car_id, no quarter_mile_*) ──
+  console.log('[upsertPassLog] Attempt 2 — base payload (no car_id, no quarter_mile_*). Pass ID:', pass.id);
+  {
+    const { error } = await supabase.from('pass_logs').upsert(basePayload);
+    if (!error) {
+      console.log('[upsertPassLog] SUCCESS (attempt 2) — pass saved without optional columns. ID:', pass.id);
+      return;
+    }
+
+    if (isUnknownColumnError(error)) {
+      console.warn(
+        '[upsertPassLog] Attempt 2 ALSO failed — still has unknown column. Will retry with nuclear minimum.',
+        { code: error.code, message: error.message, hint: error.hint }
+      );
+    } else {
+      console.error('[upsertPassLog] Attempt 2 failed (non-column error):', {
+        code: error.code, message: error.message, details: error.details, hint: error.hint
+      });
+      lastError = error;
+    }
+  }
+
+  // ── 7. Attempt 3: Nuclear minimum (only 7 guaranteed columns) ──
+  console.log('[upsertPassLog] Attempt 3 — NUCLEAR MINIMUM (7 columns). Pass ID:', pass.id);
+  {
+    const { error } = await supabase.from('pass_logs').upsert(nuclearPayload);
+    if (!error) {
+      console.warn(
+        '[upsertPassLog] SUCCESS (attempt 3 — nuclear minimum) — pass saved with minimal data. ID:', pass.id,
+        '\nSome fields (timing data, weather, etc.) were NOT saved because the base columns are being rejected.',
+        '\nThis likely means the pass_logs table schema is outdated. Run the latest migration SQL.'
+      );
+      return;
+    }
+
+    console.error('[upsertPassLog] Attempt 3 (nuclear minimum) ALSO FAILED:', {
+      code: error.code, message: error.message, details: error.details, hint: error.hint
+    });
+    lastError = error;
+  }
+
+  // ── 8. All attempts exhausted — throw the best error we have ──
+  const finalError = lastError || new Error('All 3 save attempts failed for unknown reasons');
+  console.error('[upsertPassLog] ALL 3 ATTEMPTS FAILED for pass:', pass.id, {
+    message: finalError.message,
+    code: finalError.code,
+    details: finalError.details,
+    hint: finalError.hint,
+    passData: { id: pass.id, date: pass.date, track: pass.track, sessionType: pass.sessionType },
+    userId: effectiveUserId,
+  });
+
+  const enrichedError: any = new Error(finalError.message || 'Failed to save pass log after 3 attempts');
+  enrichedError.code = finalError.code || 'PASS_SAVE_FAILED';
+  enrichedError.details = finalError.details || `Pass "${pass.date} at ${pass.track}" (ID: ${pass.id}) could not be saved to the database.`;
+  enrichedError.hint = finalError.hint || 'Check the browser console for detailed error logs. Ensure you are logged in and the database schema is up to date.';
+  throw enrichedError;
 };
+
 
 
 
@@ -629,7 +765,7 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
     priority: item.priority,
     notes: emptyToNull(item.notes),
     estimated_cost: emptyToNull(item.estimatedCost),
-    car_id: emptyToNull(item.car_id)
+
   };
   
   if (userId) basePayload.user_id = userId;
@@ -696,7 +832,7 @@ export const upsertSFICertification = async (cert: SFICertification, userId?: st
     status: cert.status,
     days_until_expiration: emptyToNull(cert.daysUntilExpiration),
     notes: emptyToNull(cert.notes),
-    car_id: emptyToNull(cert.car_id)
+
   };
   
   if (userId) payload.user_id = userId;

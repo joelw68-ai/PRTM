@@ -57,10 +57,8 @@ export interface PassLogEntry {
   
   // Aborted pass flag - when true, data is excluded from performance analytics/trends but counted in pass totals
   aborted?: boolean;
-
-  // Multi-car support
-  car_id?: string;
 }
+
 
 
 
@@ -79,9 +77,6 @@ export interface Engine {
   
   // Internal Components
   components: EngineComponents;
-
-  // Multi-car support
-  car_id?: string;
 }
 
 
@@ -144,9 +139,8 @@ export interface Supercharger {
   currentlyInstalled: boolean;
   notes: string;
   powerAdderType?: PowerAdderType;
-  // Multi-car support
-  car_id?: string;
 }
+
 
 
 export interface ComponentTracker {
@@ -165,6 +159,7 @@ export interface ComponentTracker {
 }
 
 export interface MaintenanceItem {
+
   id: string;
   component: string;
   category: string;
@@ -178,13 +173,11 @@ export interface MaintenanceItem {
   notes: string;
   estimatedCost?: number;
   threshold?: number; // Alert threshold - number of passes remaining before alert triggers
-  // Multi-car support
-  car_id?: string;
 }
 
 
-
 export interface SFICertification {
+
   id: string;
   item: string;
   sfiSpec: string;
@@ -195,10 +188,7 @@ export interface SFICertification {
   status: 'Valid' | 'Expiring Soon' | 'Expired';
   daysUntilExpiration: number;
   notes: string;
-  // Multi-car support
-  car_id?: string;
 }
-
 
 
 

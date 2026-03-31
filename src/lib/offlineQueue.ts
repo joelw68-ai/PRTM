@@ -9,7 +9,9 @@
  * provide exponential backoff retry for permanently failed items.
  */
 
+import { supabase } from '@/lib/supabase';
 import * as db from '@/lib/database';
+
 import {
   addSyncEvent,
   getModuleLabelForOperation,
@@ -226,6 +228,79 @@ const saveQueue = (queue: QueueItem[] | SerializedQueueItem[]): void => {
 export const getPendingCount = (): number => {
   return getSerializedQueue().length;
 };
+
+// Writes queued operations to the offline_queue table when the DB is reachable.
+// Falls back to localStorage-only when the database is unreachable.
+// This prevents data loss when the browser cache is cleared.
+
+/**
+ * Persist a queue item to the offline_queue database table.
+ * Returns true if the DB write succeeded, false if it failed
+ * (in which case localStorage is the only copy).
+ */
+const persistToDb = async (item: SerializedQueueItem): Promise<boolean> => {
+  try {
+    const payload: Record<string, any> = {
+      id: item.id,
+      operation_type: item.operation,
+      table_name: getTableNameForOperation(item.operation),
+      payload: item.data,
+      status: 'pending',
+      retry_count: item.retryCount,
+      max_retries: item.maxRetries,
+      label: item.label,
+      created_at: new Date(item.timestamp).toISOString(),
+    };
+    if (item.userId) payload.user_id = item.userId;
+
+    const { error } = await supabase.from('offline_queue').upsert(payload);
+    if (error) {
+      console.warn('[OfflineQueue] DB persist failed (table may not exist):', error.message);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Remove a processed item from the offline_queue database table.
+ * Fire-and-forget — failures are logged but never thrown.
+ */
+const removeFromDb = async (id: string): Promise<void> => {
+  try {
+    await supabase.from('offline_queue').delete().eq('id', id);
+  } catch {
+    // Silent — localStorage is the primary store
+  }
+};
+
+/**
+ * Map an operation type to its target table name.
+ */
+const getTableNameForOperation = (operation: string): string => {
+  if (operation.includes('PassLog')) return 'pass_logs';
+  if (operation.includes('Engine') && !operation.includes('Swap')) return 'engines';
+  if (operation.includes('Supercharger')) return 'superchargers';
+  if (operation.includes('CylinderHead')) return 'cylinder_heads';
+  if (operation.includes('MaintenanceItem')) return 'maintenance_items';
+  if (operation.includes('SFICertification')) return 'sfi_certifications';
+  if (operation.includes('PartInventory')) return 'parts_inventory';
+  if (operation.includes('TrackWeather')) return 'track_weather_history';
+  if (operation.includes('Checklist')) return 'checklists';
+  if (operation.includes('EngineSwap')) return 'engine_swap_logs';
+  if (operation.includes('RaceEvent')) return 'race_events';
+  if (operation.includes('TeamMember')) return 'team_members';
+  if (operation.includes('SavedTrack') || operation.includes('TrackVisit')) return 'saved_tracks';
+  if (operation.includes('ToDo')) return 'todo_items';
+  if (operation.includes('TeamNote')) return 'team_notes';
+  if (operation.includes('LaborEntry')) return 'labor_entries';
+  if (operation.includes('FuelLog')) return 'fuel_log_entries';
+  return 'unknown';
+};
+
+
 
 /**
  * Add an operation to the offline queue.

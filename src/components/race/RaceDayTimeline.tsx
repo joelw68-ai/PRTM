@@ -86,7 +86,8 @@ const TYPE_CONFIG: Record<TimelineEntryType, { label: string; color: string; bgC
   activity:    { label: 'Activity',    color: 'bg-cyan-500',    bgColor: 'bg-cyan-500/10',    borderColor: 'border-cyan-500/30',    iconColor: 'text-cyan-400',    icon: Activity },
 };
 
-const isEmptyCarId = (id?: string) => !id || id === '' || id === 'all';
+
+
 
 const RaceDayTimeline: React.FC = () => {
   const {
@@ -244,12 +245,14 @@ const RaceDayTimeline: React.FC = () => {
 
     const entries: TimelineEntry[] = [];
     const cfg = TYPE_CONFIG;
-    const carFilter = (_carId?: string) => true; // Single-car mode — no filtering needed
+
+
 
 
     // 1. PASS LOG ENTRIES
     passLogs
-      .filter(p => isDateInEvent(p.date, selectedEvent) && carFilter(p.car_id))
+      .filter(p => isDateInEvent(p.date, selectedEvent))
+
       .forEach(pass => {
         // Calculate back split for quarter-mile
         const qmBackSplit = (() => {
@@ -305,10 +308,10 @@ const RaceDayTimeline: React.FC = () => {
           });
         }
       });
-
-    // 2. MAINTENANCE ACTIONS
+    // 2. MAINTENANCE ACTIONS — single-car mode, no car_id filter
     maintenanceItems
-      .filter(m => isDateInEvent(m.lastService, selectedEvent) && carFilter(m.car_id))
+      .filter(m => isDateInEvent(m.lastService, selectedEvent))
+
       .forEach(item => {
         const actor = resolveActor(undefined, undefined, undefined);
         entries.push({

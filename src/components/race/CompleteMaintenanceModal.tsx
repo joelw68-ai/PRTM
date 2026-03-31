@@ -193,8 +193,9 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
 
       // 2) Deduct each selected part from inventory AND write parts usage history
       const lowStockParts: { id: string; partNumber: string; description: string; onHand: number; minQuantity: number; vendor: string }[] = [];
-      const carName = item.car_id ? carGetLabel(item.car_id) : 'Unassigned';
+      const carName = 'Race Car'; // Single-car app
       const maintenanceReason = `Maintenance: ${item.component}`;
+
 
       for (const sp of selectedParts) {
         const inventoryPart = partsInventory.find(p => p.id === sp.partId);
@@ -228,8 +229,8 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
             time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
             installedOn: maintenanceReason,
             passesAtAction: passNumber ? parseInt(passNumber) : item.currentPasses,
-            quantityUsed: sp.quantity,
-            carId: item.car_id || undefined,
+            carId: undefined, // Single-car app — no car_id
+
             carName: carName,
             cost: inventoryPart.unitCost * sp.quantity,
             performedBy: authUser?.email || 'System',

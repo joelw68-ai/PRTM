@@ -88,8 +88,9 @@ export const EngineRowSchema = z.object({
   currently_installed: nb,
   notes: ns,
   components: nj,
-  car_id: ns,
+  // car_id removed — single-car architecture. toEngine() and upsertEngine() do not read/write car_id.
 }).passthrough();
+
 
 // ─── Superchargers ────────────────────────────────────────────
 
@@ -104,8 +105,9 @@ export const SuperchargerRowSchema = z.object({
   status: ns,
   currently_installed: nb,
   notes: ns,
-  car_id: ns,
+  // car_id removed — single-car architecture. toSupercharger() and upsertSupercharger() do not read/write car_id.
 }).passthrough();
+
 
 // ─── Cylinder Heads ───────────────────────────────────────────
 
@@ -210,8 +212,9 @@ export const PartInventoryRowSchema = z.object({
   status: ns,
   reorder_status: ns,
   related_drivetrain_component_id: ns,
-  car_id: ns,
+  // car_id removed — single-car architecture. toPartInventoryItem() and upsertPartInventory() do not read/write car_id.
 }).passthrough();
+
 
 // ─── Track Weather History ────────────────────────────────────
 

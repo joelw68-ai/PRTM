@@ -7,14 +7,15 @@ import { getLocalDateString } from '@/lib/utils';
 import {
   Search, Filter, X, ChevronDown, ChevronUp, Download,
   RotateCcw, Thermometer, Droplets, Gauge, Calendar,
-  Car, Trophy, FileText, SlidersHorizontal, Eye, EyeOff
+  Trophy, FileText, SlidersHorizontal, Eye, EyeOff
 } from 'lucide-react';
+
+
 
 export interface AdvancedFilters {
   dateFrom: string;
   dateTo: string;
   trackName: string;
-  carId: string;
   etMin: string;
   etMax: string;
   mphMin: string;
@@ -34,7 +35,6 @@ const emptyFilters: AdvancedFilters = {
   dateFrom: '',
   dateTo: '',
   trackName: '',
-  carId: '',
   etMin: '',
   etMax: '',
   mphMin: '',
@@ -49,6 +49,7 @@ const emptyFilters: AdvancedFilters = {
   result: '',
   notesKeyword: '',
 };
+
 
 interface PassLogAdvancedSearchProps {
   passLogs: PassLogEntry[];
@@ -103,11 +104,8 @@ const PassLogAdvancedSearch: React.FC<PassLogAdvancedSearchProps> = ({
         p.location.toLowerCase().includes(q)
       );
     }
+    // Single-car app — no car filter needed
 
-    // Car
-    if (filters.carId) {
-      result = result.filter(p => p.car_id === filters.carId);
-    }
 
     // ET Range
     if (filters.etMin) {

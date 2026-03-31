@@ -17,7 +17,9 @@
 --   PART 1: Add missing columns to 16 existing tables (38 columns total)
 
 --   PART 2: Set DEFAULT auth.uid() on all user_id columns
---   PART 3: Create 10 newer tables that may not exist yet
+--   PART 3: Create 15 newer tables that may not exist yet (29-43)
+
+
 --   PART 4: Create all performance indexes
 --   PART 5: Create/update RPC functions, helper functions, trigger
 --   PART 6: Ensure storage bucket + policies exist
@@ -57,21 +59,21 @@ EXCEPTION WHEN others THEN
 END $$;
 
 
+
 -- ============================================================
--- 2. engines — add displacement, car_id
+-- 2. engines — add displacement
 -- ============================================================
+-- NOTE: car_id column removed — single-car architecture.
 ALTER TABLE public.engines
   ADD COLUMN IF NOT EXISTS displacement TEXT;
 
-ALTER TABLE public.engines
-  ADD COLUMN IF NOT EXISTS car_id TEXT;
-
 
 -- ============================================================
--- 3. superchargers — add car_id
+-- 3. superchargers — (no new columns needed)
 -- ============================================================
-ALTER TABLE public.superchargers
-  ADD COLUMN IF NOT EXISTS car_id TEXT;
+-- NOTE: car_id column removed — single-car architecture.
+
+
 
 
 
@@ -128,16 +130,15 @@ END $$;
 
 
 -- ============================================================
--- 9. parts_inventory — add name, related_drivetrain_component_id, car_id
+-- 9. parts_inventory — add name, related_drivetrain_component_id
 -- ============================================================
+-- NOTE: car_id column removed — single-car architecture.
 ALTER TABLE public.parts_inventory
   ADD COLUMN IF NOT EXISTS name TEXT;
 
 ALTER TABLE public.parts_inventory
   ADD COLUMN IF NOT EXISTS related_drivetrain_component_id TEXT;
 
-ALTER TABLE public.parts_inventory
-  ADD COLUMN IF NOT EXISTS car_id TEXT;
 
 
 -- ============================================================
@@ -341,7 +342,13 @@ CREATE TABLE IF NOT EXISTS public.drivetrain_components (
   currently_installed   BOOLEAN DEFAULT FALSE,
   notes                 TEXT,
   components            JSONB DEFAULT '{}'::jsonb,
-  car_id                TEXT,
+  -- NOTE: car_id column REMOVED for new deployments (single-car architecture).
+  -- The TypeScript DrivetrainComponent interface, toDrivetrainComponent mapper,
+  -- and upsertDrivetrainComponent function do NOT read or write car_id.
+  -- Existing databases that already have this column are unaffected —
+  -- .passthrough() in the Zod schema silently ignores extra columns on SELECT,
+  -- and the upsert payload simply never includes car_id.
+
   created_at            TIMESTAMPTZ DEFAULT NOW(),
   updated_at            TIMESTAMPTZ DEFAULT NOW()
 );
@@ -649,19 +656,219 @@ DO $$ BEGIN
 END $$;
 
 
+-- ============================================================
+-- 39. PASS HISTORY (audit trail for "Record Pass" in Setup Library)
+-- ============================================================
+-- Referenced by: database.ts insertPassHistory / fetchPassHistory / deletePassHistory
+-- Validated by:  validators.ts PassHistoryRowSchema
+-- Single-car architecture: no car_id or car_name columns.
+CREATE TABLE IF NOT EXISTS public.pass_history (
+  id                    TEXT PRIMARY KEY,
+  user_id               UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
+  pass_count            INTEGER DEFAULT 1,
+  components_updated    INTEGER DEFAULT 0,
+  flagged_count         INTEGER DEFAULT 0,
+  flagged_details       JSONB DEFAULT '[]'::jsonb,
+  engines_updated       JSONB DEFAULT '[]'::jsonb,
+  heads_updated         JSONB DEFAULT '[]'::jsonb,
+  power_adders_updated  JSONB DEFAULT '[]'::jsonb,
+  drivetrain_updated    JSONB DEFAULT '[]'::jsonb,
+  notes                 TEXT,
+  created_at            TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.pass_history ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage own pass_history' AND tablename = 'pass_history') THEN
+    CREATE POLICY "Users manage own pass_history" ON public.pass_history FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+END $$;
+
+
+-- ============================================================
+-- 40. MAINTENANCE ALERT SETTINGS
+-- ============================================================
+-- Persists per-component alert thresholds, snooze states, and
+-- notification preferences to the database. Replaces the
+-- localStorage-only approach in maintenanceAlerts.ts so that
+-- settings survive browser cache clears and sync across devices.
+--
+-- Referenced by: maintenanceAlerts.ts (loadAlertSettingsFromDB / saveAlertSettingsToDB)
+-- Related table: maintenance_items (the items whose alerts these settings control)
+CREATE TABLE IF NOT EXISTS public.maintenance_alert_settings (
+  id                TEXT PRIMARY KEY,
+  user_id           UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
+  component_id      TEXT,
+  alert_type        TEXT NOT NULL DEFAULT 'threshold',
+  threshold_passes  INTEGER DEFAULT 0,
+  threshold_pct     INTEGER DEFAULT 80,
+  snooze_until      TIMESTAMPTZ,
+  is_enabled        BOOLEAN DEFAULT TRUE,
+  notify_toast      BOOLEAN DEFAULT TRUE,
+  notify_bell       BOOLEAN DEFAULT TRUE,
+  notes             TEXT,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.maintenance_alert_settings ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage own maintenance_alert_settings' AND tablename = 'maintenance_alert_settings') THEN
+    CREATE POLICY "Users manage own maintenance_alert_settings" ON public.maintenance_alert_settings FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+END $$;
+
+
+-- ============================================================
+-- 41. COMPONENT PARTS (standalone parts for MainComponents)
+-- ============================================================
+-- Previously only created by the master schema and patched by
+-- sql_add_component_parts_columns.sql. Now consolidated here so
+-- new deployments get the table from the single migration file.
+--
+-- Referenced by: database.ts fetchComponentParts / upsertComponentPart /
+--                deleteComponentPart / bulkIncrementComponentPartPasses
+-- Related:       component_extra_fields (section 42)
+CREATE TABLE IF NOT EXISTS public.component_parts (
+  id                TEXT PRIMARY KEY,
+  user_id           UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
+  component_id      TEXT NOT NULL,
+  component_type    TEXT,
+  part_name         TEXT NOT NULL,
+  passes_on_part    INTEGER DEFAULT 0,
+  date_replaced     TEXT,
+  notes             TEXT,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.component_parts ENABLE ROW LEVEL SECURITY;
+
+-- Per-command RLS policies with NULL user_id handling for orphaned rows.
+-- Matches the policies in sql_add_component_parts_columns.sql.
+DO $$ BEGIN
+  -- Drop any old catch-all policy first (safe if it doesn't exist)
+  DROP POLICY IF EXISTS "Users manage own component_parts" ON public.component_parts;
+EXCEPTION WHEN others THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'component_parts_select_own' AND tablename = 'component_parts') THEN
+    CREATE POLICY "component_parts_select_own" ON public.component_parts FOR SELECT
+      USING (auth.uid() = user_id OR user_id IS NULL);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'component_parts_insert_own' AND tablename = 'component_parts') THEN
+    CREATE POLICY "component_parts_insert_own" ON public.component_parts FOR INSERT
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'component_parts_update_own' AND tablename = 'component_parts') THEN
+    CREATE POLICY "component_parts_update_own" ON public.component_parts FOR UPDATE
+      USING (auth.uid() = user_id OR user_id IS NULL)
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'component_parts_delete_own' AND tablename = 'component_parts') THEN
+    CREATE POLICY "component_parts_delete_own" ON public.component_parts FOR DELETE
+      USING (auth.uid() = user_id OR user_id IS NULL);
+  END IF;
+END $$;
+
+
+-- ============================================================
+-- 42. COMPONENT EXTRA FIELDS
+-- ============================================================
+-- Extra fields for MainComponents (head serials, removal dates,
+-- gear ratios, stator info). Stores arbitrary key-value pairs as JSONB.
+--
+-- Referenced by: database.ts fetchComponentExtraFields / upsertComponentExtraFields /
+--                deleteComponentExtraFields / deleteComponentExtraFieldsByComponentId
+CREATE TABLE IF NOT EXISTS public.component_extra_fields (
+  id                TEXT PRIMARY KEY,
+  user_id           UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
+  component_id      TEXT NOT NULL,
+  component_type    TEXT,
+  fields            JSONB DEFAULT '{}'::jsonb,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.component_extra_fields ENABLE ROW LEVEL SECURITY;
+
+-- Per-command RLS policies with NULL user_id handling (matches component_parts pattern)
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users manage own component_extra_fields" ON public.component_extra_fields;
+EXCEPTION WHEN others THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'component_extra_fields_select_own' AND tablename = 'component_extra_fields') THEN
+    CREATE POLICY "component_extra_fields_select_own" ON public.component_extra_fields FOR SELECT
+      USING (auth.uid() = user_id OR user_id IS NULL);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'component_extra_fields_insert_own' AND tablename = 'component_extra_fields') THEN
+    CREATE POLICY "component_extra_fields_insert_own" ON public.component_extra_fields FOR INSERT
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'component_extra_fields_update_own' AND tablename = 'component_extra_fields') THEN
+    CREATE POLICY "component_extra_fields_update_own" ON public.component_extra_fields FOR UPDATE
+      USING (auth.uid() = user_id OR user_id IS NULL)
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'component_extra_fields_delete_own' AND tablename = 'component_extra_fields') THEN
+    CREATE POLICY "component_extra_fields_delete_own" ON public.component_extra_fields FOR DELETE
+      USING (auth.uid() = user_id OR user_id IS NULL);
+  END IF;
+END $$;
+
+
+-- ============================================================
+-- 43. OFFLINE QUEUE
+-- ============================================================
+-- Local-first queue table for storing pending database operations.
+-- The app writes queued operations here when online (for durability)
+-- and falls back to localStorage only when the database is unreachable.
+-- This prevents data loss when the browser cache is cleared.
+--
+-- Referenced by: offlineQueue.ts (enqueueToDb / getDbQueue / dequeueFromDb)
+-- Related:       useOfflineSync.ts hook (processes the queue on reconnect)
+CREATE TABLE IF NOT EXISTS public.offline_queue (
+  id                TEXT PRIMARY KEY,
+  user_id           UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
+  operation_type    TEXT NOT NULL,
+  table_name        TEXT,
+  payload           JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status            TEXT NOT NULL DEFAULT 'pending',
+  retry_count       INTEGER DEFAULT 0,
+  max_retries       INTEGER DEFAULT 5,
+  label             TEXT,
+  error_message     TEXT,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  synced_at         TIMESTAMPTZ
+);
+
+ALTER TABLE public.offline_queue ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage own offline_queue' AND tablename = 'offline_queue') THEN
+    CREATE POLICY "Users manage own offline_queue" ON public.offline_queue FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+END $$;
+
+
+
 -- ############################################################
 -- PART 4: PERFORMANCE INDEXES
 -- ############################################################
+
 -- All use IF NOT EXISTS — safe to run repeatedly.
+
 
 -- Original tables
 CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id    ON public.user_profiles(user_id);
 CREATE INDEX IF NOT EXISTS idx_pass_logs_user_id        ON public.pass_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_pass_logs_date           ON public.pass_logs(date DESC);
 CREATE INDEX IF NOT EXISTS idx_engines_user_id          ON public.engines(user_id);
-CREATE INDEX IF NOT EXISTS idx_engines_car_id           ON public.engines(car_id);
+-- idx_engines_car_id removed — single-car architecture (column no longer added by this migration)
 CREATE INDEX IF NOT EXISTS idx_superchargers_user_id    ON public.superchargers(user_id);
-CREATE INDEX IF NOT EXISTS idx_superchargers_car_id     ON public.superchargers(car_id);
+-- idx_superchargers_car_id removed — single-car architecture
 CREATE INDEX IF NOT EXISTS idx_cylinder_heads_user_id   ON public.cylinder_heads(user_id);
 CREATE INDEX IF NOT EXISTS idx_maintenance_user_id      ON public.maintenance_items(user_id);
 -- idx_work_orders_user_id removed — work_orders table has been dropped
@@ -672,7 +879,8 @@ CREATE INDEX IF NOT EXISTS idx_checklists_type          ON public.checklists(che
 CREATE INDEX IF NOT EXISTS idx_parts_inv_user_id        ON public.parts_inventory(user_id);
 CREATE INDEX IF NOT EXISTS idx_parts_inv_category       ON public.parts_inventory(category);
 CREATE INDEX IF NOT EXISTS idx_parts_inv_drivetrain     ON public.parts_inventory(related_drivetrain_component_id);
-CREATE INDEX IF NOT EXISTS idx_parts_inv_car_id         ON public.parts_inventory(car_id);
+-- idx_parts_inv_car_id removed — single-car architecture (column no longer added by this migration)
+
 CREATE INDEX IF NOT EXISTS idx_race_events_user_id      ON public.race_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_race_events_date         ON public.race_events(start_date DESC);
 CREATE INDEX IF NOT EXISTS idx_race_events_track_zip    ON public.race_events(track_zip);
@@ -702,7 +910,9 @@ CREATE INDEX IF NOT EXISTS idx_labor_entries_date       ON public.labor_entries(
 CREATE INDEX IF NOT EXISTS idx_race_cars_user_id        ON public.race_cars(user_id);
 CREATE INDEX IF NOT EXISTS idx_drivetrain_comp_user_id  ON public.drivetrain_components(user_id);
 CREATE INDEX IF NOT EXISTS idx_drivetrain_comp_category ON public.drivetrain_components(category);
-CREATE INDEX IF NOT EXISTS idx_drivetrain_comp_car_id   ON public.drivetrain_components(car_id);
+-- idx_drivetrain_comp_car_id removed — single-car architecture (car_id column removed from CREATE TABLE)
+
+
 CREATE INDEX IF NOT EXISTS idx_drivetrain_swap_user_id  ON public.drivetrain_swap_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_fuel_log_user_id         ON public.fuel_log_entries(user_id);
 CREATE INDEX IF NOT EXISTS idx_fuel_log_team_id         ON public.fuel_log_entries(team_id);
@@ -728,6 +938,28 @@ CREATE INDEX IF NOT EXISTS idx_misc_expenses_date       ON public.misc_expenses(
 CREATE INDEX IF NOT EXISTS idx_borrowed_parts_user_id   ON public.borrowed_loaned_parts(user_id);
 CREATE INDEX IF NOT EXISTS idx_borrowed_parts_status    ON public.borrowed_loaned_parts(status);
 CREATE INDEX IF NOT EXISTS idx_chassis_presets_user_id  ON public.chassis_setup_user_presets(user_id);
+
+-- pass_history indexes (critical for RLS queries and chronological ordering)
+CREATE INDEX IF NOT EXISTS idx_pass_history_user_id     ON public.pass_history(user_id);
+
+-- maintenance_alert_settings indexes
+CREATE INDEX IF NOT EXISTS idx_maint_alert_user_id      ON public.maintenance_alert_settings(user_id);
+CREATE INDEX IF NOT EXISTS idx_maint_alert_component    ON public.maintenance_alert_settings(component_id);
+CREATE INDEX IF NOT EXISTS idx_maint_alert_type         ON public.maintenance_alert_settings(alert_type);
+
+-- component_parts indexes (critical for RLS and component lookups)
+CREATE INDEX IF NOT EXISTS idx_comp_parts_user_id       ON public.component_parts(user_id);
+CREATE INDEX IF NOT EXISTS idx_comp_parts_component_id  ON public.component_parts(component_id);
+
+-- component_extra_fields indexes
+CREATE INDEX IF NOT EXISTS idx_comp_extra_user_id       ON public.component_extra_fields(user_id);
+CREATE INDEX IF NOT EXISTS idx_comp_extra_component_id  ON public.component_extra_fields(component_id);
+
+-- offline_queue indexes (critical for queue processing and cleanup)
+CREATE INDEX IF NOT EXISTS idx_offline_queue_user_id    ON public.offline_queue(user_id);
+CREATE INDEX IF NOT EXISTS idx_offline_queue_status     ON public.offline_queue(status);
+CREATE INDEX IF NOT EXISTS idx_offline_queue_created_at ON public.offline_queue(created_at DESC);
+
 
 
 -- ############################################################
@@ -835,32 +1067,42 @@ CREATE POLICY "Users can delete own media files" ON storage.objects FOR DELETE T
 --
 -- PART 1 — Added missing columns to existing tables:
 --   1.  user_profiles:       + user_id
---   2.  engines:             + displacement, car_id
---   3.  superchargers:       + car_id
+--   2.  engines:             + displacement
 --   4.  pass_logs:           + quarter_mile_et, quarter_mile_mph, quarter_back_split
 --   8.  checklists:          + checked_by, checked_at
---   9.  parts_inventory:     + name, related_drivetrain_component_id, car_id
+--   9.  parts_inventory:     + name, related_drivetrain_component_id
 --  10.  race_events:         + track_address, track_zip
+--  13.  vendor_invoices:     + paid_date, receipt_url, linked_event_id,
 --                              linked_event_name, car_id
 --  14.  invoice_line_items:  + auto_created_inventory_id
 --  15.  todo_items:          + is_archived, archived_at, archived_by
 --
--- NOTE: car_id was removed from pass_logs, maintenance_items,
---   sfi_certifications, misc_expenses, and chassis_setups
---   in a previous migration (2026-03-19). This migration no
---   longer adds car_id to those tables.
+-- SINGLE-CAR ARCHITECTURE NOTE:
+--   car_id columns are NO LONGER added to engines, superchargers,
+--   parts_inventory, drivetrain_components, pass_logs, maintenance_items,
+--   sfi_certifications, misc_expenses, or chassis_setups.
+--   This app uses a single-car architecture.
+--   car_id is RETAINED in vendor_invoices and fuel_log_entries
+--   (mapped in database-extra.ts).
 --
+
+
 
 -- PART 2 — Set DEFAULT auth.uid() on 21 tables' user_id columns
 --
--- PART 3 — Created 10 newer tables (if they didn't exist):
+-- PART 3 — Created 15 newer tables (if they didn't exist):
 --  29. race_cars               34. team_memberships
 --  30. drivetrain_components   35. parts_usage_log
 --  31. drivetrain_swap_logs    36. misc_expenses
 --  32. fuel_log_entries        37. borrowed_loaned_parts
 --  33. team_invites            38. chassis_setup_user_presets
+--                              39. pass_history (Record Pass audit trail)
+--                              40. maintenance_alert_settings
+--                              41. component_parts (standalone parts)
+--                              42. component_extra_fields
+--                              43. offline_queue (durable queue for offline ops)
 --
--- PART 4 — Created 60+ performance indexes
+-- PART 4 — Created 75+ performance indexes
 --
 -- PART 5 — Created/updated:
 --   • increment_track_visit RPC function
@@ -870,7 +1112,7 @@ CREATE POLICY "Users can delete own media files" ON storage.objects FOR DELETE T
 --
 -- PART 6 — Ensured media storage bucket + 4 RLS policies exist
 --
--- VERIFICATION — Run this to confirm all 38 tables exist:
+-- VERIFICATION — Run this to confirm all 43 tables exist:
 --   SELECT table_name FROM information_schema.tables
 --   WHERE table_schema = 'public'
 --   ORDER BY table_name;

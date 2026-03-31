@@ -1822,9 +1822,15 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                         type="number"
                         step="0.001"
                         value={formData.reactionTime}
-                        onChange={(e) => setFormData({...formData, reactionTime: parseFloat(e.target.value) || 0})}
+                        onChange={(e) => {
+                          const num = e.target.valueAsNumber;
+                          if (!isNaN(num)) {
+                            setFormData({...formData, reactionTime: num});
+                          }
+                        }}
                         className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono"
                       />
+
                     </div>
                     <div>
                       <label className="block text-sm text-slate-400 mb-1">60' Time</label>

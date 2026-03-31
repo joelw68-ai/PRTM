@@ -5,13 +5,16 @@ import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils
 import { supabase } from '@/lib/supabase';
 import { parseRows } from '@/lib/validatedQuery';
 import { MiscExpenseRowSchema } from '@/lib/validators';
-import { uploadWithFallback, getStorageErrorMessage } from '@/lib/storageUpload';
+import { uploadWithFallback } from '@/lib/storageUpload';
+
 import DateInputDark from '@/components/ui/DateInputDark';
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 
 
 import ExpenseExportModal from '@/components/race/ExpenseExportModal';
+import ReceiptScanner, { type ScannedData } from '@/components/race/ReceiptScanner';
+
 
 import {
   Plus, X, Search, Trash2, Edit2, DollarSign, Calendar, Clock,
@@ -25,17 +28,20 @@ import {
 
 
 // ===== TYPES =====
-// Field names MUST match the exact misc_expenses DB columns:
-// id (text), category (text), custom_description (text), amount (numeric),
-// expense_date (text), paid_by (text), payment_method (text), receipt_url (text),
-// receipt_file_name (text), receipt_file_type (text), receipt_file_size (integer),
-// notes (text), race_event_id (text), linked_event_name (text),
-// add_to_cost_report (boolean), user_id (uuid), car_id (text),
-// created_at (timestamptz), updated_at (timestamptz)
+// Field names MUST match the exact misc_expenses DB columns (17 total):
+// id (text PK), category (text NOT NULL), custom_description (text),
+// amount (numeric NOT NULL), expense_date (text NOT NULL),
+// paid_by (text), payment_method (text),
+// receipt_url (text), receipt_file_name (text), receipt_file_type (text),
+// receipt_file_size (integer), notes (text), race_event_id (text),
+// linked_event_name (text), add_to_cost_report (boolean),
+// user_id (uuid), created_at (timestamptz), updated_at (timestamptz)
+//
+// NOTE: car_id is NOT a column in the misc_expenses table (single-car architecture).
+// The database-extra.ts MiscExpense type and upsertMiscExpense() do not map car_id.
 interface MiscExpense {
   id: string;
   user_id?: string | null;
-  car_id?: string | null;
   category: string;
   custom_description: string | null;
   amount: number;
@@ -53,6 +59,7 @@ interface MiscExpense {
   created_at: string;
   updated_at: string;
 }
+
 
 
 type MiscExpenseSortField = 'date' | 'amount' | 'category';
@@ -313,14 +320,15 @@ const MiscExpenses: React.FC<MiscExpensesProps> = ({ currentRole }) => {
       const linkedEventName = formData.race_event_id ? getEventName(formData.race_event_id) : null;
 
       // Build record with ONLY the exact DB column names.
-      // Verified misc_expenses columns (19 total):
+      // Verified misc_expenses columns (17 total, no car_id — single-car architecture):
       //   id (text PK), category (text NOT NULL), custom_description (text),
       //   amount (numeric NOT NULL), expense_date (text NOT NULL),
       //   paid_by (text), payment_method (text),
       //   receipt_url (text), receipt_file_name (text), receipt_file_type (text), receipt_file_size (int),
       //   notes (text), race_event_id (text), linked_event_name (text),
-      //   add_to_cost_report (boolean), user_id (uuid), car_id (text),
+      //   add_to_cost_report (boolean), user_id (uuid),
       //   created_at (timestamptz default now()), updated_at (timestamptz default now())
+
       const record: Record<string, any> = {
         category: formData.category,
         custom_description: formData.category === 'Other' ? formData.custom_description.trim() : null,

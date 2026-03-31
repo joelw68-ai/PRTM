@@ -113,7 +113,6 @@ interface AppContextType {
   
   // Engine Actions
 
-  // Engine Actions
   addEngine: (engine: Engine) => Promise<void>;
   performEngineSwap: (previousEngineId: string, newEngineId: string, reason: string, performedBy: string, notes: string) => Promise<void>;
   updateEngine: (id: string, engine: Partial<Engine>) => Promise<void>;
@@ -760,9 +759,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // pass counts; saving a pass log entry triggers everything automatically.
   const addPassLog = useCallback(async (pass: PassLogEntry) => {
     const userId = user?.id;
-    const carId = pass.car_id || '';
-    const isEmptyId = (id: any): boolean => !id || id === '';
-    const matchesCar = (item: any) => item.car_id === carId || isEmptyId(item.car_id);
+    // Single-car app — no car_id filtering needed. Update ALL installed components.
+
 
     // Helper: increment sub-component pass counts and auto-flag status
     const bumpSubComponents = (comps: Record<string, ComponentTracker> | undefined): Record<string, ComponentTracker> | undefined => {
@@ -792,8 +790,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // 2. Update ALL installed engines for this car (not just the one in the pass form)
     //    Increment totalPasses, passesSinceRebuild, and bump all sub-component pass counts
     const enginesToPersist: Engine[] = [];
+
     setEngines(prev => prev.map(e => {
-      if (e.currentlyInstalled && matchesCar(e)) {
+      if (e.currentlyInstalled) {
         const updated: Engine = {
           ...e,
           totalPasses: e.totalPasses + 1,
@@ -806,10 +805,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return e;
     }));
 
-    // 3. Update ALL installed superchargers/power adders for this car
+
     const scsToPersist: Supercharger[] = [];
     setSuperchargers(prev => prev.map(s => {
-      if (s.currentlyInstalled && matchesCar(s)) {
+      if (s.currentlyInstalled) {
         const updated: Supercharger = {
           ...s,
           totalPasses: s.totalPasses + 1,
@@ -821,10 +820,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return s;
     }));
 
-    // 4. Update ALL active cylinder heads for this car
+    // 4. Update ALL active cylinder heads
     const headsToPersist: CylinderHead[] = [];
     setCylinderHeads(prev => prev.map(h => {
-      if (h.status === 'Active' && matchesCar(h)) {
+      if (h.status === 'Active') {
         const updated: CylinderHead = {
           ...h,
           totalPasses: h.totalPasses + 1,
@@ -837,10 +836,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return h;
     }));
 
-    // 5. Update ALL installed drivetrain components for this car
+    // 5. Update ALL installed drivetrain components
     const dtToPersist: DrivetrainComponent[] = [];
     setDrivetrainComponents(prev => prev.map(d => {
-      if (d.currentlyInstalled && matchesCar(d)) {
+      if (d.currentlyInstalled) {
         const updated: DrivetrainComponent = {
           ...d,
           totalPasses: d.totalPasses + 1,
@@ -853,23 +852,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return d;
     }));
 
-    // 6. Update maintenance items (filter by car_id when present)
-    //    Use the canonical calculateMaintenanceStatus function so status is always
-    //    consistent: Overdue / Due / Due Soon / Good based on remaining vs interval.
+    // 6. Update ALL maintenance items (single-car app — update everything)
     const updatedMaintenanceItems = maintenanceItems.map(m => {
-      if (!carId || matchesCar(m)) {
-        const newPasses = m.currentPasses + 1;
-        const updatedItem: MaintenanceItem = {
-          ...m,
-          currentPasses: newPasses,
-        };
-        updatedItem.status = calculateMaintenanceStatus(updatedItem);
-        return updatedItem;
-      }
-      return m;
+      const newPasses = m.currentPasses + 1;
+      const updatedItem: MaintenanceItem = {
+        ...m,
+        currentPasses: newPasses,
+      };
+      updatedItem.status = calculateMaintenanceStatus(updatedItem);
+      return updatedItem;
     });
     setMaintenanceItems(updatedMaintenanceItems);
-
 
     // 7. Count what was updated and collect flagged sub-components for toast
     const totalUpdated = enginesToPersist.length + scsToPersist.length + headsToPersist.length + dtToPersist.length;
@@ -893,8 +886,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         { description: `${totalUpdated} installed component${totalUpdated !== 1 ? 's' : ''} updated automatically`, duration: 6000 }
       );
     } else if (totalUpdated > 0) {
-      console.log(`[addPassLog] Auto-updated ${totalUpdated} installed components for car ${carId}`);
+      console.log(`[addPassLog] Auto-updated ${totalUpdated} installed components`);
     }
+
 
     // 9. Automatic maintenance alert notifications (existing logic)
     try {
