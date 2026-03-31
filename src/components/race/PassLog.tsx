@@ -1388,8 +1388,15 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                         </td>
                         <td className="px-4 py-3">
                           <p className="text-white font-medium">{pass.date}</p>
-                          <p className="text-slate-400 text-sm">{pass.time}</p>
+                          <p className="text-slate-400 text-sm">{(() => {
+                            if (!pass.time) return '';
+                            const [h, m] = pass.time.split(':').map(Number);
+                            const period = h >= 12 ? 'PM' : 'AM';
+                            const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+                            return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+                          })()}</p>
                         </td>
+
                         <td className="px-4 py-3">
                           <p className="text-white">{pass.track}</p>
                           <p className="text-slate-400 text-sm">{pass.location}</p>
