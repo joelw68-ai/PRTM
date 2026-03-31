@@ -114,8 +114,12 @@ import {
   FlaskConical,
   Package,
   Undo2,
-  Mountain
+  Mountain,
+  Scan
+
 } from 'lucide-react';
+
+
 
 
 
@@ -133,6 +137,8 @@ import OfflineSyncBanner from './OfflineSyncBanner';
 import WeatherVerifyPanel from './WeatherVerifyPanel';
 import PassLogAdvancedSearch from './PassLogAdvancedSearch';
 import PassLogTimeline from './PassLogTimeline';
+import TimeslipScanner from './TimeslipScanner';
+
 
 
 
@@ -208,6 +214,16 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   const [trackSaveSuccess, setTrackSaveSuccess] = useState<string | null>(null);
   const [isHistoricalFetch, setIsHistoricalFetch] = useState(false);
 
+  // ═══════════════════════════════════════════════════════════════════
+  // SAVE-IN-PROGRESS GUARD — prevents duplicate saves from double-clicks
+  // ═══════════════════════════════════════════════════════════════════
+  // Uses a ref (not state) so the guard is synchronously checked and set
+  // within the same event loop tick. A useState setter is async and would
+  // allow two rapid clicks to both read `false` before either sets `true`.
+  const savingPassRef = useRef(false);
+  const [savingPassUI, setSavingPassUI] = useState(false); // for disabling the button visually
+
+
   // Delete confirmation modal state
   const [deleteConfirmPassId, setDeleteConfirmPassId] = useState<string | null>(null);
 
@@ -216,7 +232,11 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
   // View mode: table or timeline
+  // View mode: table or timeline
   const [viewMode, setViewMode] = useState<'table' | 'timeline'>('table');
+
+  // Timeslip scanner state
+  const [showTimeslipScanner, setShowTimeslipScanner] = useState(false);
 
   // ═══════════════════════════════════════════════════════════════════
   // REACTION TIME STRING STATE — allows typing negative values
@@ -339,8 +359,10 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       setWeatherError(null);
       setWeatherSuccess(null);
       setTrackSaveSuccess(null);
+      setShowTimeslipScanner(false);
     }
   }, [showModal]);
+
 
 
 
@@ -734,15 +756,33 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   // Save pass (add new or update existing) — with offline queue fallback
   // When adding a NEW pass and autoIncrementParts is ON, also increment
   // standalone parts passes on all currently-installed components.
+  //
+  // DOUBLE-CLICK GUARD: savingPassRef is checked synchronously at the top
+  // of handleSave. Because refs update synchronously (unlike setState),
+  // two rapid clicks will see: click1 reads false → sets true → proceeds;
+  // click2 reads true → returns early. This prevents duplicate saves.
   const handleSave = async () => {
+    // ═══════════════════════════════════════════════════════════════════
+    // DOUBLE-CLICK / DUPLICATE SAVE GUARD
+    // ═══════════════════════════════════════════════════════════════════
+    if (savingPassRef.current) {
+      console.warn('[PassLog] handleSave blocked — save already in progress');
+      return;
+    }
+    savingPassRef.current = true;
+    setSavingPassUI(true);
+
     const isNewPass = !editingPassId;
 
     try {
       if (editingPassId) {
         await updatePassLog(editingPassId, formData);
       } else {
+        // Use crypto.randomUUID() for guaranteed unique IDs — the old
+        // sequential counter (PASS-001, PASS-002...) could generate
+        // duplicate IDs if two saves fired before state updated.
         const pass: PassLogEntry = {
-          id: `PASS-${String(passLogs.length + 1).padStart(3, '0')}`,
+          id: crypto.randomUUID(),
           ...formData as PassLogEntry
         };
         await addPassLog(pass);
@@ -754,9 +794,11 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
         reportConnectivityError();
         toast.warning('Pass saved locally — will sync when connection is restored');
       } else {
+
         toast.error('Failed to save pass');
       }
     }
+
 
     // ═══════════════════════════════════════════════════════════════════
     // AUTO-INCREMENT STANDALONE PARTS ON NEW PASS + UNDO CAPABILITY
@@ -919,8 +961,14 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       }
     }
 
+    // Reset the save guard so the next save can proceed
+    savingPassRef.current = false;
+    setSavingPassUI(false);
     setShowModal(false);
   };
+
+
+
 
 
 
@@ -1011,6 +1059,9 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   };
 
 
+  // ═══════════════════════════════════════════════════════════════════
+  // FILTERED + SORTED PASSES — latest date/time first
+  // ═══════════════════════════════════════════════════════════════════
   const filteredPasses = passLogs.filter(pass => {
     const matchesSearch = 
       pass.track.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1020,7 +1071,13 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
     const matchesFilter = filterType === 'all' || pass.sessionType === filterType;
     
     return matchesSearch && matchesFilter;
+  }).sort((a, b) => {
+    // Sort by date descending (newest first), then by time descending
+    const dateCompare = b.date.localeCompare(a.date);
+    if (dateCompare !== 0) return dateCompare;
+    return (b.time || '').localeCompare(a.time || '');
   });
+
 
 
 
@@ -1615,18 +1672,78 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
 
               <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h3 className="text-xl font-bold text-white">
-                    {isEditMode ? 'Edit Pass' : 'Log New Pass'}
-                  </h3>
-                  {isEditMode && (
-                    <p className="text-slate-400 text-sm mt-1">Editing pass {editingPassId}</p>
+                <div className="flex items-center gap-3">
+                  <div>
+                    <h3 className="text-xl font-bold text-white">
+                      {isEditMode ? 'Edit Pass' : 'Log New Pass'}
+                    </h3>
+                    {isEditMode && (
+                      <p className="text-slate-400 text-sm mt-1">Editing pass {editingPassId}</p>
+                    )}
+                  </div>
+                  {/* Scan Timeslip Button — only shown for new passes (not edit mode) */}
+                  {!isEditMode && (
+                    <button
+                      type="button"
+                      onClick={() => setShowTimeslipScanner(!showTimeslipScanner)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        showTimeslipScanner
+                          ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20'
+                          : 'bg-orange-500/10 border border-orange-500/40 text-orange-400 hover:bg-orange-500/20'
+                      }`}
+                    >
+                      <Scan className="w-4 h-4" />
+                      {showTimeslipScanner ? 'Hide Scanner' : 'Scan Timeslip'}
+                    </button>
                   )}
                 </div>
                 <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white">
                   <X className="w-6 h-6" />
                 </button>
               </div>
+
+              {/* ═══════════════════════════════════════════════════════════════ */}
+              {/* TIMESLIP SCANNER — OCR-based timeslip photo import */}
+              {/* ═══════════════════════════════════════════════════════════════ */}
+              {showTimeslipScanner && !isEditMode && (
+                <div className="mb-6">
+                  <TimeslipScanner
+                    onApply={(data) => {
+                      // Apply extracted values to the form
+                      const updates: Partial<PassLogEntry> = {};
+                      if (data.reactionTime !== undefined) updates.reactionTime = data.reactionTime;
+                      if (data.sixtyFoot !== undefined) updates.sixtyFoot = data.sixtyFoot;
+                      if (data.threeThirty !== undefined) updates.threeThirty = data.threeThirty;
+                      if (data.eighth !== undefined) updates.eighth = data.eighth;
+                      if (data.mph !== undefined) updates.mph = data.mph;
+                      if (data.quarterMileET !== undefined) updates.quarterMileET = data.quarterMileET;
+                      if (data.quarterMileMPH !== undefined) updates.quarterMileMPH = data.quarterMileMPH;
+
+                      // Calculate end split if both quarter and eighth are available
+                      if (data.quarterMileET && data.eighth) {
+                        const endSplit = data.quarterMileET - data.eighth;
+                        if (endSplit > 0) updates.endSplit = Math.round(endSplit * 1000) / 1000;
+                      }
+
+                      setFormData(prev => ({ ...prev, ...updates }));
+
+                      // Sync RT string state
+                      if (data.reactionTime !== undefined) {
+                        setRtInputStr(String(data.reactionTime));
+                      }
+
+                      // Auto-set result to "Red Light" if RT is negative
+                      if (data.reactionTime !== undefined && data.reactionTime < 0) {
+                        setFormData(prev => ({ ...prev, ...updates, result: 'Red Light' }));
+                      }
+
+                      setShowTimeslipScanner(false);
+                      toast.success('Timeslip data applied to form', { duration: 3000 });
+                    }}
+                    onClose={() => setShowTimeslipScanner(false)}
+                  />
+                </div>
+              )}
               
               <div className="grid md:grid-cols-3 gap-6">
                 {/* Basic Info */}
@@ -1634,10 +1751,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                   <h4 className="font-medium text-white border-b border-slate-700 pb-2">Basic Info</h4>
 
 
-
-
-                  
                   <div className="grid grid-cols-2 gap-3">
+
                     <div>
                       <label className="block text-sm text-slate-400 mb-1">Date</label>
                       <DateInputDark
@@ -1868,46 +1983,92 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                       {/* ═══════════════════════════════════════════════════════
                           TEXT INPUT for Reaction Time — allows negative values
                           ═══════════════════════════════════════════════════════
-                          Uses type="text" with inputMode="decimal" instead of
-                          type="number" because controlled number inputs prevent
-                          typing "-" (the intermediate NaN blocks state updates).
+                          Uses type="text" (NO inputMode="decimal" — that hides
+                          the minus key on iOS/Android numeric keypads).
+                          
                           The rtInputStr state holds the raw string; we parse to
                           a number and sync formData.reactionTime on every valid
                           keystroke, and clean up the display on blur.
+                          
+                          A +/- toggle button is provided so users on mobile
+                          devices (where the keyboard may lack a minus key) can
+                          still enter negative reaction times for foul starts.
                       */}
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={rtInputStr}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setRtInputStr(val);
-                          // Parse and sync to formData when the string is a valid number
-                          // Allow intermediate states: "", "-", "-0", "-0.", "0.", etc.
-                          const num = parseFloat(val);
-                          if (!isNaN(num)) {
-                            setFormData(prev => ({...prev, reactionTime: num}));
-                          }
-                        }}
-                        onBlur={() => {
-                          // On blur, clean up the display to show the actual numeric value
-                          const num = parseFloat(rtInputStr);
-                          if (isNaN(num)) {
-                            // If the string isn't a valid number (e.g. just "-"), reset to 0
-                            setRtInputStr('0');
-                            setFormData(prev => ({...prev, reactionTime: 0}));
-                          } else {
-                            // Normalize display (e.g. "-.005" → "-0.005")
-                            setRtInputStr(String(num));
-                          }
-                        }}
-                        className={`w-full bg-slate-900 rounded-lg px-3 py-2 font-mono ${
-                          (formData.reactionTime ?? 0) < 0
-                            ? 'border-2 border-red-500 text-red-400 ring-1 ring-red-500/30'
-                            : 'border border-slate-600 text-white'
-                        }`}
-                        placeholder="0.000"
-                      />
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          inputMode="text"
+                          value={rtInputStr}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            // Only allow characters valid for a decimal number: digits, minus, decimal point
+                            // This prevents letters and other characters while still allowing "-", ".", "-0.005", etc.
+                            if (val !== '' && !/^-?\d*\.?\d*$/.test(val)) return;
+                            setRtInputStr(val);
+                            // Parse and sync to formData when the string is a valid number
+                            // Allow intermediate states: "", "-", "-0", "-0.", "0.", etc.
+                            const num = parseFloat(val);
+                            if (!isNaN(num)) {
+                              setFormData(prev => ({...prev, reactionTime: num}));
+                            }
+                          }}
+                          onBlur={() => {
+                            // On blur, clean up the display to show the actual numeric value
+                            const num = parseFloat(rtInputStr);
+                            if (isNaN(num)) {
+                              // If the string isn't a valid number (e.g. just "-"), reset to 0
+                              setRtInputStr('0');
+                              setFormData(prev => ({...prev, reactionTime: 0}));
+                            } else {
+                              // Normalize display (e.g. "-.005" → "-0.005")
+                              setRtInputStr(String(num));
+                            }
+                          }}
+                          className={`flex-1 min-w-0 bg-slate-900 rounded-lg px-3 py-2 font-mono ${
+                            (formData.reactionTime ?? 0) < 0
+                              ? 'border-2 border-red-500 text-red-400 ring-1 ring-red-500/30'
+                              : 'border border-slate-600 text-white'
+                          }`}
+                          placeholder="0.000"
+                        />
+                        {/* +/- Toggle Button — flips the sign of the current RT value.
+                            Essential for mobile users whose on-screen keyboard may not
+                            include a minus key (e.g. iOS inputMode="decimal"). */}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const currentNum = parseFloat(rtInputStr);
+                                if (!isNaN(currentNum)) {
+                                  const flipped = currentNum === 0 ? -0.001 : -currentNum;
+                                  const flippedStr = String(flipped);
+                                  setRtInputStr(flippedStr);
+                                  setFormData(prev => ({...prev, reactionTime: flipped}));
+                                } else {
+                                  // If the current string is just "-" or empty, start a negative value
+                                  setRtInputStr('-');
+                                }
+                              }}
+                              className={`flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-lg border transition-colors ${
+                                (formData.reactionTime ?? 0) < 0
+                                  ? 'bg-red-500/20 border-red-500/40 text-red-400 hover:bg-red-500/30'
+                                  : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600 hover:text-white'
+                              }`}
+                              title="Toggle positive/negative (foul start)"
+                            >
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="18" x2="19" y2="18" />
+                              </svg>
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent className="bg-slate-900 border-slate-700 text-white">
+                            <p className="text-sm">Toggle +/- sign (foul start / red light)</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                       {(formData.reactionTime ?? 0) < 0 && (
                         <p className="text-[11px] text-red-400/80 mt-1 flex items-center gap-1">
                           <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
@@ -1920,6 +2081,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
 
                     <div>
+
                       <label className="block text-sm text-slate-400 mb-1">60' Time</label>
                       <input
                         type="number"
@@ -2459,10 +2621,23 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                 </button>
                 <button
                   onClick={handleSave}
-                  className="flex-1 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
+                  disabled={savingPassUI}
+                  className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 ${
+                    savingPassUI 
+                      ? 'bg-orange-500/50 text-white/70 cursor-not-allowed' 
+                      : 'bg-orange-500 text-white hover:bg-orange-600'
+                  }`}
                 >
-                  {isEditMode ? 'Update Pass' : 'Save Pass'}
+                  {savingPassUI ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    isEditMode ? 'Update Pass' : 'Save Pass'
+                  )}
                 </button>
+
               </div>
 
             </div>
