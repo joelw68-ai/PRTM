@@ -83,7 +83,15 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
         break;
     }
 
-    return passes.sort((a, b) => parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime());
+    // Sort chronologically: date ascending, then time ascending within the same date
+    // This mirrors the Pass Log's sort order (which is date desc, time desc) but in
+    // ascending direction so trend charts read left-to-right oldest→newest.
+    return passes.sort((a, b) => {
+      const dateCompare = a.date.localeCompare(b.date);
+      if (dateCompare !== 0) return dateCompare;
+      return (a.time || '').localeCompare(b.time || '');
+    });
+
 
   }, [passLogs, timeRange, selectedEngine]);
 

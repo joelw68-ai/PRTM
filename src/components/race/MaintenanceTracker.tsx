@@ -121,9 +121,11 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
 
   const sortedMaintenance = [...filteredMaintenance].sort((a, b) => {
-    const statusOrder = { 'Overdue': 0, 'Due': 1, 'Due Soon': 2, 'Good': 3 };
-    return statusOrder[a.status] - statusOrder[b.status];
+    const remainingA = a.nextServicePasses - a.currentPasses;
+    const remainingB = b.nextServicePasses - b.currentPasses;
+    return remainingA - remainingB;
   });
+
 
 
   // SFI certifications (no car filter — single-car app)
