@@ -100,7 +100,8 @@ const builtInTemplates: MaintenanceTemplate[] = [
       { id: 'pri-1', component: 'Engine Oil & Filter Check', category: 'Engine', passInterval: 1, priority: 'High', notes: 'Verify oil level, check for leaks, inspect filter condition', typicalParts: [{ partNumber: 'OIL-5W30', description: 'Engine Oil 5W-30 (qt)', quantity: 1 }, { partNumber: 'FLT-OIL-01', description: 'Oil Filter', quantity: 1 }] },
       { id: 'pri-2', component: 'Transmission Fluid Level', category: 'Drivetrain', passInterval: 1, priority: 'High', notes: 'Check fluid level and color, look for leaks at seals', typicalParts: [{ partNumber: 'ATF-PRO', description: 'Transmission Fluid (qt)', quantity: 1 }] },
       { id: 'pri-3', component: 'Brake System Inspection', category: 'Brakes', passInterval: 1, priority: 'Critical', notes: 'Check pad thickness, rotor condition, fluid level, line integrity', typicalParts: [{ partNumber: 'BRK-FLD-01', description: 'Brake Fluid DOT 4', quantity: 1 }] },
-      { id: 'pri-4', component: 'Tire Pressure & Condition', category: 'Wheels', passInterval: 1, priority: 'Critical', notes: 'Set pressures per setup sheet, inspect for cuts, bubbles, wear', typicalParts: [] },
+      { id: 'pri-4', component: 'Tire Pressure & Condition', category: 'Wheels and Tires', passInterval: 1, priority: 'Critical', notes: 'Set pressures per setup sheet, inspect for cuts, bubbles, wear', typicalParts: [] },
+
       { id: 'pri-5', component: 'Wheelie Bar Adjustment', category: 'Suspension', passInterval: 1, priority: 'High', notes: 'Verify wheelie bar height and wheel condition', typicalParts: [] },
       { id: 'pri-6', component: 'Parachute Pack & Lines', category: 'Safety', passInterval: 1, priority: 'Critical', notes: 'Inspect chute pack, verify lines are untangled, check release mechanism', typicalParts: [{ partNumber: 'CHUTE-PIN', description: 'Parachute Release Pin', quantity: 2 }] },
       { id: 'pri-7', component: 'Fuel System Pressure Test', category: 'Fuel System', passInterval: 1, priority: 'High', notes: 'Verify fuel pressure, check all fittings and lines for leaks', typicalParts: [] },
@@ -1185,7 +1186,8 @@ const MaintenanceTemplates: React.FC<MaintenanceTemplatesProps> = ({ onApplyTemp
                           <option value="Electronics">Electronics</option>
                           <option value="Suspension">Suspension</option>
                           <option value="Brakes">Brakes</option>
-                          <option value="Wheels">Wheels</option>
+                          <option value="Wheels and Tires">Wheels and Tires</option>
+
                           <option value="Fluids">Fluids</option>
                           <option value="Safety">Safety</option>
                           <option value="Body">Body</option>

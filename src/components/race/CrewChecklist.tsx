@@ -499,7 +499,8 @@ const CrewChecklist: React.FC<CrewChecklistProps> = ({ crewMemberName, currentRo
                   <option value="Transmission">Transmission</option>
                   <option value="Fuel">Fuel</option>
                   <option value="Safety">Safety</option>
-                  <option value="Wheels">Wheels</option>
+                  <option value="Wheels and Tires">Wheels and Tires</option>
+
                   <option value="Chassis">Chassis</option>
                   <option value="Body">Body</option>
                   <option value="Electronics">Electronics</option>

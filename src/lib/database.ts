@@ -3126,6 +3126,305 @@ export const deleteComponentExtraFieldsByComponentId = async (componentId: strin
 
 
 
+// ============ TIRE TRACKING OPERATIONS ============
+// Tables: tire_sets, tire_tread_depth, tire_pressure_history, tire_change_log
+
+export interface TireSet {
+  id: string;
+  brand: string;
+  model: string;
+  size: string;
+  compound: string;
+  position: 'Front Left' | 'Front Right' | 'Rear Left' | 'Rear Right' | 'Front (Pair)' | 'Rear (Pair)';
+  status: 'Active' | 'Spare' | 'Retired';
+  installDate: string;
+  totalPasses: number;
+  notes: string;
+}
+
+export interface TreadDepthEntry {
+  id: string;
+  tireSetId: string;
+  date: string;
+  depth: number;
+  passCount: number;
+  location: string;
+  notes: string;
+}
+
+export interface TirePressureEntry {
+  id: string;
+  tireSetId: string;
+  date: string;
+  passNumber: number;
+  pressureBefore: number;
+  pressureAfter: number;
+  hotPressure?: number;
+  trackTemp?: number;
+  notes: string;
+}
+
+export interface TireChangeLog {
+  id: string;
+  date: string;
+  passCount: number;
+  tireSetId: string;
+  tireSetName: string;
+  action: 'Install' | 'Remove' | 'Rotate' | 'Replace';
+  reason: string;
+  performedBy: string;
+  notes: string;
+}
+
+// ── Type converters ──
+
+const toTireSet = (row: any): TireSet => ({
+  id: row.id,
+  brand: row.brand || '',
+  model: row.model || '',
+  size: row.size || '',
+  compound: row.compound || 'Drag Slick',
+  position: row.position || 'Rear (Pair)',
+  status: row.status || 'Active',
+  installDate: row.install_date || '',
+  totalPasses: parseInt(row.total_passes) || 0,
+  notes: row.notes || '',
+});
+
+const toTreadDepthEntry = (row: any): TreadDepthEntry => ({
+  id: row.id,
+  tireSetId: row.tire_set_id || '',
+  date: row.date || '',
+  depth: parseFloat(row.depth) || 0,
+  passCount: parseInt(row.pass_count) || 0,
+  location: row.location || 'Center',
+  notes: row.notes || '',
+});
+
+const toTirePressureEntry = (row: any): TirePressureEntry => ({
+  id: row.id,
+  tireSetId: row.tire_set_id || '',
+  date: row.date || '',
+  passNumber: parseInt(row.pass_number) || 0,
+  pressureBefore: parseFloat(row.pressure_before) || 0,
+  pressureAfter: parseFloat(row.pressure_after) || 0,
+  hotPressure: row.hot_pressure != null ? parseFloat(row.hot_pressure) : undefined,
+  trackTemp: row.track_temp != null ? parseFloat(row.track_temp) : undefined,
+  notes: row.notes || '',
+});
+
+const toTireChangeLog = (row: any): TireChangeLog => ({
+  id: row.id,
+  date: row.date || '',
+  passCount: parseInt(row.pass_count) || 0,
+  tireSetId: row.tire_set_id || '',
+  tireSetName: row.tire_set_name || '',
+  action: row.action || 'Replace',
+  reason: row.reason || '',
+  performedBy: row.performed_by || '',
+  notes: row.notes || '',
+});
+
+// ── Fetch operations ──
+
+export const fetchTireSets = async (userId?: string): Promise<TireSet[]> => {
+  const { data, error } = await supabase
+    .from('tire_sets')
+    .select('*')
+    .order('status')
+    .order('brand');
+  if (error) {
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[fetchTireSets] PGRST205 — tire_sets not in schema cache. Triggering reload.');
+      triggerSchemaReload();
+      return [];
+    }
+    throw error;
+  }
+  return (data || []).map(toTireSet);
+};
+
+export const fetchTreadDepth = async (userId?: string): Promise<TreadDepthEntry[]> => {
+  const { data, error } = await supabase
+    .from('tire_tread_depth')
+    .select('*')
+    .order('date', { ascending: false });
+  if (error) {
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[fetchTreadDepth] PGRST205 — tire_tread_depth not in schema cache. Triggering reload.');
+      triggerSchemaReload();
+      return [];
+    }
+    throw error;
+  }
+  return (data || []).map(toTreadDepthEntry);
+};
+
+export const fetchTirePressureHistory = async (userId?: string): Promise<TirePressureEntry[]> => {
+  const { data, error } = await supabase
+    .from('tire_pressure_history')
+    .select('*')
+    .order('pass_number', { ascending: false });
+  if (error) {
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[fetchTirePressureHistory] PGRST205 — tire_pressure_history not in schema cache. Triggering reload.');
+      triggerSchemaReload();
+      return [];
+    }
+    throw error;
+  }
+  return (data || []).map(toTirePressureEntry);
+};
+
+export const fetchTireChangeLog = async (userId?: string): Promise<TireChangeLog[]> => {
+  const { data, error } = await supabase
+    .from('tire_change_log')
+    .select('*')
+    .order('date', { ascending: false });
+  if (error) {
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[fetchTireChangeLog] PGRST205 — tire_change_log not in schema cache. Triggering reload.');
+      triggerSchemaReload();
+      return [];
+    }
+    throw error;
+  }
+  return (data || []).map(toTireChangeLog);
+};
+
+// ── Upsert operations ──
+
+export const upsertTireSet = async (tire: TireSet, userId?: string): Promise<void> => {
+  const effectiveUserId = userId || await getCurrentUserId();
+  const payload: any = {
+    id: tire.id,
+    brand: tire.brand,
+    model: tire.model,
+    size: emptyToNull(tire.size),
+    compound: tire.compound,
+    position: tire.position,
+    status: tire.status,
+    install_date: emptyToNull(tire.installDate),
+    total_passes: tire.totalPasses,
+    notes: emptyToNull(tire.notes),
+    updated_at: new Date().toISOString(),
+  };
+  if (effectiveUserId) payload.user_id = effectiveUserId;
+  const { error } = await supabase.from('tire_sets').upsert(payload);
+  if (error) {
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[upsertTireSet] PGRST205 — triggering reload.');
+      triggerSchemaReload();
+      return;
+    }
+    throw error;
+  }
+};
+
+export const upsertTreadDepth = async (entry: TreadDepthEntry, userId?: string): Promise<void> => {
+  const effectiveUserId = userId || await getCurrentUserId();
+  const payload: any = {
+    id: entry.id,
+    tire_set_id: entry.tireSetId,
+    date: entry.date,
+    depth: entry.depth,
+    pass_count: entry.passCount,
+    location: entry.location,
+    notes: emptyToNull(entry.notes),
+    updated_at: new Date().toISOString(),
+  };
+  if (effectiveUserId) payload.user_id = effectiveUserId;
+  const { error } = await supabase.from('tire_tread_depth').upsert(payload);
+  if (error) {
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[upsertTreadDepth] PGRST205 — triggering reload.');
+      triggerSchemaReload();
+      return;
+    }
+    throw error;
+  }
+};
+
+export const upsertTirePressure = async (entry: TirePressureEntry, userId?: string): Promise<void> => {
+  const effectiveUserId = userId || await getCurrentUserId();
+  const payload: any = {
+    id: entry.id,
+    tire_set_id: entry.tireSetId,
+    date: entry.date,
+    pass_number: entry.passNumber,
+    pressure_before: entry.pressureBefore,
+    pressure_after: entry.pressureAfter,
+    hot_pressure: emptyToNull(entry.hotPressure),
+    track_temp: emptyToNull(entry.trackTemp),
+    notes: emptyToNull(entry.notes),
+    updated_at: new Date().toISOString(),
+  };
+  if (effectiveUserId) payload.user_id = effectiveUserId;
+  const { error } = await supabase.from('tire_pressure_history').upsert(payload);
+  if (error) {
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[upsertTirePressure] PGRST205 — triggering reload.');
+      triggerSchemaReload();
+      return;
+    }
+    throw error;
+  }
+};
+
+export const upsertTireChangeLog = async (entry: TireChangeLog, userId?: string): Promise<void> => {
+  const effectiveUserId = userId || await getCurrentUserId();
+  const payload: any = {
+    id: entry.id,
+    tire_set_id: entry.tireSetId,
+    tire_set_name: entry.tireSetName,
+    date: entry.date,
+    pass_count: entry.passCount,
+    action: entry.action,
+    reason: emptyToNull(entry.reason),
+    performed_by: emptyToNull(entry.performedBy),
+    notes: emptyToNull(entry.notes),
+    updated_at: new Date().toISOString(),
+  };
+  if (effectiveUserId) payload.user_id = effectiveUserId;
+  const { error } = await supabase.from('tire_change_log').upsert(payload);
+  if (error) {
+    if (isTableNotInSchemaCache(error)) {
+      console.warn('[upsertTireChangeLog] PGRST205 — triggering reload.');
+      triggerSchemaReload();
+      return;
+    }
+    throw error;
+  }
+};
+
+// ── Delete operations ──
+
+export const deleteTireSet = async (id: string): Promise<void> => {
+  // Delete associated data first
+  await supabase.from('tire_tread_depth').delete().eq('tire_set_id', id);
+  await supabase.from('tire_pressure_history').delete().eq('tire_set_id', id);
+  await supabase.from('tire_change_log').delete().eq('tire_set_id', id);
+  const { error } = await supabase.from('tire_sets').delete().eq('id', id);
+  if (error) throw error;
+};
+
+export const deleteTreadDepth = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('tire_tread_depth').delete().eq('id', id);
+  if (error) throw error;
+};
+
+export const deleteTirePressure = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('tire_pressure_history').delete().eq('id', id);
+  if (error) throw error;
+};
+
+export const deleteTireChangeLogEntry = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('tire_change_log').delete().eq('id', id);
+  if (error) throw error;
+};
+
+
+
 // ════════════════════════════════════════════════════════════════════════
 // RE-EXPORT: database-extra.ts
 // ════════════════════════════════════════════════════════════════════════

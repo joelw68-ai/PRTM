@@ -72,7 +72,8 @@ const CATEGORY_COLORS: Record<string, string> = {
   'Electronics': '#06b6d4',
   'Suspension': '#eab308',
   'Brakes': '#ef4444',
-  'Wheels': '#a855f7',
+  'Wheels and Tires': '#a855f7',
+
   'Fluids': '#14b8a6',
   'Safety': '#ec4899',
   'Body': '#f59e0b',

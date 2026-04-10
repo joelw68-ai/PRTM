@@ -95,7 +95,8 @@ const HeroSection: React.FC = () => {
         },
         {
           title: 'Maintenance Categories',
-          text: 'Components are organized by category: Drivetrain (converter, trans, driveshaft), Wheels (tires, studs), Brakes, Fluids (oil, filters), Fuel System, Electronics, and Suspension.'
+          text: 'Components are organized by category: Drivetrain (converter, trans, driveshaft), Wheels and Tires (tires, studs), Brakes, Fluids (oil, filters), Fuel System, Electronics, and Suspension.'
+
         },
         {
           title: 'Status Indicators',

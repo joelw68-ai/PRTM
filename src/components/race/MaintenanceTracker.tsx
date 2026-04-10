@@ -9,6 +9,7 @@ import { useApp } from '@/contexts/AppContext';
 import { CrewRole } from '@/lib/permissions';
 import { MaintenanceItem, SFICertification, calculateMaintenanceStatus } from '@/data/proModData';
 import MaintenanceTemplates from './MaintenanceTemplates';
+import TireTracking from './TireTracking';
 import CompleteMaintenanceModal, {
   MaintenanceHistoryEntry,
   loadMaintenanceHistory
@@ -29,8 +30,11 @@ import {
   X,
   Package,
   History,
-  BookOpen
+  BookOpen,
+  Circle
 } from 'lucide-react';
+
+
 
 
 
@@ -60,7 +64,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
 
   
-  const [activeTab, setActiveTab] = useState<'maintenance' | 'sfi' | 'templates'>('maintenance');
+  const [activeTab, setActiveTab] = useState<'maintenance' | 'sfi' | 'templates' | 'tires'>('maintenance');
+
 
 
 
@@ -356,7 +361,20 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
             <BookOpen className="w-4 h-4" />
             Templates
           </button>
+
+          <button
+            onClick={() => setActiveTab('tires')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+              activeTab === 'tires' 
+                ? 'bg-orange-500 text-white' 
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <Circle className="w-4 h-4" />
+            Wheels & Tires
+          </button>
         </div>
+
 
 
 
@@ -735,7 +753,12 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
         {activeTab === 'templates' && (
           <MaintenanceTemplates onApplyTemplate={() => setActiveTab('maintenance')} />
         )}
+
+        {activeTab === 'tires' && (
+          <TireTracking />
+        )}
       </div>
+
 
 
 
@@ -889,7 +912,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                       <option value="Electronics">Electronics</option>
                       <option value="Suspension">Suspension</option>
                       <option value="Brakes">Brakes</option>
-                      <option value="Wheels">Wheels</option>
+                      <option value="Wheels and Tires">Wheels and Tires</option>
+
                       <option value="Fluids">Fluids</option>
                       <option value="Safety">Safety</option>
                       <option value="Body">Body</option>

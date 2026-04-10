@@ -40,7 +40,8 @@ import { PartInventoryItem, partsInventory as initialPartsInventory } from '@/da
 import { RaceEvent } from '@/components/race/RaceCalendar';
 import { TeamMember } from '@/components/race/TeamProfile';
 import * as db from '@/lib/database';
-import { SavedTrack, ToDoItem, TeamNote, LaborEntry, MediaItem, DrivetrainComponent, DrivetrainCategory, DrivetrainSwapLog, VendorRecord, PassHistoryEntry, ComponentPart } from '@/lib/database';
+import { SavedTrack, ToDoItem, TeamNote, LaborEntry, MediaItem, DrivetrainComponent, DrivetrainCategory, DrivetrainSwapLog, VendorRecord, PassHistoryEntry, ComponentPart, TireSet, TreadDepthEntry, TirePressureEntry, TireChangeLog } from '@/lib/database';
+
 
 
 
@@ -55,6 +56,63 @@ import { isConnectivityError, type QueueOperationType } from '@/lib/offlineQueue
 // Declared at module scope (outside the component) so it cannot interfere
 // with React's hook ordering inside AppProvider. This is the ONLY declaration.
 const UNDO_DELETE_WINDOW_MS = 10000; // 10 seconds
+
+// ============ TIRE SET PASS COUNT HELPERS (localStorage-based) ============
+// Tire sets live in localStorage (managed by TireTracking component).
+// These module-level helpers allow addPassLog / deletePassLog to auto-increment
+// and auto-decrement active tire set pass counts without pulling tire data into
+// React state inside AppContext.
+const TIRE_SETS_LS_KEY = 'tire_tracking_sets';
+
+interface TireSetLS {
+  id: string;
+  status: 'Active' | 'Spare' | 'Retired';
+  totalPasses: number;
+  [key: string]: any;
+}
+
+/**
+ * Increment (or decrement when negative) totalPasses on every Active tire set
+ * stored in localStorage. Returns the count of sets updated and a snapshot of
+ * the data *before* the update (useful for undo).
+ */
+function incrementActiveTireSets(increment: number): { updatedCount: number; preUpdateSnapshot: TireSetLS[] } {
+  const preUpdateSnapshot: TireSetLS[] = [];
+  let updatedCount = 0;
+  try {
+    const raw = localStorage.getItem(TIRE_SETS_LS_KEY);
+    if (!raw) return { updatedCount: 0, preUpdateSnapshot: [] };
+    const sets: TireSetLS[] = JSON.parse(raw);
+    if (!Array.isArray(sets) || sets.length === 0) return { updatedCount: 0, preUpdateSnapshot: [] };
+
+    // Deep-copy snapshot before mutation
+    preUpdateSnapshot.push(...sets.map(s => ({ ...s })));
+
+    const updated = sets.map(s => {
+      if (s.status === 'Active') {
+        updatedCount++;
+        return { ...s, totalPasses: Math.max(0, (s.totalPasses || 0) + increment) };
+      }
+      return s;
+    });
+    localStorage.setItem(TIRE_SETS_LS_KEY, JSON.stringify(updated));
+  } catch (err) {
+    console.warn('[AppContext] Tire set localStorage update failed:', err);
+  }
+  return { updatedCount, preUpdateSnapshot };
+}
+
+/** Restore tire sets in localStorage from a previously captured snapshot. */
+function restoreTireSetsFromSnapshot(snapshot: TireSetLS[]) {
+  try {
+    if (snapshot.length > 0) {
+      localStorage.setItem(TIRE_SETS_LS_KEY, JSON.stringify(snapshot));
+    }
+  } catch (err) {
+    console.warn('[AppContext] Tire set localStorage restore failed:', err);
+  }
+}
+
 
 
 
@@ -98,12 +156,27 @@ interface AppContextType {
   drivetrainComponents: DrivetrainComponent[];
   drivetrainSwapLogs: DrivetrainSwapLog[];
   vendors: VendorRecord[];
+  tireSets: TireSet[];
+  treadDepth: TreadDepthEntry[];
+  pressureHistory: TirePressureEntry[];
+  tireChangeLog: TireChangeLog[];
 
   // Vendor Actions
   addVendor: (vendor: VendorRecord) => Promise<void>;
   updateVendor: (id: string, vendor: Partial<VendorRecord>) => Promise<void>;
   deleteVendor: (id: string) => Promise<void>;
   refreshVendors: () => Promise<void>;
+
+  // Tire Tracking Actions
+  addTireSet: (tire: TireSet) => Promise<void>;
+  updateTireSet: (id: string, tire: Partial<TireSet>) => Promise<void>;
+  deleteTireSetAction: (id: string) => Promise<void>;
+  addTreadDepth: (entry: TreadDepthEntry) => Promise<void>;
+  deleteTreadDepthAction: (id: string) => Promise<void>;
+  addPressureEntry: (entry: TirePressureEntry) => Promise<void>;
+  deletePressureEntryAction: (id: string) => Promise<void>;
+  addTireChangeLogEntry: (entry: TireChangeLog) => Promise<void>;
+  deleteTireChangeLogEntryAction: (id: string) => Promise<void>;
 
   
   // Pass Log Actions
@@ -226,7 +299,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [drivetrainComponents, setDrivetrainComponents] = useState<DrivetrainComponent[]>([]);
   const [drivetrainSwapLogs, setDrivetrainSwapLogs] = useState<DrivetrainSwapLog[]>([]);
   const [vendors, setVendors] = useState<VendorRecord[]>([]);
-
+  const [tireSets, setTireSets] = useState<TireSet[]>([]);
+  const [treadDepth, setTreadDepth] = useState<TreadDepthEntry[]>([]);
+  const [pressureHistory, setPressureHistory] = useState<TirePressureEntry[]>([]);
+  const [tireChangeLog, setTireChangeLog] = useState<TireChangeLog[]>([]);
 
 
   // ============ SAVE STATUS TRACKING ============
@@ -616,9 +692,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       safeFetch(db.fetchVendors(userId), [] as VendorRecord[], 'setup_vendors').then(dbVendors => {
         if (mountedRef.current) setVendors(dbVendors);
       });
+
+      // Fetch tire tracking data separately (non-blocking)
+      safeFetch(db.fetchTireSets(userId), [] as TireSet[], 'tire_sets').then(d => { if (mountedRef.current) setTireSets(d); });
+      safeFetch(db.fetchTreadDepth(userId), [] as TreadDepthEntry[], 'tire_tread_depth').then(d => { if (mountedRef.current) setTreadDepth(d); });
+      safeFetch(db.fetchTirePressureHistory(userId), [] as TirePressureEntry[], 'tire_pressure_history').then(d => { if (mountedRef.current) setPressureHistory(d); });
+      safeFetch(db.fetchTireChangeLog(userId), [] as TireChangeLog[], 'tire_change_log').then(d => { if (mountedRef.current) setTireChangeLog(d); });
+      // Also keep localStorage in sync for the module-level pass increment helpers
+      safeFetch(db.fetchTireSets(userId), [] as TireSet[], 'tire_sets_ls_sync').then(d => {
+        if (d.length > 0) { try { localStorage.setItem(TIRE_SETS_LS_KEY, JSON.stringify(d)); } catch {} }
+      });
       setLastSyncTime(new Date());
-
-
 
 
       
@@ -852,7 +936,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return d;
     }));
 
+    // 5b. Update ALL active tire sets (localStorage-based, managed by TireTracking)
+    //     Tire sets are not in React state here — they live in localStorage.
+    //     Increment totalPasses on every Active tire set and notify TireTracking via custom event.
+    const { updatedCount: tireIncrementedCount } = incrementActiveTireSets(1);
+    if (tireIncrementedCount > 0) {
+      window.dispatchEvent(new CustomEvent('tire-sets-passes-updated', { detail: { increment: 1 } }));
+      console.log(`[addPassLog] Auto-incremented ${tireIncrementedCount} active tire set(s)`);
+    }
+
     // 6. Update ALL maintenance items (single-car app — update everything)
+
     const updatedMaintenanceItems = maintenanceItems.map(m => {
       const newPasses = m.currentPasses + 1;
       const updatedItem: MaintenanceItem = {
@@ -1009,6 +1103,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const preDecrementCylinderHeads = cylinderHeads.filter(h => h.status === 'Active').map(h => ({ ...h, components: h.components ? { ...h.components } : undefined }));
     const preDecrementDrivetrain = drivetrainComponents.filter(d => d.currentlyInstalled).map(d => ({ ...d, components: d.components ? { ...d.components } : undefined }));
     const preDecrementMaintenance = maintenanceItems.map(m => ({ ...m }));
+    // Capture pre-decrement tire sets snapshot from localStorage (for undo)
+    let preDecrementTireSetsSnapshot: TireSetLS[] = [];
+    try {
+      const raw = localStorage.getItem(TIRE_SETS_LS_KEY);
+      if (raw) preDecrementTireSetsSnapshot = JSON.parse(raw) || [];
+    } catch {}
+
 
     // ═══════════════════════════════════════════════════════════════
     // DECREMENT ALL INSTALLED ENGINES
@@ -1080,6 +1181,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       return d;
     }));
+
+    // ═══════════════════════════════════════════════════════════════
+    // DECREMENT ALL ACTIVE TIRE SETS (localStorage-based)
+    // ═══════════════════════════════════════════════════════════════
+    const { updatedCount: tireDecrementedCount } = incrementActiveTireSets(-1);
+    if (tireDecrementedCount > 0) {
+      window.dispatchEvent(new CustomEvent('tire-sets-passes-updated', { detail: { increment: -1 } }));
+      console.log(`[deletePassLog] Decremented ${tireDecrementedCount} active tire set(s)`);
+    }
+
 
     // ═══════════════════════════════════════════════════════════════
     // DECREMENT MAINTENANCE ITEMS
@@ -1208,6 +1319,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               return pre ? { ...d, totalPasses: pre.totalPasses, passesSinceService: pre.passesSinceService, components: pre.components } as DrivetrainComponent : d;
             }));
             setMaintenanceItems(preDecrementMaintenance);
+
+            // ═══════════════════════════════════════════════════════
+            // RESTORE TIRE SETS (localStorage-based)
+            // ═══════════════════════════════════════════════════════
+            if (preDecrementTireSetsSnapshot.length > 0) {
+              restoreTireSetsFromSnapshot(preDecrementTireSetsSnapshot);
+              window.dispatchEvent(new CustomEvent('tire-sets-passes-updated', { detail: { increment: 0, restored: true } }));
+              console.log(`[deletePassLog Undo] Tire sets restored from pre-decrement snapshot`);
+            }
+
 
             // ═══════════════════════════════════════════════════════
             // RE-INCREMENT STANDALONE PARTS
@@ -1818,6 +1939,61 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, [effectiveUserId, user?.id, isDemoMode, refreshVendors]);
 
+  // ============ TIRE TRACKING ACTIONS ============
+  const addTireSet = useCallback(async (tire: TireSet) => {
+    setTireSets(prev => [...prev, tire]);
+    // Also sync to localStorage for module-level pass increment helpers
+    setTireSets(prev => { try { localStorage.setItem(TIRE_SETS_LS_KEY, JSON.stringify(prev)); } catch {} return prev; });
+    await trackSave(() => db.upsertTireSet(tire, user?.id), 'addTireSet');
+  }, [user?.id, trackSave]);
+
+  const updateTireSet = useCallback(async (id: string, tire: Partial<TireSet>) => {
+    let mergedItem: TireSet | null = null;
+    setTireSets(prev => {
+      const updated = prev.map(t => { if (t.id === id) { mergedItem = { ...t, ...tire }; return mergedItem!; } return t; });
+      try { localStorage.setItem(TIRE_SETS_LS_KEY, JSON.stringify(updated)); } catch {}
+      return updated;
+    });
+    if (mergedItem) await trackSave(() => db.upsertTireSet(mergedItem!, user?.id), 'updateTireSet');
+  }, [user?.id, trackSave]);
+
+  const deleteTireSetActionFn = useCallback(async (id: string) => {
+    setTireSets(prev => { const updated = prev.filter(t => t.id !== id); try { localStorage.setItem(TIRE_SETS_LS_KEY, JSON.stringify(updated)); } catch {} return updated; });
+    setTreadDepth(prev => prev.filter(t => t.tireSetId !== id));
+    setPressureHistory(prev => prev.filter(p => p.tireSetId !== id));
+    setTireChangeLog(prev => prev.filter(c => c.tireSetId !== id));
+    await trackSave(() => db.deleteTireSet(id), 'deleteTireSet');
+  }, [trackSave]);
+
+  const addTreadDepthFn = useCallback(async (entry: TreadDepthEntry) => {
+    setTreadDepth(prev => [...prev, entry]);
+    await trackSave(() => db.upsertTreadDepth(entry, user?.id), 'addTreadDepth');
+  }, [user?.id, trackSave]);
+
+  const deleteTreadDepthFn = useCallback(async (id: string) => {
+    setTreadDepth(prev => prev.filter(t => t.id !== id));
+    await trackSave(() => db.deleteTreadDepth(id), 'deleteTreadDepth');
+  }, [trackSave]);
+
+  const addPressureEntryFn = useCallback(async (entry: TirePressureEntry) => {
+    setPressureHistory(prev => [...prev, entry]);
+    await trackSave(() => db.upsertTirePressure(entry, user?.id), 'addTirePressure');
+  }, [user?.id, trackSave]);
+
+  const deletePressureEntryFn = useCallback(async (id: string) => {
+    setPressureHistory(prev => prev.filter(p => p.id !== id));
+    await trackSave(() => db.deleteTirePressure(id), 'deleteTirePressure');
+  }, [trackSave]);
+
+  const addTireChangeLogEntryFn = useCallback(async (entry: TireChangeLog) => {
+    setTireChangeLog(prev => [...prev, entry]);
+    await trackSave(() => db.upsertTireChangeLog(entry, user?.id), 'addTireChangeLog');
+  }, [user?.id, trackSave]);
+
+  const deleteTireChangeLogEntryFn = useCallback(async (id: string) => {
+    setTireChangeLog(prev => prev.filter(c => c.id !== id));
+    await trackSave(() => db.deleteTireChangeLogEntry(id), 'deleteTireChangeLog');
+  }, [trackSave]);
 
 
   // Computed values
@@ -1877,6 +2053,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       drivetrainComponents,
       drivetrainSwapLogs,
       vendors,
+      tireSets,
+      treadDepth,
+      pressureHistory,
+      tireChangeLog,
+      addTireSet,
+      updateTireSet,
+      deleteTireSetAction: deleteTireSetActionFn,
+      addTreadDepth: addTreadDepthFn,
+      deleteTreadDepthAction: deleteTreadDepthFn,
+      addPressureEntry: addPressureEntryFn,
+      deletePressureEntryAction: deletePressureEntryFn,
+      addTireChangeLogEntry: addTireChangeLogEntryFn,
+      deleteTireChangeLogEntryAction: deleteTireChangeLogEntryFn,
       addVendor,
       updateVendor: updateVendorAction,
       deleteVendor: deleteVendorAction,
