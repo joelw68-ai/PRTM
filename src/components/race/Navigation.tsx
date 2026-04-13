@@ -5,6 +5,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { CrewRole, hasPermission, isAdminRole, getRoleColor } from '@/lib/permissions';
 import SaveStatusIndicator from '@/components/race/SaveStatusIndicator';
 import { checkMaintenanceAlerts, loadAlertSettings } from '@/lib/maintenanceAlerts';
+import { checkSFIAlerts, loadSFIAlertSettings } from '@/lib/sfiAlerts';
+
 
 import {
   Gauge,
@@ -73,6 +75,8 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
   const alertDetails = useMemo(() => {
     const details: { category: string; count: number; items: string[]; severity: 'critical' | 'warning'; navTarget: string }[] = [];
 
+    // ── SFI Certification Threshold Alerts ──
+    // Use configurable thresholds from sfiAlerts.ts instead of hardcoded 0/60 day checks
     const expiredCerts = sfiCertifications.filter(c => c.daysUntilExpiration <= 0);
     if (expiredCerts.length > 0) {
       details.push({
@@ -84,16 +88,51 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
       });
     }
 
-    const expiringSoonCerts = sfiCertifications.filter(c => c.daysUntilExpiration > 0 && c.daysUntilExpiration <= 60);
-    if (expiringSoonCerts.length > 0) {
-      details.push({
-        category: 'SFI Certs Expiring Soon',
-        count: expiringSoonCerts.length,
-        items: expiringSoonCerts.slice(0, 3).map(c => `${c.item} — ${c.daysUntilExpiration}d left`),
-        severity: 'warning',
-        navTarget: 'maintenance'
-      });
+    try {
+      const sfiSettings = loadSFIAlertSettings();
+      if (sfiSettings.enabled && sfiSettings.showBellAlerts) {
+        const sfiThresholdAlerts = checkSFIAlerts(sfiCertifications, sfiSettings);
+        // Exclude already-shown expired certs
+        const expiredIds = new Set(expiredCerts.map(c => c.id));
+        const additionalSFIAlerts = sfiThresholdAlerts.filter(a => !expiredIds.has(a.certId));
+
+        const criticalSFI = additionalSFIAlerts.filter(a => a.threshold.severity === 'critical');
+        const warningSFI = additionalSFIAlerts.filter(a => a.threshold.severity === 'warning');
+        const infoSFI = additionalSFIAlerts.filter(a => a.threshold.severity === 'info');
+
+        if (criticalSFI.length > 0) {
+          details.push({
+            category: 'SFI Certs — Critical',
+            count: criticalSFI.length,
+            items: criticalSFI.slice(0, 3).map(a => `${a.item} — ${a.daysUntilExpiration}d left`),
+            severity: 'critical',
+            navTarget: 'maintenance'
+          });
+        }
+        if (warningSFI.length > 0) {
+          details.push({
+            category: 'SFI Certs — Expiring Soon',
+            count: warningSFI.length,
+            items: warningSFI.slice(0, 3).map(a => `${a.item} — ${a.daysUntilExpiration}d left`),
+            severity: 'warning',
+            navTarget: 'maintenance'
+          });
+        }
+        if (infoSFI.length > 0) {
+          details.push({
+            category: 'SFI Certs — Approaching Expiration',
+            count: infoSFI.length,
+            items: infoSFI.slice(0, 3).map(a => `${a.item} — ${a.daysUntilExpiration}d left`),
+            severity: 'warning',
+            navTarget: 'maintenance'
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[Navigation] Error loading SFI threshold alerts:', err);
     }
+
+
 
     const dueMaintenance = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Overdue');
     if (dueMaintenance.length > 0) {

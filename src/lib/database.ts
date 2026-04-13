@@ -876,23 +876,35 @@ export const insertEngineSwapLog = async (log: EngineSwapLog, userId?: string): 
 };
 
 // Checklists
-export const fetchChecklists = async (userId?: string): Promise<{ preRun: ChecklistItem[], betweenRounds: ChecklistItem[], postRun: ChecklistItem[] }> => {
+export const fetchChecklists = async (userId?: string): Promise<{ preRun: ChecklistItem[], betweenRounds: ChecklistItem[], postRun: ChecklistItem[], custom: Record<string, ChecklistItem[]> }> => {
   const { data, error } = await supabase.from('checklists').select('*').order('category');
   if (error) throw error;
   
+  const BUILTIN_TYPES = new Set(['preRun', 'betweenRounds', 'postRun']);
   const items = parseRows(data, ChecklistRowSchema, 'checklists').map((row: any) => ({
     ...toChecklistItem(row),
     checklistType: row.checklist_type
   }));
   
+  // Collect custom checklist types (anything not in the 3 built-in types)
+  const custom: Record<string, ChecklistItem[]> = {};
+  for (const item of items) {
+    const type = (item as any).checklistType;
+    if (!BUILTIN_TYPES.has(type)) {
+      if (!custom[type]) custom[type] = [];
+      custom[type].push(item);
+    }
+  }
+
   return {
     preRun: items.filter((i: any) => i.checklistType === 'preRun'),
     betweenRounds: items.filter((i: any) => i.checklistType === 'betweenRounds'),
-    postRun: items.filter((i: any) => i.checklistType === 'postRun')
+    postRun: items.filter((i: any) => i.checklistType === 'postRun'),
+    custom
   };
 };
 
-export const upsertChecklistItem = async (item: ChecklistItem, checklistType: 'preRun' | 'betweenRounds' | 'postRun', userId?: string): Promise<void> => {
+export const upsertChecklistItem = async (item: ChecklistItem, checklistType: string, userId?: string): Promise<void> => {
   const payload: any = {
     id: item.id,
     checklist_type: checklistType,
@@ -917,12 +929,22 @@ export const updateChecklistCompletion = async (id: string, completed: boolean):
   if (error) throw error;
 };
 
-export const resetChecklistByType = async (checklistType: 'preRun' | 'betweenRounds' | 'postRun', userId?: string): Promise<void> => {
+export const resetChecklistByType = async (checklistType: string, userId?: string): Promise<void> => {
   let query = supabase.from('checklists').update({ completed: false, checked_by: null, checked_at: null }).eq('checklist_type', checklistType);
   if (userId) query = query.eq('user_id', userId);
   const { error } = await query;
   if (error) throw error;
 };
+
+/** Delete ALL checklist items for a given checklist type (used when deleting a custom checklist). */
+export const deleteChecklistsByType = async (checklistType: string, userId?: string): Promise<void> => {
+  let query = supabase.from('checklists').delete().eq('checklist_type', checklistType);
+  if (userId) query = query.eq('user_id', userId);
+  const { error } = await query;
+  if (error) throw error;
+};
+
+
 
 
 // Parts Inventory

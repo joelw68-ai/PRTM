@@ -314,9 +314,93 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
     setFullBackupResult(null);
 
     try {
-      const { data, error } = await supabase.functions.invoke('backup-all-tables', {
-        body: {}
-      });
+      // Verify we have a valid session before attempting the edge function call
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData?.session) {
+        throw new Error('No active session found. Please sign in and try again.');
+      }
+
+      // Refresh the session token to ensure it's not expired
+      const { error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        console.warn('[Backup] Session refresh warning:', refreshError.message);
+        // Continue anyway — the existing token might still be valid
+      }
+
+
+      // Use the Supabase client's built-in functions.invoke with a timeout wrapper
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+
+      let data: any;
+      let error: any;
+
+      try {
+        const result = await supabase.functions.invoke('backup-all-tables', {
+          body: {},
+        });
+        data = result.data;
+        error = result.error;
+      } catch (fetchErr: any) {
+        clearTimeout(timeoutId);
+        console.warn('[Backup] supabase.functions.invoke failed, trying direct fetch...', fetchErr?.message);
+        
+
+        // Attempt direct fetch to the edge function URL
+        try {
+          const directUrl = `${window.location.origin}`;
+          // Extract the project ref from the supabase URL in the client
+          // The functions URL pattern is: https://<project-ref>.supabase.co/functions/v1/<function-name>
+          const token = sessionData.session.access_token;
+          
+          // Get the Supabase URL from the client config
+          // We need to construct the functions URL from the Supabase project URL
+          const supabaseProjectUrl = (supabase as any).supabaseUrl 
+            || (supabase as any).restUrl?.replace('/rest/v1', '')
+            || '';
+          
+          if (supabaseProjectUrl) {
+            const functionsUrl = `${supabaseProjectUrl}/functions/v1/backup-all-tables`;
+            console.log('[Backup] Attempting direct fetch to:', functionsUrl);
+            
+            const directResponse = await fetch(functionsUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'apikey': (supabase as any).supabaseKey || sessionData.session.access_token,
+              },
+              body: JSON.stringify({}),
+              signal: controller.signal,
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (!directResponse.ok) {
+              const errText = await directResponse.text().catch(() => 'Unknown error');
+              throw new Error(`Edge function returned ${directResponse.status}: ${errText}`);
+            }
+            
+            data = await directResponse.json();
+            error = null;
+          } else {
+            throw fetchErr; // Re-throw original error if we can't construct the URL
+          }
+        } catch (directErr: any) {
+          clearTimeout(timeoutId);
+          if (directErr.name === 'AbortError') {
+            throw new Error('Backup request timed out after 2 minutes. Your database may be very large. Try the JSON export option instead, which runs client-side.');
+          }
+          throw new Error(
+            `Could not reach the backup edge function. ` +
+            `Original error: ${fetchErr?.message || 'Unknown'}. ` +
+            `Direct fetch error: ${directErr?.message || 'Unknown'}. ` +
+            `Please check your internet connection and try again.`
+          );
+        }
+      }
+
+      clearTimeout(timeoutId);
 
       if (error) {
         throw new Error(error.message || 'Edge function returned an error');
@@ -367,6 +451,7 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
       setIsFullBackupRunning(false);
     }
   };
+
 
 
   // Gather all data for export
@@ -1135,9 +1220,34 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
                   <div className="flex-1">
                     <p className="text-red-300 font-medium">Full Backup Failed</p>
                     <p className="text-red-300/80 text-sm mt-1">{fullBackupMessage}</p>
-                    <p className="text-xs text-slate-500 mt-2">
-                      Make sure you are signed in and have a stable internet connection. The edge function requires authentication.
-                    </p>
+                    
+                    <div className="mt-3 bg-slate-900/50 rounded-lg p-3 border border-slate-700/50">
+                      <p className="text-xs text-slate-400 font-medium mb-2">Troubleshooting:</p>
+                      <ul className="text-xs text-slate-500 space-y-1 list-disc ml-4">
+                        <li>Make sure you are <strong className="text-slate-300">signed in</strong> (not in demo mode)</li>
+                        <li>Check your <strong className="text-slate-300">internet connection</strong> is stable</li>
+                        <li>Try <strong className="text-slate-300">refreshing the page</strong> and signing in again</li>
+                        <li>If the issue persists, use the <strong className="text-slate-300">Export as JSON</strong> button below as an alternative (runs client-side, no edge function needed)</li>
+                        <li>The edge function has a timeout limit — very large databases may need the client-side JSON export instead</li>
+                      </ul>
+                    </div>
+
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        onClick={handleFullDatabaseBackup}
+                        disabled={isFullBackupRunning}
+                        className="px-3 py-1.5 text-xs font-medium text-white bg-purple-600 hover:bg-purple-500 disabled:bg-slate-600 rounded-lg transition-colors flex items-center gap-1.5"
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                        Retry Backup
+                      </button>
+                      <button
+                        onClick={() => setFullBackupStatus('idle')}
+                        className="px-3 py-1.5 text-xs text-slate-400 hover:text-white bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
                   </div>
                   <button onClick={() => setFullBackupStatus('idle')} className="text-red-400 hover:text-red-300 flex-shrink-0">
                     <X className="w-4 h-4" />
@@ -1145,6 +1255,7 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ currentRole = 'Owner' }) 
                 </div>
               </div>
             )}
+
           </div>
         </div>
 

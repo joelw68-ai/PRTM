@@ -21,6 +21,15 @@ import {
   type MaintenanceAlertSettings,
   type AlertThreshold,
 } from '@/lib/maintenanceAlerts';
+import {
+  loadSFIAlertSettings,
+  saveSFIAlertSettings,
+  getDefaultSFISettings,
+  checkSFIAlerts,
+  type SFIAlertSettings,
+  type SFIAlertThreshold,
+} from '@/lib/sfiAlerts';
+
 import { 
 
   CrewRole, 
@@ -193,6 +202,47 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
   };
 
   const currentAlerts = checkMaintenanceAlerts(maintenanceItems, alertSettings);
+
+  // ============ SFI CERTIFICATION ALERT THRESHOLD SETTINGS ============
+  const [sfiAlertSettings, setSfiAlertSettings] = useState<SFIAlertSettings>(() => loadSFIAlertSettings());
+  const [sfiAlertSaveMsg, setSfiAlertSaveMsg] = useState<string | null>(null);
+
+  const handleSaveSfiAlertSettings = () => {
+    saveSFIAlertSettings(sfiAlertSettings);
+    setSfiAlertSaveMsg('SFI alert settings saved!');
+    setTimeout(() => setSfiAlertSaveMsg(null), 3000);
+  };
+
+  const handleResetSfiAlertSettings = () => {
+    const defaults = getDefaultSFISettings();
+    setSfiAlertSettings(defaults);
+    saveSFIAlertSettings(defaults);
+    setSfiAlertSaveMsg('SFI alert settings reset to defaults.');
+    setTimeout(() => setSfiAlertSaveMsg(null), 3000);
+  };
+
+  const updateSfiThreshold = (index: number, field: keyof SFIAlertThreshold, value: any) => {
+    setSfiAlertSettings(prev => ({
+      ...prev,
+      thresholds: prev.thresholds.map((t, i) => i === index ? { ...t, [field]: value } : t)
+    }));
+  };
+
+  const addSfiThreshold = () => {
+    setSfiAlertSettings(prev => ({
+      ...prev,
+      thresholds: [...prev.thresholds, { days: 45, label: 'Custom SFI Alert', severity: 'info' as const, enabled: true }]
+    }));
+  };
+
+  const removeSfiThreshold = (index: number) => {
+    setSfiAlertSettings(prev => ({
+      ...prev,
+      thresholds: prev.thresholds.filter((_, i) => i !== index)
+    }));
+  };
+
+  const currentSfiAlerts = checkSFIAlerts(sfiCertifications, sfiAlertSettings);
 
 
   const [isSaving, setIsSaving] = useState(false);
@@ -922,8 +972,219 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
                     </div>
                   )}
                 </div>
+
+                {/* ═══════════════════════════════════════════════════════════ */}
+                {/* SFI CERTIFICATION EXPIRATION ALERTS                        */}
+                {/* ═══════════════════════════════════════════════════════════ */}
+
+                {/* SFI Overview */}
+                <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6">
+                  <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                    <Shield className="w-5 h-5 text-cyan-400" />
+                    SFI Certification Expiration Alerts
+                  </h3>
+                  <p className="text-sm text-slate-400 mb-4">
+                    Configure day-based thresholds for SFI certification expiration reminders.
+                    Alerts fire when certifications are within the configured number of days from expiration.
+                    Notifications appear as toast pop-ups when SFI certs are added or updated and in the navigation bell icon.
+                  </p>
+
+                  {sfiAlertSaveMsg && (
+                    <div className={`mb-4 p-3 rounded-lg ${sfiAlertSaveMsg.includes('reset') ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50' : 'bg-green-500/20 text-green-400 border border-green-500/50'}`}>
+                      <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4" />{sfiAlertSaveMsg}</div>
+                    </div>
+                  )}
+
+                  {/* Master Toggle */}
+                  <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700 mb-4">
+                    <div>
+                      <p className="text-white font-medium">Enable SFI Expiration Alerts</p>
+                      <p className="text-xs text-slate-400">Monitor all SFI certifications for approaching expiration dates</p>
+                    </div>
+                    <button
+                      onClick={() => setSfiAlertSettings(prev => ({ ...prev, enabled: !prev.enabled }))}
+                      className={`relative w-12 h-6 rounded-full transition-colors ${sfiAlertSettings.enabled ? 'bg-cyan-500' : 'bg-slate-600'}`}
+                    >
+                      <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform ${sfiAlertSettings.enabled ? 'left-6' : 'left-0.5'}`} />
+                    </button>
+                  </div>
+
+                  {/* Notification Channels */}
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                      <div className="flex items-center gap-2">
+                        <Info className="w-4 h-4 text-blue-400" />
+                        <span className="text-sm text-slate-300">Toast Notifications</span>
+                      </div>
+                      <button
+                        onClick={() => setSfiAlertSettings(prev => ({ ...prev, showToastNotifications: !prev.showToastNotifications }))}
+                        className={`relative w-10 h-5 rounded-full transition-colors ${sfiAlertSettings.showToastNotifications ? 'bg-cyan-500' : 'bg-slate-600'}`}
+                      >
+                        <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${sfiAlertSettings.showToastNotifications ? 'left-5' : 'left-0.5'}`} />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-yellow-400" />
+                        <span className="text-sm text-slate-300">Bell Icon Alerts</span>
+                      </div>
+                      <button
+                        onClick={() => setSfiAlertSettings(prev => ({ ...prev, showBellAlerts: !prev.showBellAlerts }))}
+                        className={`relative w-10 h-5 rounded-full transition-colors ${sfiAlertSettings.showBellAlerts ? 'bg-cyan-500' : 'bg-slate-600'}`}
+                      >
+                        <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${sfiAlertSettings.showBellAlerts ? 'left-5' : 'left-0.5'}`} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SFI Threshold Configuration */}
+                <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-white">SFI Day Thresholds</h3>
+                    <button onClick={addSfiThreshold} className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500/20 text-cyan-400 rounded-lg text-sm hover:bg-cyan-500/30 transition-colors">
+                      <Plus className="w-4 h-4" /> Add Threshold
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400 mb-4">
+                    Alerts trigger when a certification is within the configured number of days from its expiration date. For example, a 90-day threshold alerts when a cert expires in 90 days or fewer.
+                  </p>
+
+                  <div className="space-y-3">
+                    {sfiAlertSettings.thresholds.sort((a, b) => b.days - a.days).map((threshold, idx) => (
+                      <div key={idx} className={`p-4 rounded-lg border transition-colors ${threshold.enabled ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-900/30 border-slate-700/50 opacity-60'}`}>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => updateSfiThreshold(idx, 'enabled', !threshold.enabled)}
+                              className={`relative w-10 h-5 rounded-full transition-colors ${threshold.enabled ? 'bg-cyan-500' : 'bg-slate-600'}`}
+                            >
+                              <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${threshold.enabled ? 'left-5' : 'left-0.5'}`} />
+                            </button>
+                            <div className={`w-3 h-3 rounded-full ${threshold.severity === 'critical' ? 'bg-red-400' : threshold.severity === 'warning' ? 'bg-amber-400' : 'bg-blue-400'}`} />
+                            <span className="text-white font-medium">{threshold.label}</span>
+                          </div>
+                          {sfiAlertSettings.thresholds.length > 1 && (
+                            <button onClick={() => removeSfiThreshold(idx)} className="p-1 text-slate-500 hover:text-red-400 transition-colors">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-4">
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Days Before Expiration</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="730"
+                              value={threshold.days}
+                              onChange={(e) => updateSfiThreshold(idx, 'days', parseInt(e.target.value) || 0)}
+                              className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Label</label>
+                            <input
+                              type="text"
+                              value={threshold.label}
+                              onChange={(e) => updateSfiThreshold(idx, 'label', e.target.value)}
+                              className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Severity</label>
+                            <select
+                              value={threshold.severity}
+                              onChange={(e) => updateSfiThreshold(idx, 'severity', e.target.value)}
+                              className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm"
+                            >
+                              <option value="info">Info (Blue)</option>
+                              <option value="warning">Warning (Amber)</option>
+                              <option value="critical">Critical (Red)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Visual timeline bar showing where this threshold sits on a 0-365 day scale */}
+                        <div className="mt-3">
+                          <div className="w-full bg-slate-700 rounded-full h-2 relative">
+                            <div
+                              className={`h-2 rounded-full transition-all ${threshold.severity === 'critical' ? 'bg-red-500' : threshold.severity === 'warning' ? 'bg-amber-500' : 'bg-blue-500'}`}
+                              style={{ width: `${Math.min((threshold.days / 365) * 100, 100)}%` }}
+                            />
+                            <div
+                              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full border-2 border-slate-900 shadow"
+                              style={{ left: `${Math.min((threshold.days / 365) * 100, 100)}%`, transform: 'translate(-50%, -50%)' }}
+                            />
+                          </div>
+                          <div className="flex justify-between mt-1">
+                            <span className="text-[10px] text-slate-500">0 days (expired)</span>
+                            <span className="text-[10px] text-slate-500">Alert at {threshold.days} days</span>
+                            <span className="text-[10px] text-slate-500">365 days</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Save / Reset */}
+                  <div className="flex items-center gap-3 mt-6">
+                    <button onClick={handleSaveSfiAlertSettings} className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-lg font-medium hover:from-cyan-600 hover:to-blue-700 transition-all">
+                      <Save className="w-4 h-4" /> Save SFI Settings
+                    </button>
+                    <button onClick={handleResetSfiAlertSettings} className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors">
+                      <RefreshCw className="w-4 h-4" /> Reset to Defaults
+                    </button>
+                  </div>
+                </div>
+
+                {/* Current SFI Alerts Preview */}
+                <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6">
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <Shield className="w-5 h-5 text-cyan-400" />
+                    Current SFI Alerts ({currentSfiAlerts.length})
+                  </h3>
+                  {currentSfiAlerts.length === 0 ? (
+                    <div className="text-center py-8">
+                      <CheckCircle2 className="w-12 h-12 text-green-500/40 mx-auto mb-3" />
+                      <p className="text-slate-400">No SFI certifications have reached alert thresholds.</p>
+                      <p className="text-xs text-slate-500 mt-1">Alerts will appear here as certifications approach their expiration dates.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                      {currentSfiAlerts.map((alert, idx) => (
+                        <div key={idx} className={`flex items-center justify-between p-3 rounded-lg border ${
+                          alert.threshold.severity === 'critical' ? 'bg-red-500/10 border-red-500/30' :
+                          alert.threshold.severity === 'warning' ? 'bg-amber-500/10 border-amber-500/30' :
+                          'bg-blue-500/10 border-blue-500/30'
+                        }`}>
+                          <div className="flex items-center gap-3">
+                            <div className={`w-2.5 h-2.5 rounded-full ${
+                              alert.threshold.severity === 'critical' ? 'bg-red-400' :
+                              alert.threshold.severity === 'warning' ? 'bg-amber-400' : 'bg-blue-400'
+                            }`} />
+                            <div>
+                              <p className="text-white font-medium text-sm">{alert.item}</p>
+                              <p className="text-xs text-slate-400">{alert.sfiSpec} — {alert.threshold.label}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className={`text-sm font-bold ${
+                              alert.daysUntilExpiration <= 0 ? 'text-red-400' :
+                              alert.threshold.severity === 'critical' ? 'text-red-400' :
+                              alert.threshold.severity === 'warning' ? 'text-amber-400' : 'text-blue-400'
+                            }`}>{alert.daysUntilExpiration <= 0 ? 'EXPIRED' : `${alert.daysUntilExpiration}d`}</p>
+                            <p className="text-[11px] text-slate-500">Exp: {alert.expirationDate}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
+
 
 
             {activeSection === 'auditlog' && canViewAuditLog && (

@@ -7,6 +7,8 @@ import { auditLog } from '@/lib/auditLog';
 import * as dbLogger from '@/lib/dbLogger';
 import { toast } from 'sonner';
 import { checkNewlyTriggeredAlerts, loadAlertSettings } from '@/lib/maintenanceAlerts';
+import { checkSFIAlerts, checkNewlyTriggeredSFIAlerts, loadSFIAlertSettings } from '@/lib/sfiAlerts';
+
 
 import {
 
@@ -549,7 +551,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     
     try {
       // Fetch all data from database directly - no hasData check needed
-      const emptyChecklists = { preRun: [] as ChecklistItem[], betweenRounds: [] as ChecklistItem[], postRun: [] as ChecklistItem[] };
+      const emptyChecklists = { preRun: [] as ChecklistItem[], betweenRounds: [] as ChecklistItem[], postRun: [] as ChecklistItem[], custom: {} as Record<string, ChecklistItem[]> };
+
       
       const safeFetch = async <T,>(promise: Promise<T>, fallback: T, tableName: string): Promise<T> => {
         const fetchLogId = dbLogger.logStart(`fetch ${tableName}`, 'read', tableName);
@@ -728,7 +731,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // Use effectiveUserId for team-aware data fetching
       const userId = effectiveUserId || user?.id;
 
-      const emptyChecklists = { preRun: [] as ChecklistItem[], betweenRounds: [] as ChecklistItem[], postRun: [] as ChecklistItem[] };
+      const emptyChecklists = { preRun: [] as ChecklistItem[], betweenRounds: [] as ChecklistItem[], postRun: [] as ChecklistItem[], custom: {} as Record<string, ChecklistItem[]> };
+
       
       const safeFetch = async <T,>(promise: Promise<T>, fallback: T, tableName: string): Promise<T> => {
         const fetchLogId = dbLogger.logStart(`refresh ${tableName}`, 'read', tableName);
@@ -1575,6 +1579,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
 
   const addSFICertification = useCallback(async (cert: SFICertification) => {
+    // Capture previous state for threshold crossing detection
+    const previousCerts = sfiCertifications.map(c => ({ ...c }));
+    
     setSFICertifications(prev => [...prev, cert]);
     await trackSave(
       () => db.upsertSFICertification(cert, user?.id),
@@ -1582,13 +1589,84 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       undefined,
       'SFI certification saved locally but failed to sync to database — it may disappear on refresh.'
     );
-  }, [user?.id, trackSave]);
+
+    // Check SFI alert thresholds for the newly added cert
+    try {
+      const sfiSettings = loadSFIAlertSettings();
+      if (sfiSettings.enabled && sfiSettings.showToastNotifications) {
+        const updatedCerts = [...previousCerts, cert];
+        const newAlerts = checkNewlyTriggeredSFIAlerts(previousCerts, updatedCerts, sfiSettings);
+        
+        for (const alert of newAlerts) {
+          const daysLeft = alert.daysUntilExpiration;
+          const expDate = alert.expirationDate;
+          
+          if (alert.threshold.severity === 'critical') {
+            toast.error(`SFI Alert: ${alert.item} — ${alert.threshold.label}`, {
+              description: `${alert.sfiSpec} | ${daysLeft <= 0 ? 'EXPIRED' : `${daysLeft} days remaining`} | Expires: ${expDate}`,
+              duration: 8000,
+            });
+          } else if (alert.threshold.severity === 'warning') {
+            toast.warning(`SFI Alert: ${alert.item} — ${alert.threshold.label}`, {
+              description: `${alert.sfiSpec} | ${daysLeft} days remaining | Expires: ${expDate}`,
+              duration: 6000,
+            });
+          } else {
+            toast.info(`SFI Alert: ${alert.item} — ${alert.threshold.label}`, {
+              description: `${alert.sfiSpec} | ${daysLeft} days remaining | Expires: ${expDate}`,
+              duration: 5000,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[AppContext] Error checking SFI alerts on add:', err);
+    }
+  }, [user?.id, trackSave, sfiCertifications]);
+
 
   const updateSFICertification = useCallback(async (id: string, cert: Partial<SFICertification>) => {
+    // Capture previous state for threshold crossing detection
+    const previousCerts = sfiCertifications.map(c => ({ ...c }));
+    
     let mergedItem: SFICertification | null = null;
     setSFICertifications(prev => prev.map(c => { if (c.id === id) { mergedItem = { ...c, ...cert }; return mergedItem; } return c; }));
     if (mergedItem) await trackSave(() => db.upsertSFICertification(mergedItem!, user?.id), 'updateSFICert');
-  }, [user?.id, trackSave]);
+
+    // Check SFI alert thresholds for the updated cert
+    try {
+      const sfiSettings = loadSFIAlertSettings();
+      if (sfiSettings.enabled && sfiSettings.showToastNotifications && mergedItem) {
+        const updatedCerts = previousCerts.map(c => c.id === id ? mergedItem! : c);
+        const newAlerts = checkNewlyTriggeredSFIAlerts(previousCerts, updatedCerts, sfiSettings);
+        
+        for (const alert of newAlerts) {
+          const daysLeft = alert.daysUntilExpiration;
+          const expDate = alert.expirationDate;
+          
+          if (alert.threshold.severity === 'critical') {
+            toast.error(`SFI Alert: ${alert.item} — ${alert.threshold.label}`, {
+              description: `${alert.sfiSpec} | ${daysLeft <= 0 ? 'EXPIRED' : `${daysLeft} days remaining`} | Expires: ${expDate}`,
+              duration: 8000,
+            });
+          } else if (alert.threshold.severity === 'warning') {
+            toast.warning(`SFI Alert: ${alert.item} — ${alert.threshold.label}`, {
+              description: `${alert.sfiSpec} | ${daysLeft} days remaining | Expires: ${expDate}`,
+              duration: 6000,
+            });
+          } else {
+            toast.info(`SFI Alert: ${alert.item} — ${alert.threshold.label}`, {
+              description: `${alert.sfiSpec} | ${daysLeft} days remaining | Expires: ${expDate}`,
+              duration: 5000,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[AppContext] Error checking SFI alerts on update:', err);
+    }
+  }, [user?.id, trackSave, sfiCertifications]);
+
 
   const deleteSFICertification = useCallback(async (id: string) => {
     setSFICertifications(prev => prev.filter(c => c.id !== id));
@@ -2002,12 +2080,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const getTotalPasses = useCallback(() => passLogs.length, [passLogs]);
   
   const getAlertCount = useCallback(() => {
+    // Hardcoded expired/expiring counts (always shown)
     const expiredCerts = sfiCertifications.filter(c => c.daysUntilExpiration <= 0).length;
-    const expiringSoonCerts = sfiCertifications.filter(c => c.daysUntilExpiration > 0 && c.daysUntilExpiration <= 60).length;
     const dueMaintenance = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Overdue').length;
     const lowStockParts = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock').length;
-    return expiredCerts + expiringSoonCerts + dueMaintenance + lowStockParts;
+
+    // SFI threshold alerts (configurable, may include certs beyond the hardcoded 60-day window)
+    let sfiThresholdCount = 0;
+    try {
+      const sfiSettings = loadSFIAlertSettings();
+      if (sfiSettings.enabled && sfiSettings.showBellAlerts) {
+        const sfiAlerts = checkSFIAlerts(sfiCertifications, sfiSettings);
+        // Exclude already-counted expired certs to avoid double-counting
+        sfiThresholdCount = sfiAlerts.filter(a => a.daysUntilExpiration > 0).length;
+      }
+    } catch {}
+
+    return expiredCerts + sfiThresholdCount + dueMaintenance + lowStockParts;
   }, [sfiCertifications, maintenanceItems, partsInventory]);
+
 
 
   const getLowStockCount = useCallback(() => {
