@@ -331,9 +331,14 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       tirePressureFront: mostRecent ? (mostRecent.tirePressureFront ?? 0) : 0,
       tirePressureRearLeft: mostRecent ? (mostRecent.tirePressureRearLeft ?? 0) : 0,
       tirePressureRearRight: mostRecent ? (mostRecent.tirePressureRearRight ?? 0) : 0,
+      // Rear tire LINER pressures — pre-fill from the most recent pass so crew chiefs
+      // who run the same liner setup don't have to re-type these values every run.
+      rearLeftLinerPSI: mostRecent ? (mostRecent.rearLeftLinerPSI ?? 0) : 0,
+      rearRightLinerPSI: mostRecent ? (mostRecent.rearRightLinerPSI ?? 0) : 0,
       wheelieBarSetting: mostRecent ? (mostRecent.wheelieBarSetting ?? 0) : 0,
       launchRPM: mostRecent ? (mostRecent.launchRPM ?? 0) : 0,
       boostSetting: mostRecent ? (mostRecent.boostSetting ?? 0) : 0,
+
       notes: '',
       crewChief: '',
       aborted: false,
@@ -495,9 +500,13 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       tirePressureFront: pass.tirePressureFront,
       tirePressureRearLeft: pass.tirePressureRearLeft,
       tirePressureRearRight: pass.tirePressureRearRight,
+      // Rear tire LINER pressures — preserve existing values when editing.
+      rearLeftLinerPSI: pass.rearLeftLinerPSI,
+      rearRightLinerPSI: pass.rearRightLinerPSI,
       wheelieBarSetting: pass.wheelieBarSetting,
       launchRPM: pass.launchRPM,
       boostSetting: pass.boostSetting,
+
       notes: pass.notes,
       crewChief: pass.crewChief,
       aborted: pass.aborted
@@ -1560,7 +1569,17 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                                     <span className="text-slate-400">Rear L/R</span>
                                     <span className="text-white">{pass.tirePressureRearLeft}/{pass.tirePressureRearRight} psi</span>
                                   </div>
+                                  {/* Show liner PSI only when at least one value is recorded.
+                                      Older passes won't have these fields so we hide the row entirely
+                                      to keep the existing layout uncluttered for users who don't track liners. */}
+                                  {(pass.rearLeftLinerPSI != null || pass.rearRightLinerPSI != null) && (
+                                    <div className="flex justify-between">
+                                      <span className="text-slate-400">Rear L/R Liner</span>
+                                      <span className="text-white">{pass.rearLeftLinerPSI ?? 0}/{pass.rearRightLinerPSI ?? 0} psi</span>
+                                    </div>
+                                  )}
                                 </div>
+
                               </div>
 
                               
@@ -2233,6 +2252,35 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                       />
                     </div>
                   </div>
+
+                  {/* Rear Tire LINER Pressures — inner liner inside the slick.
+                      Separate from the slick PSI above because most teams run a
+                      lower liner pressure (e.g. 5-9 psi) to control sidewall
+                      wrinkle/flex during the launch. Tracking this per-pass
+                      makes it possible to correlate liner pressure with 60' time. */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">Rear L Liner PSI</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={formData.rearLeftLinerPSI ?? 0}
+                        onChange={(e) => setFormData({...formData, rearLeftLinerPSI: parseFloat(e.target.value) || 0})}
+                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">Rear R Liner PSI</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={formData.rearRightLinerPSI ?? 0}
+                        onChange={(e) => setFormData({...formData, rearRightLinerPSI: parseFloat(e.target.value) || 0})}
+                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                      />
+                    </div>
+                  </div>
+
 
                   {/* Track Temp & Wheelie Bar — moved below tire pressure */}
                   <div className="grid grid-cols-2 gap-3">

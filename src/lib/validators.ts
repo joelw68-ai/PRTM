@@ -64,6 +64,11 @@ export const PassLogRowSchema = z.object({
   tire_pressure_front: nullableNumeric,
   tire_pressure_rear_left: nullableNumeric,
   tire_pressure_rear_right: nullableNumeric,
+  // Rear tire LINER pressures (inner tube/liner inside the slick).
+  // Optional — added April 2026; pre-existing rows won't have these columns.
+  rear_left_liner_psi: nullableNumeric,
+  rear_right_liner_psi: nullableNumeric,
+
   wheelie_bar_setting: nullableNumeric,
   launch_rpm: nullableNumeric,
   boost_setting: nullableNumeric,

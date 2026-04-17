@@ -321,83 +321,142 @@ export function convertSLPtoStationPressure(slpInHg: number, elevationFt: number
   return slpInHg * Math.pow(1 - elevationFt / 145442.16, 5.2561);
 }
 
-// ─── Density Altitude (NWS / NOAA standard) ─────────────────────────────────
+// ─── Density Altitude (Drag Racing Weather Station / Patrick Hale formula) ──
 //
-// Computes density altitude using the NWS/NOAA formula with virtual
-// temperature to account for moisture in the air.
+// This app now uses the SAME density-altitude formula as the popular
+// "Drag Racing Weather Station" (DRWS) app by Patrick Hale, as well as
+// Computech, RaceAir, Altus, and the NHRA-standard handheld weather stations.
 //
-// IMPORTANT — pressureInHg and elevationFt:
+// ── The Patrick Hale / NHRA formula ──
 //
-//   • If pressureInHg comes from a WEATHER API (WeatherAPI.com, etc.), it is
-//     sea-level corrected pressure (QNH).  You MUST pass the track elevation
-//     in elevationFt so the function can convert to station pressure first.
+//   DA = 145366 × (1 − (17.326 × P / (459.67 + T))^0.235)
 //
-//   • If pressureInHg comes from a DRAG RACING WEATHER STATION (Computech,
-//     RaceAir, Altus, Kestrel), it is already station pressure.  Pass
-//     elevationFt = 0 (or omit it) so no conversion is applied.
+//   where:
+//     P = ABSOLUTE (station) pressure in inHg
+//     T = air temperature in °F
+//     17.326 = 518.67 / 29.92  (ISA standard T°R / standard pressure inHg)
+//     0.235  ≈ R·L / (g·M − R·L)  (same exponent as NWS formula)
+//     145366 ≈ T0/L in feet (ISA temperature divided by lapse rate)
 //
-//   • If you're unsure, pass the elevation — the conversion is a no-op at
-//     elevation 0, and at any positive elevation it corrects the pressure
-//     downward to match what a station barometer would read.
+// This is the "dry" density-altitude — it does NOT include a humidity
+// correction via virtual temperature.  DRWS and other drag-racing weather
+// stations report two altitudes:
 //
-// Formula:
-//   1. Convert SLP → station pressure (if elevation > 0)
-//   2. Virtual Temperature: Tv = T_K / (1 − 0.3783 × (e / P_mb))
-//      where e = actual vapor pressure (hPa) from Buck equation
-//   3. Density Altitude: DA = 145442.16 × (1 − ((P/P0) × (T0/Tv))^0.234969)
+//   • Density Altitude (DA)     — uses STATION pressure, no humidity
+//   • Corrected Altitude (CA)   — uses DRY pressure (station − vapor)
 //
-// The exponent 0.234969 = 1/4.2561 = R·L / (g·M − R·L)
+// The DA number is what DRWS displays as the headline "DA" reading and is
+// the one most racers reference when tuning.  The CA (sometimes labelled
+// "Grains-Corrected DA") accounts for water vapor and is typically a few
+// hundred feet higher on a humid day.
 //
-// This matches the NWS density altitude calculator and the values reported
-// by Computech, RaceAir, Altus, and other proven drag racing weather stations.
+// ── Why the switch ──
 //
-// Examples (sea level, 29.92 inHg STATION pressure):
-//   59°F / 0% RH  →  DA ≈    0 ft  (ISA standard conditions)
-//   70°F / 50% RH →  DA ≈  1060 ft
-//   80°F / 50% RH →  DA ≈  1770 ft
-//   95°F / 50% RH →  DA ≈  2650 ft
-//   95°F / 80% RH →  DA ≈  3050 ft
-//   55°F / 30% RH →  DA ≈  −350 ft  (cold dense air, below sea level DA)
+// The previous implementation used the NWS/NOAA virtual-temperature formula
+// which is scientifically accurate but produces values that differ by a few
+// hundred feet from what DRWS / Computech / RaceAir / Altus report.  Racers
+// cross-checking against their handheld weather stations were seeing a
+// mismatch, so we've aligned with the industry-standard racing formula.
+//
+// ── Pressure input ──
+//
+//   • If pressureInHg is from a WEATHER API (WeatherAPI.com, etc.) it's
+//     sea-level-corrected (QNH).  Pass elevationFt so we convert to
+//     station pressure first.
+//   • If pressureInHg is from a DRAG RACING WEATHER STATION (Kestrel,
+//     Computech, RaceAir, Altus, DRWS) it's already station pressure.
+//     Pass elevationFt = 0 (or omit) — no conversion applied.
+//
+// Examples (sea level, 29.92 inHg station pressure):
+//   59°F  → DA ≈    0 ft   (ISA standard)
+//   80°F  → DA ≈ 1300 ft
+//   95°F  → DA ≈ 2200 ft
 //
 export function calculateDensityAltitude(
+  tempF: number,
+  pressureInHg: number,
+  humidityPct: number,   // kept in signature for API compatibility; not used
+  elevationFt: number = 0
+): number {
+  // Convert sea-level pressure to station pressure when elevation is given
+  const stationPressureInHg = elevationFt > 0
+    ? convertSLPtoStationPressure(pressureInHg, elevationFt)
+    : pressureInHg;
+
+  // Patrick Hale / NHRA drag-racing DA formula (matches DRWS):
+  //   DA = 145366 × (1 − (17.326 × P / (459.67 + T))^0.235)
+  void humidityPct; // humidity not used in the headline DA — see calculateCorrectedAltitude
+  const base = (17.326 * stationPressureInHg) / (459.67 + tempF);
+  const DA = 145366 * (1 - Math.pow(base, 0.235));
+
+  return Math.round(DA);
+}
+
+// ─── Corrected Altitude (Grains-Corrected DA, DRWS "CA") ─────────────────────
+//
+// Same Patrick-Hale formula as DA, but fed DRY pressure (station − vapor)
+// so water vapor is accounted for.  DRWS displays this alongside DA and
+// most tuners use this number for heads-up tuning in humid conditions.
+//
+//   CA = 145366 × (1 − (17.326 × Pd / (459.67 + T))^0.235)
+//   where Pd = station pressure − actual vapor pressure
+//
+export function calculateCorrectedAltitude(
   tempF: number,
   pressureInHg: number,
   humidityPct: number,
   elevationFt: number = 0
 ): number {
-  // Step 0: If elevation is provided, convert sea-level pressure to station pressure.
-  // This is the critical fix — weather APIs report SLP, but DA requires station pressure.
   const stationPressureInHg = elevationFt > 0
     ? convertSLPtoStationPressure(pressureInHg, elevationFt)
     : pressureInHg;
 
-  const tempC = (tempF - 32) * 5 / 9;
-  const tempK = tempC + 273.15;
-  const P_mb = stationPressureInHg * 33.8639;
+  const satVP = accurateSatVaporPressureInHg(tempF);
+  const actualVP = (humidityPct / 100) * satVP;
+  const dryPressure = stationPressureInHg - actualVP;
+  if (dryPressure <= 0) return calculateDensityAltitude(tempF, stationPressureInHg, humidityPct, 0);
 
-  // Saturation vapor pressure via Buck (1981) equation (hPa)
-  const esHpa = 6.1121 * Math.exp((18.678 - tempC / 234.5) * (tempC / (257.14 + tempC)));
+  const base = (17.326 * dryPressure) / (459.67 + tempF);
+  const CA = 145366 * (1 - Math.pow(base, 0.235));
 
-  // Actual vapor pressure (hPa)
-  const eHpa = (humidityPct / 100) * esHpa;
+  return Math.round(CA);
+}
 
-  // Virtual temperature (K) — accounts for moisture making air less dense
-  // Tv = T / (1 − 0.3783 × e/P)
-  // The factor 0.3783 = 1 − (Mw/Md) = 1 − (18.015/28.964) where Mw and Md
-  // are the molecular weights of water vapor and dry air respectively.
-  const Tv_K = tempK / (1 - 0.3783 * (eHpa / P_mb));
+// ─── Air Density (DRWS / NHRA) ───────────────────────────────────────────────
+//
+// Returns air density as a percentage of ISA standard (1.000 = STP).
+// Formula used by Drag Racing Weather Station and most NHRA apps:
+//
+//   ρ_relative = (Pd/29.92 + Pv/29.92 × 0.378) × (519.67 / (459.67 + T))
+//
+// where:
+//   Pd = dry pressure (inHg)
+//   Pv = vapor pressure (inHg)
+//   T  = air temp (°F)
+//   0.378 = 1 − (Mw/Md)   (water-vapor / dry-air molecular-weight ratio)
+//
+// Multiply by the ISA reference density (0.07647 lb/ft³) to get absolute
+// density if needed.  We return the dimensionless relative density here.
+//
+export function calculateAirDensity(
+  tempF: number,
+  pressureInHg: number,
+  humidityPct: number,
+  elevationFt: number = 0
+): number {
+  const stationPressureInHg = elevationFt > 0
+    ? convertSLPtoStationPressure(pressureInHg, elevationFt)
+    : pressureInHg;
 
-  // NWS density altitude formula:
-  // DA = 145442.16 × (1 − ((P/P0) × (T0/Tv))^0.234969)
-  //
-  // where:
-  //   P0 = 1013.25 hPa (standard sea-level pressure)
-  //   T0 = 288.15 K    (standard sea-level temperature, 15°C / 59°F)
-  //   0.234969 = 1/4.2561 = R·L / (g·M − R·L)
-  //   145442.16 = T0/L in feet = 288.15 / 0.0065 / 0.3048
-  const DA = 145442.16 * (1 - Math.pow((P_mb / 1013.25) * (288.15 / Tv_K), 0.234969));
+  const satVP = accurateSatVaporPressureInHg(tempF);
+  const actualVP = (humidityPct / 100) * satVP;
+  const dryPressure = stationPressureInHg - actualVP;
 
-  return Math.round(DA);
+  const pressureTerm = (dryPressure / 29.92) + (actualVP / 29.92) * 0.378;
+  const tempTerm = 519.67 / (459.67 + tempF);
+  const relativeDensity = pressureTerm * tempTerm;
+
+  return Math.round(relativeDensity * 1000) / 1000;
 }
 
 function calculateSAECorrectionInternal(
@@ -406,27 +465,45 @@ function calculateSAECorrectionInternal(
   humidityPct: number,
   elevationFt: number = 0
 ) {
-  // For SAE correction, we also need station pressure — the correction factor
-  // measures how far current conditions deviate from standard (29.92" at sea level).
-  // If the API gives us SLP ≈ 29.92 at any elevation, the pressure factor would
-  // always be ~1.0, which is wrong.  Converting to station pressure gives the
-  // correct pressure factor for the actual air the engine is breathing.
+  // Convert SLP → station pressure if an elevation was provided.
+  // Drag-racing weather stations (Kestrel / DRWS / RaceAir / Altus) measure
+  // station pressure directly, so this is a no-op for hand-entered data
+  // but is essential for WeatherAPI.com values (which are SLP / QNH).
   const stationPressure = elevationFt > 0
     ? convertSLPtoStationPressure(pressureInHg, elevationFt)
     : pressureInHg;
 
-  const tempFactor = Math.sqrt((tempF + 460) / 520);
-  const pressureFactor = Math.sqrt(29.92 / stationPressure);
-  // Use the accurate Buck equation for saturation vapor pressure (same as
-  // calculateVaporPressure and calculateWaterGrains).  The old cubic polynomial
-  // overestimated SVP by ~30-40%, which inflated the humidity correction.
+  // ── SAE J607 Correction Factor (drag-racing standard, matches DRWS) ──
+  //
+  //   CF = (29.92 / Pd) × sqrt((T + 460) / 520)
+  //
+  // where:
+  //   Pd = dry pressure  = station pressure − actual vapor pressure  (inHg)
+  //   T  = air temperature (°F)
+  //   29.92 = SAE J607 reference total pressure at 0% RH (dry)
+  //   520   = 60°F in Rankine  (SAE J607 reference temperature)
+  //
+  // This is the canonical single-pressure-term J607 formula used by
+  // Drag Racing Weather Station, Computech, RaceAir, Altus, and NHRA
+  // naturally-aspirated HP tables.  The previous implementation squared
+  // the pressure into two separate sqrt factors (station × dry), which
+  // under-corrected on low-pressure days and over-corrected on humid
+  // ones.  The single-term J607 form is the one the racing community
+  // has standardised on.
+  //
+  // Uses the accurate Buck equation for saturation vapor pressure
+  // (accurateSatVaporPressureInHg) for consistency with water-grains
+  // and STD-correction calculations.
   const satVaporPressure = accurateSatVaporPressureInHg(tempF);
   const actualVaporPressure = (humidityPct / 100) * satVaporPressure;
   const dryPressure = stationPressure - actualVaporPressure;
-  const humidityFactor = Math.sqrt(29.92 / dryPressure);
-  const saeCorrection = tempFactor * pressureFactor * humidityFactor;
 
-  // Density altitude — uses station pressure (already converted above)
+  const tempFactor = Math.sqrt((tempF + 460) / 520);
+  const pressureFactor = dryPressure > 0 ? (29.92 / dryPressure) : 1;
+  const saeCorrection = tempFactor * pressureFactor;
+
+  // Density altitude — uses the Patrick Hale / DRWS formula via
+  // calculateDensityAltitude (station pressure already converted above).
   const densityAltitude = calculateDensityAltitude(tempF, stationPressure, humidityPct, 0);
 
   const correctedHP = Math.round(3500 * saeCorrection);
@@ -442,6 +519,7 @@ function calculateSAECorrectionInternal(
 
 // Re-export under the public name used by consumers
 export const calculateSAECorrection = calculateSAECorrectionInternal;
+
 
 function degreeToDirection(deg: number): string {
   const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];

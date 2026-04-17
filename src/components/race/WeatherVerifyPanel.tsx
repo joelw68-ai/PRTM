@@ -13,14 +13,13 @@ import {
   Info,
 } from 'lucide-react';
 import {
-  accurateSatVaporPressureInHg,
-  calculateVaporPressure,
   calculateWaterGrains,
   calculateDewPoint,
   calculateWetBulb,
   calculateSTDCorrection,
   calculateDensityAltitude,
 } from '@/lib/weather';
+
 
 
 
@@ -62,14 +61,19 @@ function computeAll(tempF: number, humidityPct: number, pressureInHg: number): C
   const wetBulb = calculateWetBulb(tempF, humidityPct);
   const stdCorrection = calculateSTDCorrection(tempF, pressureInHg, humidityPct);
 
-  // Inline SAE J607 calculation (same as PassLog's calculateSAE)
+  // ── SAE J607 Correction (DRWS / drag-racing standard) ──
+  // CF = (29.92 / Pd) × sqrt((T + 460) / 520)
+  // Single-pressure-term form matching the "Drag Racing Weather Station" app,
+  // Computech, RaceAir, Altus, and NHRA HP tables.
   const tempFactor = Math.sqrt((tempF + 460) / 520);
-  const pressureFactor = Math.sqrt(29.92 / pressureInHg);
-  const humidityFactor = dryPressure_inHg > 0 ? Math.sqrt(29.92 / dryPressure_inHg) : 1;
-  const saeCorrection = tempFactor * pressureFactor * humidityFactor;
+  const pressureFactor = dryPressure_inHg > 0 ? (29.92 / dryPressure_inHg) : 1;
+  const saeCorrection = tempFactor * pressureFactor;
 
-  // Density altitude — uses the correct NWS/NOAA formula that accounts for
-  // temperature and humidity via virtual temperature (not just pressure altitude)
+  // ── Density Altitude (Patrick Hale / DRWS formula) ──
+  // DA = 145366 × (1 − (17.326 × P / (459.67 + T))^0.235)
+  // Uses station pressure (the input `pressureInHg` here is assumed to
+  // already be station pressure — the verify panel is a manual tool and
+  // racers enter what their handheld weather station reads).
   const densityAltitude = calculateDensityAltitude(tempF, pressureInHg, humidityPct);
 
   const correctedHP = Math.round(3500 * saeCorrection);
@@ -82,6 +86,7 @@ function computeAll(tempF: number, humidityPct: number, pressureInHg: number): C
     saeCorrection, densityAltitude, correctedHP, stdCorrection,
   };
 }
+
 
 const PRESETS = [
   { label: 'STP (60°F / 0% / 29.92")', temp: 60, humidity: 0, pressure: 29.92 },
@@ -311,13 +316,19 @@ const WeatherVerifyPanel: React.FC<WeatherVerifyPanelProps> = ({
                     <p>Grains = w × 7000 = 4354 × (VP / Pd)</p>
                   </div>
                   <div className="bg-slate-950/50 rounded p-3 font-mono text-slate-300 space-y-1.5 border border-slate-700/30">
-                    <p className="text-yellow-400 font-sans font-medium text-xs mb-2">SAE J607 Correction:</p>
+                    <p className="text-yellow-400 font-sans font-medium text-xs mb-2">SAE J607 Correction (DRWS / NHRA):</p>
+                    <p>Pd = Baro − VP &nbsp;&nbsp;(dry pressure)</p>
                     <p>TF = sqrt((T_f + 460) / 520)</p>
-                    <p>PF = sqrt(29.92 / Baro)</p>
-                    <p>HF = sqrt(29.92 / Pd)</p>
-                    <p>SAE = TF × PF × HF</p>
+                    <p>PF = 29.92 / Pd</p>
+                    <p>SAE = TF × PF</p>
                   </div>
-                  <p className="text-slate-500 italic">These formulas match RaceAir, Altus, Computech, and other NHRA-standard weather stations. The Buck equation is accurate to within 0.05% across all racing temperatures.</p>
+                  <div className="bg-slate-950/50 rounded p-3 font-mono text-slate-300 space-y-1.5 border border-slate-700/30">
+                    <p className="text-orange-400 font-sans font-medium text-xs mb-2">Density Altitude (Patrick Hale / DRWS):</p>
+                    <p>DA = 145366 × (1 − (17.326 × P / (459.67 + T_f))^0.235)</p>
+                    <p className="text-slate-500">P = station pressure (inHg), T_f = air temp (°F)</p>
+                  </div>
+                  <p className="text-slate-500 italic">These formulas match the "Drag Racing Weather Station" app, RaceAir, Altus, Computech, and NHRA-standard weather stations. The Buck equation is accurate to within 0.05% across all racing temperatures.</p>
+
                 </div>
               )}
             </div>

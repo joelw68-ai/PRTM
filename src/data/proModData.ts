@@ -47,9 +47,14 @@ export interface PassLogEntry {
   tirePressureFront: number;
   tirePressureRearLeft: number;
   tirePressureRearRight: number;
+  // Rear tire LINER pressures (inner tube/liner inside the slick).
+  // Optional so existing pass logs that pre-date these fields still validate.
+  rearLeftLinerPSI?: number;
+  rearRightLinerPSI?: number;
   wheelieBarSetting: number;
   launchRPM: number;
   boostSetting: number;
+
   
   // Notes
   notes: string;

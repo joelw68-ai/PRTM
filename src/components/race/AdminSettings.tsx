@@ -13,6 +13,9 @@ import SyncHistoryTab from './SyncHistoryTab';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { TeamMember } from './TeamProfile';
+import { carClasses, memberRoles, specialtyOptions } from '@/data/carClasses';
+
+
 import {
   loadAlertSettings,
   saveAlertSettings,
@@ -287,9 +290,11 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
   const [fuelType, setFuelType] = useState(profile?.fuelType || 'Methanol');
   const [homeTrack, setHomeTrack] = useState(profile?.homeTrack || '');
 
-  // Shared constants matching TeamProfile
-  const memberRoles: TeamMember['role'][] = ['Owner', 'Driver', 'Crew Chief', 'Crew', 'Mechanic', 'Tuner', 'Sponsor'];
-  const specialtyOptions = ['Engine', 'Transmission', 'Chassis', 'Electronics', 'Fuel System', 'Suspension', 'Body/Paint', 'Data Analysis'];
+  // NOTE: carClasses, engineTypes, fuelTypes, memberRoles, and specialtyOptions
+  // are imported from '@/data/carClasses' so the lists stay in sync with
+  // TeamProfile.tsx. Update the shared file to change options in both places.
+
+
 
   const defaultNewMember: Partial<TeamMember> = {
     name: '',
@@ -1562,15 +1567,10 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
                     <div>
                       <label className="block text-sm text-slate-400 mb-1">Car Class</label>
                       <select value={carClass} onChange={(e) => setCarClass(e.target.value)} disabled={!canEditSettings} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white disabled:opacity-50 disabled:cursor-not-allowed">
-                        <option value="Pro Mod">Pro Mod</option>
-                        <option value="Pro Stock">Pro Stock</option>
-                        <option value="Top Sportsman">Top Sportsman</option>
-                        <option value="Top Dragster">Top Dragster</option>
-                        <option value="Super Comp">Super Comp</option>
-                        <option value="Super Gas">Super Gas</option>
-                        <option value="Other">Other</option>
+                        {carClasses.map(cls => (<option key={cls} value={cls}>{cls}</option>))}
                       </select>
                     </div>
+
                     <div>
                       <label className="block text-sm text-slate-400 mb-1">Engine Type</label>
                       <input type="text" value={engineType} onChange={(e) => setEngineType(e.target.value)} disabled={!canEditSettings} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white disabled:opacity-50 disabled:cursor-not-allowed" />

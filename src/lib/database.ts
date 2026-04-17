@@ -80,6 +80,12 @@ const toPassLogEntry = (row: any): PassLogEntry => ({
   tirePressureFront: parseFloat(row.tire_pressure_front) || 0,
   tirePressureRearLeft: parseFloat(row.tire_pressure_rear_left) || 0,
   tirePressureRearRight: parseFloat(row.tire_pressure_rear_right) || 0,
+  // Rear tire LINER pressures — optional fields added April 2026.
+  // parseFloat returns NaN for null/undefined, so we coerce to undefined when missing
+  // (rather than 0) so the UI can distinguish "not recorded" from a true 0 reading.
+  rearLeftLinerPSI: row.rear_left_liner_psi != null ? parseFloat(row.rear_left_liner_psi) : undefined,
+  rearRightLinerPSI: row.rear_right_liner_psi != null ? parseFloat(row.rear_right_liner_psi) : undefined,
+
   wheelieBarSetting: parseFloat(row.wheelie_bar_setting) || 0,
   launchRPM: row.launch_rpm || 0,
   boostSetting: row.boost_setting || 0,
@@ -503,12 +509,20 @@ export const upsertPassLog = async (pass: PassLogEntry, userId?: string): Promis
   };
 
   // ── 3. Build the FULL payload — includes optional migration columns ──
+  // Optional columns (may not exist in older DBs):
+  //   quarter_mile_et, quarter_mile_mph, quarter_back_split (added with quarter-mile feature)
+  //   rear_left_liner_psi, rear_right_liner_psi (added April 2026)
+  // If any of these columns are missing, the resilient retry logic falls
+  // back to basePayload which excludes them.
   const fullPayload: Record<string, any> = {
     ...basePayload,
     quarter_mile_et: emptyToNull(pass.quarterMileET),
     quarter_mile_mph: emptyToNull(pass.quarterMileMPH),
     quarter_back_split: emptyToNull(pass.endSplit),
+    rear_left_liner_psi: emptyToNull(pass.rearLeftLinerPSI),
+    rear_right_liner_psi: emptyToNull(pass.rearRightLinerPSI),
   };
+
 
 
   // ── 4. Build the NUCLEAR MINIMUM payload — only 7 absolutely-guaranteed columns ──

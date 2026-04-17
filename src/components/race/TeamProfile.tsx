@@ -6,6 +6,7 @@ import { useAuth, UserProfile, DriverLicense } from '@/contexts/AuthContext';
 import { useApp } from '@/contexts/AppContext';
 import TeamInviteFlow from './TeamInviteFlow';
 import TeamPhotos from './TeamPhotos';
+import { carClasses, engineTypes, fuelTypes, memberRoles, specialtyOptions } from '@/data/carClasses';
 
 
 import { CrewRole, hasPermission, getRoleColor as getPermissionRoleColor, getRoleDescription } from '@/lib/permissions';
@@ -439,19 +440,10 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
   ];
 
 
-  const carClasses = [
-    'Pro Mod', 'Pro Nitrous', 'Pro Boost', 'Outlaw Pro Mod', 'X275',
-    'Radial vs World', 'No Prep', 'Top Sportsman', 'Top Dragster',
-    'Super Street', 'Limited Drag Radial',
-    'Outlaw 10.5', 'Pro Street 10.5', 'Small Tire 28 x 10.5', 'Ultra Street',
-    'Outlaw 632', 'Nitro Funny Car', 'Top Alcohol Funny Car',
-    'Top Fuel Dragster', 'Top Alcohol Dragster', 'Factory Stock', 'Other'
-  ];
+  // NOTE: carClasses, engineTypes, fuelTypes, memberRoles, and specialtyOptions
+  // are imported from '@/data/carClasses' so the lists stay in sync with
+  // AdminSettings.tsx and any future consumers. Update the shared file there.
 
-  const engineTypes = ['Supercharged Hemi', 'Twin Turbo', 'ProCharger', 'Nitrous', 'Roots Blown', 'Screw Blown', 'Other'];
-  const fuelTypes = ['Methanol', 'E85', 'Race Gas', 'VP Racing Fuel', 'Other'];
-  const memberRoles: TeamMember['role'][] = ['Owner', 'Driver', 'Crew Chief', 'Crew', 'Mechanic', 'Tuner', 'Sponsor'];
-  const specialtyOptions = ['Engine', 'Transmission', 'Chassis', 'Electronics', 'Fuel System', 'Suspension', 'Body/Paint', 'Data Analysis'];
 
   const getRoleColor = (role: string) => {
     switch (role) {
