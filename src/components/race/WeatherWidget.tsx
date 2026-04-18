@@ -26,7 +26,10 @@ import {
   Search,
   RotateCcw,
   Globe,
+  Layers,
 } from 'lucide-react';
+
+
 
 
 interface WeatherWidgetProps {
@@ -37,11 +40,16 @@ interface WeatherWidgetProps {
 
 const WEATHER_CACHE_KEY = 'promod_weather_widget_cache';
 const WEATHER_CACHE_VERSION_KEY = 'promod_weather_widget_cache_version';
-const WEATHER_CACHE_VERSION = 'v4_manual_location'; // Bump this to invalidate old caches
+// ── Cache version bump log ──
+//   v4_manual_location  — added manual location override + GPS/Wi-Fi fallback
+//   v5_humidity_da      — switched DA calc to humidity-corrected formula
+//                          (matches DRWS / Computech / RaceAir / Altus headline DA)
+const WEATHER_CACHE_VERSION = 'v5_humidity_da'; // Bump this to invalidate old caches
 const WEATHER_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 const GPS_TIMEOUT = 20000; // 20 seconds — high-accuracy GPS needs more time
 const WIFI_TIMEOUT = 10000; // 10 seconds — Wi-Fi/cell positioning is faster
 const MANUAL_LOCATION_KEY = 'promod_weather_widget_manual_location';
+
 
 
 // Location method describes how the browser determined the user's position
@@ -145,6 +153,19 @@ const getDAQuality = (da: number): { label: string; color: string } => {
   if (da < 5000) return { label: 'Marginal', color: 'text-orange-400' };
   return { label: 'Poor', color: 'text-red-400' };
 };
+
+// Get Air Density quality indicator (DRWS-style % of standard).
+// Higher relative density = denser air = more oxygen = more power.
+// Thresholds mirror the SAE/DA scales so the three headline metrics agree.
+const getAirDensityQuality = (rho: number): { label: string; color: string } => {
+  // rho is the dimensionless relative density (1.000 = ISA STP)
+  if (rho >= 1.020) return { label: 'Excellent', color: 'text-green-400' };
+  if (rho >= 1.000) return { label: 'Good', color: 'text-green-400' };
+  if (rho >= 0.970) return { label: 'Standard', color: 'text-yellow-400' };
+  if (rho >= 0.930) return { label: 'Fair', color: 'text-orange-400' };
+  return { label: 'Poor', color: 'text-red-400' };
+};
+
 
 // ── Location method badge ─────────────────────────────────────────────────────
 const LocationMethodBadge: React.FC<{ method: LocationMethod }> = ({ method }) => {
@@ -323,11 +344,17 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate, trackElevatio
 
   const mountedRef = useRef(true);
   const autoFetchedRef = useRef(false);
+  // Track the previous trackElevation so we can detect prop changes and
+  // re-fetch weather with the new elevation (cached DA was computed with the
+  // old elevation and would be stale).  Initialised to the first render's
+  // value so the very first mount doesn't count as a "change".
+  const lastElevationRef = useRef<number>(trackElevation);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
 
   // ── Load saved manual location on mount ──
   useEffect(() => {
@@ -567,6 +594,40 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate, trackElevatio
   }, [fetchWeatherByCoords, fetchWeatherByLocation]);
 
 
+  // ── Re-fetch weather when trackElevation prop changes ──
+  // The widget caches DA/SAE values which are computed from the elevation at
+  // fetch time.  If the user sets or changes their track elevation (e.g. marks
+  // a track as favourite in Manage Tracks), the cached numbers are stale and
+  // would keep reading low by a few hundred feet.  This effect detects a real
+  // change in the trackElevation prop and forces a fresh fetch so DA/SAE are
+  // recalculated with the new elevation — matching what their DRWS / Computech
+  // / RaceAir handheld would report at the track.
+  useEffect(() => {
+    if (lastElevationRef.current === trackElevation) return;
+    const oldElev = lastElevationRef.current;
+    lastElevationRef.current = trackElevation;
+
+    // Skip until we've completed the first fetch (which uses the initial
+    // elevation anyway).  The geolocation useEffect above handles that.
+    if (!autoFetchedRef.current) return;
+
+    console.log('[WeatherWidget] trackElevation changed from', oldElev, 'to', trackElevation,
+      'ft — re-fetching weather to recalculate DA/SAE with new elevation');
+
+    // Re-fetch with whichever location method is currently active.
+    // Clear the disk cache too so a page refresh picks up the new value.
+    try { localStorage.removeItem(WEATHER_CACHE_KEY); } catch { /* ignore */ }
+
+    if (locationMethod === 'manual' && savedManualLocation) {
+      fetchWeatherByLocation(savedManualLocation, 'manual', true);
+    } else if (locationMethod === 'ip' || !coords) {
+      fetchWeatherByLocation('auto:ip', 'ip', true);
+    } else if (coords) {
+      fetchWeatherByCoords(coords.lat, coords.lon, locationMethod, true);
+    }
+  }, [trackElevation, coords, locationMethod, savedManualLocation, fetchWeatherByCoords, fetchWeatherByLocation]);
+
+
   // ── Manual refresh handler (also uses fallback chain) ──
   const handleRefresh = useCallback(() => {
     // If using manual location, refresh with that
@@ -789,6 +850,8 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate, trackElevatio
 
   const saeQuality = getSAEQuality(weatherData.saeCorrection);
   const daQuality = getDAQuality(weatherData.densityAltitude);
+  const adQuality = getAirDensityQuality(weatherData.airDensity);
+
 
   return (
     <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
@@ -899,8 +962,8 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate, trackElevatio
               )}
             </div>
           </div>
+          {/* SAE, DA & Air Density Quick View (DRWS four-metric headline) */}
 
-          {/* SAE & DA Quick View */}
           <div className="text-right space-y-1">
             <div>
               <span className="text-xs text-slate-500">SAE Correction</span>
@@ -912,6 +975,12 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate, trackElevatio
               <span className="text-xs text-slate-500">Density Altitude</span>
               <p className={`text-lg font-bold font-mono ${daQuality.color}`}>
                 {weatherData.densityAltitude.toLocaleString()} ft
+              </p>
+            </div>
+            <div title={`Relative air density: ${weatherData.airDensity.toFixed(3)} (1.000 = ISA STP)`}>
+              <span className="text-xs text-slate-500">Air Density</span>
+              <p className={`text-lg font-bold font-mono ${adQuality.color}`}>
+                {(weatherData.airDensity * 100).toFixed(1)}%
               </p>
             </div>
           </div>
@@ -998,7 +1067,20 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate, trackElevatio
               {weatherData.densityAltitude.toLocaleString()} ft
             </p>
           </div>
+
+          {/* Air Density (% of ISA standard) — DRWS-style headline metric */}
+          <div className="p-2.5 bg-slate-900/40 rounded-lg">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Layers className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-xs text-slate-500">Air Density</span>
+            </div>
+            <p className={`font-medium ${adQuality.color}`} title={`Relative density: ${weatherData.airDensity.toFixed(3)} (1.000 = STP)`}>
+              {(weatherData.airDensity * 100).toFixed(1)}%
+            </p>
+            <p className="text-[10px] text-slate-500">of standard</p>
+          </div>
         </div>
+
 
         {/* Hourly Forecast Toggle */}
         {weatherData.hourlyForecast.length > 0 && (

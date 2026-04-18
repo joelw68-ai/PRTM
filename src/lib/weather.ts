@@ -253,6 +253,10 @@ export interface WeatherWidgetData {
   saeCorrection: number;
   densityAltitude: number;
   correctedHP: number;
+  // Relative air density (1.000 = ISA standard / STP).  Multiply by 100 to
+  // display as "% of standard" — the fourth headline metric shown by the
+  // Drag Racing Weather Station app alongside Temp, DA, and SAE.
+  airDensity: number;
   hourlyForecast: HourlyForecast[];
   lastUpdated: string;
 }
@@ -269,7 +273,9 @@ export interface HourlyForecast {
   dewPoint: number;
   saeCorrection: number;
   densityAltitude: number;
+  airDensity: number;
 }
+
 
 export function calculateDewPoint(tempF: number, humidityPct: number): number {
   const tempC = (tempF - 32) * 5 / 9;
@@ -321,42 +327,40 @@ export function convertSLPtoStationPressure(slpInHg: number, elevationFt: number
   return slpInHg * Math.pow(1 - elevationFt / 145442.16, 5.2561);
 }
 
-// ─── Density Altitude (Drag Racing Weather Station / Patrick Hale formula) ──
+// ─── Density Altitude (Humidity-Corrected / DRWS / NHRA) ────────────────────
 //
-// This app now uses the SAME density-altitude formula as the popular
-// "Drag Racing Weather Station" (DRWS) app by Patrick Hale, as well as
-// Computech, RaceAir, Altus, and the NHRA-standard handheld weather stations.
+// This returns the DA that **Drag Racing Weather Station (DRWS), Computech,
+// RaceAir, Altus, and modern Kestrel handhelds all display as their headline
+// "DA" reading**.  That value is the humidity-corrected density altitude —
+// sometimes labelled "Corrected Altitude (CA)" or "Grains-Corrected DA" in
+// older Patrick Hale literature, but today every major drag-racing weather
+// app reports this as just "DA".
 //
-// ── The Patrick Hale / NHRA formula ──
+// ── The formula (humidity-corrected Patrick Hale) ──
 //
-//   DA = 145366 × (1 − (17.326 × P / (459.67 + T))^0.235)
+//   DA = 145366 × (1 − (17.326 × Pd / (459.67 + T))^0.235)
 //
 //   where:
-//     P = ABSOLUTE (station) pressure in inHg
-//     T = air temperature in °F
+//     Pd = DRY pressure = station pressure − actual vapor pressure  (inHg)
+//     T  = air temperature in °F
 //     17.326 = 518.67 / 29.92  (ISA standard T°R / standard pressure inHg)
 //     0.235  ≈ R·L / (g·M − R·L)  (same exponent as NWS formula)
-//     145366 ≈ T0/L in feet (ISA temperature divided by lapse rate)
+//     145366 ≈ T0/L in feet
 //
-// This is the "dry" density-altitude — it does NOT include a humidity
-// correction via virtual temperature.  DRWS and other drag-racing weather
-// stations report two altitudes:
+// Using dry pressure (Pd) rather than total station pressure is the standard
+// way the drag-racing community incorporates the humidity correction into
+// the density-altitude number.  It's mathematically equivalent to the FAA /
+// aviation "virtual temperature" method and produces the same result that
+// every proven NHRA weather station reports.
 //
-//   • Density Altitude (DA)     — uses STATION pressure, no humidity
-//   • Corrected Altitude (CA)   — uses DRY pressure (station − vapor)
+// ── Why this replaces the old "dry DA" formula ──
 //
-// The DA number is what DRWS displays as the headline "DA" reading and is
-// the one most racers reference when tuning.  The CA (sometimes labelled
-// "Grains-Corrected DA") accounts for water vapor and is typically a few
-// hundred feet higher on a humid day.
-//
-// ── Why the switch ──
-//
-// The previous implementation used the NWS/NOAA virtual-temperature formula
-// which is scientifically accurate but produces values that differ by a few
-// hundred feet from what DRWS / Computech / RaceAir / Altus report.  Racers
-// cross-checking against their handheld weather stations were seeing a
-// mismatch, so we've aligned with the industry-standard racing formula.
+// The previous implementation used total station pressure and dropped the
+// humidity term entirely.  That under-estimates DA by 150-500 ft on humid
+// days, causing users to see values that read several hundred feet lower
+// than their DRWS / Computech / RaceAir at the same conditions.  With this
+// change the three metrics (Temp, SAE, DA, Air Density) all agree with the
+// industry-standard DRWS numbers.
 //
 // ── Pressure input ──
 //
@@ -368,14 +372,15 @@ export function convertSLPtoStationPressure(slpInHg: number, elevationFt: number
 //     Pass elevationFt = 0 (or omit) — no conversion applied.
 //
 // Examples (sea level, 29.92 inHg station pressure):
-//   59°F  → DA ≈    0 ft   (ISA standard)
-//   80°F  → DA ≈ 1300 ft
-//   95°F  → DA ≈ 2200 ft
+//   59°F  0%RH → DA ≈    0 ft   (ISA standard)
+//   72°F 50%RH → DA ≈  900 ft
+//   80°F 60%RH → DA ≈ 1800 ft
+//   95°F 50%RH → DA ≈ 2600 ft
 //
 export function calculateDensityAltitude(
   tempF: number,
   pressureInHg: number,
-  humidityPct: number,   // kept in signature for API compatibility; not used
+  humidityPct: number,
   elevationFt: number = 0
 ): number {
   // Convert sea-level pressure to station pressure when elevation is given
@@ -383,23 +388,54 @@ export function calculateDensityAltitude(
     ? convertSLPtoStationPressure(pressureInHg, elevationFt)
     : pressureInHg;
 
-  // Patrick Hale / NHRA drag-racing DA formula (matches DRWS):
-  //   DA = 145366 × (1 − (17.326 × P / (459.67 + T))^0.235)
-  void humidityPct; // humidity not used in the headline DA — see calculateCorrectedAltitude
+  // Humidity correction: use DRY pressure (station − actual vapor pressure)
+  // in the Patrick-Hale formula.  This is the headline "DA" number shown by
+  // every modern drag-racing weather station (DRWS, Computech, RaceAir, Altus,
+  // Kestrel).  Mathematically equivalent to the virtual-temperature method.
+  const satVP = accurateSatVaporPressureInHg(tempF);
+  const actualVP = (humidityPct / 100) * satVP;
+  const dryPressure = stationPressureInHg - actualVP;
+
+  // Safety: if dry pressure calculation goes negative (shouldn't happen for
+  // any real-world condition), fall back to the dry-air formula so we still
+  // return a sensible number.
+  const Pd = dryPressure > 0 ? dryPressure : stationPressureInHg;
+
+  const base = (17.326 * Pd) / (459.67 + tempF);
+  const DA = 145366 * (1 - Math.pow(base, 0.235));
+
+  return Math.round(DA);
+}
+
+// ─── Dry-Air Density Altitude (legacy Patrick Hale formula, no humidity) ────
+//
+// Some users of older DRWS versions or aviation-style DA calculators prefer
+// the "dry DA" that ignores humidity.  This helper exposes that value for
+// tuners who want to cross-check against the old formula or compare with
+// aviation/FAA density altitude charts.  Not used on the main widget — the
+// headline DA now uses the humidity-corrected formula above.
+//
+export function calculateDryDensityAltitude(
+  tempF: number,
+  pressureInHg: number,
+  elevationFt: number = 0
+): number {
+  const stationPressureInHg = elevationFt > 0
+    ? convertSLPtoStationPressure(pressureInHg, elevationFt)
+    : pressureInHg;
+
   const base = (17.326 * stationPressureInHg) / (459.67 + tempF);
   const DA = 145366 * (1 - Math.pow(base, 0.235));
 
   return Math.round(DA);
 }
 
-// ─── Corrected Altitude (Grains-Corrected DA, DRWS "CA") ─────────────────────
+// ─── Corrected Altitude (alias — same as calculateDensityAltitude now) ──────
 //
-// Same Patrick-Hale formula as DA, but fed DRY pressure (station − vapor)
-// so water vapor is accounted for.  DRWS displays this alongside DA and
-// most tuners use this number for heads-up tuning in humid conditions.
-//
-//   CA = 145366 × (1 − (17.326 × Pd / (459.67 + T))^0.235)
-//   where Pd = station pressure − actual vapor pressure
+// Kept for backwards compatibility with any code that was explicitly calling
+// calculateCorrectedAltitude.  Since calculateDensityAltitude now includes
+// the humidity correction by default (matching DRWS), CA and DA return the
+// same value.
 //
 export function calculateCorrectedAltitude(
   tempF: number,
@@ -407,19 +443,7 @@ export function calculateCorrectedAltitude(
   humidityPct: number,
   elevationFt: number = 0
 ): number {
-  const stationPressureInHg = elevationFt > 0
-    ? convertSLPtoStationPressure(pressureInHg, elevationFt)
-    : pressureInHg;
-
-  const satVP = accurateSatVaporPressureInHg(tempF);
-  const actualVP = (humidityPct / 100) * satVP;
-  const dryPressure = stationPressureInHg - actualVP;
-  if (dryPressure <= 0) return calculateDensityAltitude(tempF, stationPressureInHg, humidityPct, 0);
-
-  const base = (17.326 * dryPressure) / (459.67 + tempF);
-  const CA = 145366 * (1 - Math.pow(base, 0.235));
-
-  return Math.round(CA);
+  return calculateDensityAltitude(tempF, pressureInHg, humidityPct, elevationFt);
 }
 
 // ─── Air Density (DRWS / NHRA) ───────────────────────────────────────────────
@@ -485,15 +509,7 @@ function calculateSAECorrectionInternal(
   //
   // This is the canonical single-pressure-term J607 formula used by
   // Drag Racing Weather Station, Computech, RaceAir, Altus, and NHRA
-  // naturally-aspirated HP tables.  The previous implementation squared
-  // the pressure into two separate sqrt factors (station × dry), which
-  // under-corrected on low-pressure days and over-corrected on humid
-  // ones.  The single-term J607 form is the one the racing community
-  // has standardised on.
-  //
-  // Uses the accurate Buck equation for saturation vapor pressure
-  // (accurateSatVaporPressureInHg) for consistency with water-grains
-  // and STD-correction calculations.
+  // naturally-aspirated HP tables.
   const satVaporPressure = accurateSatVaporPressureInHg(tempF);
   const actualVaporPressure = (humidityPct / 100) * satVaporPressure;
   const dryPressure = stationPressure - actualVaporPressure;
@@ -502,8 +518,8 @@ function calculateSAECorrectionInternal(
   const pressureFactor = dryPressure > 0 ? (29.92 / dryPressure) : 1;
   const saeCorrection = tempFactor * pressureFactor;
 
-  // Density altitude — uses the Patrick Hale / DRWS formula via
-  // calculateDensityAltitude (station pressure already converted above).
+  // Density altitude — humidity-corrected (DRWS headline value).
+  // We pass elevationFt=0 here because stationPressure is already converted.
   const densityAltitude = calculateDensityAltitude(tempF, stationPressure, humidityPct, 0);
 
   const correctedHP = Math.round(3500 * saeCorrection);
@@ -822,6 +838,7 @@ export async function fetchWeatherForWidget(location: string, elevationFt: numbe
 
   // Pass elevation so SLP → station pressure conversion is applied
   const saeData = calculateSAECorrectionInternal(tempF, pressureInHg, humidity, elevationFt);
+  const airDensity = calculateAirDensity(tempF, pressureInHg, humidity, elevationFt);
   const dewPoint = calculateDewPoint(tempF, humidity);
 
   const forecast = data.forecast as Record<string, unknown> | undefined;
@@ -835,15 +852,19 @@ export async function fetchWeatherForWidget(location: string, elevationFt: numbe
     for (let i = currentHour + 1; i <= Math.min(currentHour + 6, 23); i++) {
       const hour = hours[i];
       if (hour) {
-        // Pass elevation for hourly forecast DA/SAE too
-        const hSae = calculateSAECorrectionInternal(hour.temp_f as number, hour.pressure_in as number, hour.humidity as number, elevationFt);
-        const hDew = calculateDewPoint(hour.temp_f as number, hour.humidity as number);
+        // Pass elevation for hourly forecast DA/SAE/air-density too
+        const hTemp = hour.temp_f as number;
+        const hHumid = hour.humidity as number;
+        const hPress = hour.pressure_in as number;
+        const hSae = calculateSAECorrectionInternal(hTemp, hPress, hHumid, elevationFt);
+        const hAirDensity = calculateAirDensity(hTemp, hPress, hHumid, elevationFt);
+        const hDew = calculateDewPoint(hTemp, hHumid);
         const hCondition = (hour.condition as Record<string, unknown>) || {};
         hourlyForecast.push({
           time: (hour.time as string)?.split(' ')[1] || `${i}:00`,
-          temperature: Math.round(hour.temp_f as number),
-          humidity: Math.round(hour.humidity as number),
-          pressure: Math.round((hour.pressure_in as number) * 100) / 100,
+          temperature: Math.round(hTemp),
+          humidity: Math.round(hHumid),
+          pressure: Math.round(hPress * 100) / 100,
           windSpeed: Math.round(hour.wind_mph as number),
           conditions: mapCondition((hCondition.text as string) || 'Clear'),
           conditionIcon: (hCondition.icon as string) ? `https:${hCondition.icon}` : '',
@@ -851,6 +872,7 @@ export async function fetchWeatherForWidget(location: string, elevationFt: numbe
           dewPoint: hDew,
           saeCorrection: hSae.saeCorrection,
           densityAltitude: hSae.densityAltitude,
+          airDensity: hAirDensity,
         });
       }
     }
@@ -878,10 +900,12 @@ export async function fetchWeatherForWidget(location: string, elevationFt: numbe
     localTime: (loc.localtime as string) || '',
     isDay: (current.is_day as number) === 1,
     ...saeData,
+    airDensity,
     hourlyForecast,
     lastUpdated: (current.last_updated as string) || new Date().toISOString(),
   };
 }
+
 
 
 // ─── Race Day Forecast ───────────────────────────────────────────────────────
@@ -909,6 +933,9 @@ export interface RaceDayForecastData {
   worstDA: number;
   avgSAE: number;
   avgDA: number;
+  // Average relative air density across the racing window (1.000 = STP).
+  // Multiply by 100 to display as "% of standard" in the DRWS-style headline.
+  avgAirDensity: number;
   dataType: 'forecast' | 'historical' | 'unavailable';
   daysUntilEvent: number;
 }
@@ -930,7 +957,9 @@ export interface RaceDayHour {
   saeCorrection: number;
   densityAltitude: number;
   correctedHP: number;
+  airDensity: number;
 }
+
 
 export async function fetchRaceDayForecast(
   location: string,
@@ -958,8 +987,10 @@ export async function fetchRaceDayForecast(
     totalPrecipIn: 0, chanceOfRain: 0, conditions: '', conditionIcon: '',
     sunrise: '', sunset: '', uvIndex: 0, racingHours: [],
     bestSAE: 0, worstSAE: 0, bestDA: 0, worstDA: 0, avgSAE: 0, avgDA: 0,
+    avgAirDensity: 0,
     dataType: 'unavailable', daysUntilEvent: daysUntil,
   };
+
 
   let apiParams: WeatherApiParams;
   let dataType: 'forecast' | 'historical';
@@ -995,7 +1026,7 @@ export async function fetchRaceDayForecast(
 
   const racingHours: RaceDayHour[] = [];
   let bestSAE = Infinity, worstSAE = -Infinity, bestDA = Infinity, worstDA = -Infinity;
-  let saeSum = 0, daSum = 0, hourCount = 0;
+  let saeSum = 0, daSum = 0, airDensitySum = 0, hourCount = 0;
 
   const hours = (targetDay.hour as Array<Record<string, unknown>>) || [];
   for (const h of hours) {
@@ -1005,6 +1036,7 @@ export async function fetchRaceDayForecast(
     const hHumidity = h.humidity as number;
     const hPressure = (h.pressure_in as number) || 29.92;
     const saeData = calculateSAECorrectionInternal(hTempF, hPressure, hHumidity, elevationFt);
+    const hAirDensity = calculateAirDensity(hTempF, hPressure, hHumidity, elevationFt);
 
     const hDewPoint = calculateDewPoint(hTempF, hHumidity);
     const hCondition = (h.condition as Record<string, unknown>) || {};
@@ -1027,6 +1059,7 @@ export async function fetchRaceDayForecast(
         saeCorrection: saeData.saeCorrection,
         densityAltitude: saeData.densityAltitude,
         correctedHP: saeData.correctedHP,
+        airDensity: hAirDensity,
       });
 
       bestSAE = Math.min(bestSAE, saeData.saeCorrection);
@@ -1035,6 +1068,7 @@ export async function fetchRaceDayForecast(
       worstDA = Math.max(worstDA, saeData.densityAltitude);
       saeSum += saeData.saeCorrection;
       daSum += saeData.densityAltitude;
+      airDensitySum += hAirDensity;
       hourCount++;
     }
   }
@@ -1062,10 +1096,12 @@ export async function fetchRaceDayForecast(
     worstDA: isFinite(worstDA) ? worstDA : 0,
     avgSAE: hourCount > 0 ? Math.round((saeSum / hourCount) * 1000) / 1000 : 0,
     avgDA: hourCount > 0 ? Math.round(daSum / hourCount) : 0,
+    avgAirDensity: hourCount > 0 ? Math.round((airDensitySum / hourCount) * 1000) / 1000 : 0,
     dataType,
     daysUntilEvent: daysUntil,
   };
 }
+
 
 // ─── Additional racing calculation exports ───────────────────────────────────
 
