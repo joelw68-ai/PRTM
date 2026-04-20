@@ -54,6 +54,7 @@ import BorrowedLoanedParts from './race/BorrowedLoanedParts';
 import RaceDayTimeline from './race/RaceDayTimeline';
 import TeamDashboard from './race/TeamDashboard';
 import ProfileSettings from './race/ProfileSettings';
+import PackTheTrailer from './race/PackTheTrailer';
 
 
 
@@ -413,6 +414,14 @@ const AppLayoutContent: React.FC = () => {
             <ProfileSettings onNavigate={handleNavigate} />
           </div>
         );
+
+      case 'packtrailer':
+        return (
+          <div className="bg-slate-950">
+            <PackTheTrailer currentRole={currentRole} onNavigate={handleNavigate} />
+          </div>
+        );
+
 
 
       default:
