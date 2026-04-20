@@ -363,6 +363,12 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       launchRPM: mostRecent ? (mostRecent.launchRPM ?? 0) : 0,
       boostSetting: mostRecent ? (mostRecent.boostSetting ?? 0) : 0,
 
+      // Track Grip — pre-fill from most recent pass so crews that record
+      // traction-meter / torque-meter readings each session get a sensible
+      // starting value.  Left undefined on the very first pass.
+      kegTractionMeterNM: mostRecent ? mostRecent.kegTractionMeterNM : undefined,
+      trackMeterTorqueInLbs: mostRecent ? mostRecent.trackMeterTorqueInLbs : undefined,
+
       notes: '',
       crewChief: '',
       aborted: false,
@@ -584,10 +590,15 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
       launchRPM: pass.launchRPM,
       boostSetting: pass.boostSetting,
 
+      // Track Grip — preserve existing readings when editing a pass
+      kegTractionMeterNM: pass.kegTractionMeterNM,
+      trackMeterTorqueInLbs: pass.trackMeterTorqueInLbs,
+
       notes: pass.notes,
       crewChief: pass.crewChief,
       aborted: pass.aborted
     });
+
     // Sync the reaction time string state for the text input
     setRtInputStr(String(pass.reactionTime));
     // Parse location into separate city/state for the split fields
@@ -2012,9 +2023,25 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                                       <span className="text-white">{pass.rearLeftLinerPSI ?? 0}/{pass.rearRightLinerPSI ?? 0} psi</span>
                                     </div>
                                   )}
+                                  {/* Track Grip readings — only shown when recorded.
+                                      Keeps layout uncluttered for teams that don't track
+                                      traction-meter data yet. */}
+                                  {pass.kegTractionMeterNM != null && pass.kegTractionMeterNM > 0 && (
+                                    <div className="flex justify-between">
+                                      <span className="text-slate-400">Keg Traction</span>
+                                      <span className="text-orange-300 font-mono">{pass.kegTractionMeterNM.toLocaleString()} N·m</span>
+                                    </div>
+                                  )}
+                                  {pass.trackMeterTorqueInLbs != null && pass.trackMeterTorqueInLbs > 0 && (
+                                    <div className="flex justify-between">
+                                      <span className="text-slate-400">Track Torque</span>
+                                      <span className="text-orange-300 font-mono">{pass.trackMeterTorqueInLbs.toLocaleString()} in-lbs</span>
+                                    </div>
+                                  )}
                                 </div>
 
                               </div>
+
 
                               
                               {/* Equipment */}
@@ -2845,7 +2872,86 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                     </div>
                   </div>
 
+
+                  {/* ═══════════════════════════════════════════════════════════
+                      TRACK GRIP — trackside traction-meter + torque readings
+                      ═══════════════════════════════════════════════════════════
+                      Two optional per-pass fields useful for correlating pass
+                      performance with track prep / grip level:
+                        1. Keg Traction Meter (N·m) — pull-force meter reading
+                        2. Track Meter Torque (in-lbs) — torque-wrench reading
+                      Both inputs are limited to 5 digits (0–99999).  We enforce
+                      the 5-digit cap via an onChange clamp rather than relying
+                      on maxLength (which doesn't apply to type="number"). */}
+                  <h4 className="font-medium text-white border-b border-slate-700 pb-2 pt-2 flex items-center gap-2">
+                    <Gauge className="w-4 h-4 text-orange-400" />
+                    Track Grip
+                  </h4>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">
+                        Keg Traction Meter Reading
+                        <span className="text-slate-500 ml-1">(N·m)</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="99999"
+                        step="1"
+                        inputMode="numeric"
+                        value={formData.kegTractionMeterNM ?? ''}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === '') {
+                            // Allow clearing the field — stored as undefined so
+                            // the pass record omits the reading entirely.
+                            setFormData({ ...formData, kegTractionMeterNM: undefined });
+                            return;
+                          }
+                          // Parse and clamp to the 5-digit maximum (99999).
+                          const parsed = parseInt(raw, 10);
+                          if (isNaN(parsed)) return;
+                          const clamped = Math.max(0, Math.min(99999, parsed));
+                          setFormData({ ...formData, kegTractionMeterNM: clamped });
+                        }}
+                        placeholder="0"
+                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1">Max 5 digits</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">
+                        Track Meter Torque
+                        <span className="text-slate-500 ml-1">(in-lbs)</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="99999"
+                        step="1"
+                        inputMode="numeric"
+                        value={formData.trackMeterTorqueInLbs ?? ''}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === '') {
+                            setFormData({ ...formData, trackMeterTorqueInLbs: undefined });
+                            return;
+                          }
+                          const parsed = parseInt(raw, 10);
+                          if (isNaN(parsed)) return;
+                          const clamped = Math.max(0, Math.min(99999, parsed));
+                          setFormData({ ...formData, trackMeterTorqueInLbs: clamped });
+                        }}
+                        placeholder="0"
+                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1">Max 5 digits</p>
+                    </div>
+                  </div>
+
                 </div>
+
 
                 {/* Weather & Notes */}
                 <div className="space-y-4">

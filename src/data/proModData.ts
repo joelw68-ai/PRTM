@@ -55,6 +55,17 @@ export interface PassLogEntry {
   launchRPM: number;
   boostSetting: number;
 
+  // ═══════════════════════════════════════════════════════════════════
+  // TRACK GRIP — optional per-pass trackside traction measurements.
+  // ═══════════════════════════════════════════════════════════════════
+  // Both fields are optional so existing passes logged before these
+  // columns existed continue to validate.  Max entry width is 5 digits
+  // (0 – 99999) enforced in the PassLog modal UI.
+  //   - kegTractionMeterNM: Keg-style drag-meter reading in Newton-Meters
+  //   - trackMeterTorqueInLbs: Track meter torque reading in inch-pounds
+  kegTractionMeterNM?: number;
+  trackMeterTorqueInLbs?: number;
+
   
   // Notes
   notes: string;
