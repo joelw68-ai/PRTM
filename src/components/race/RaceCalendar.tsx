@@ -6,8 +6,11 @@ import RaceDayWeatherCard from '@/components/race/RaceDayWeatherCard';
 import { SavedTrack } from '@/lib/database';
 import { toast } from 'sonner';
 import { getLocalDateString } from '@/lib/utils';
-
+import { SANCTIONING_BODIES } from '@/lib/sanctioningBodies';
+import { supabase } from '@/lib/supabase';
 import { CrewRole } from '@/lib/permissions';
+
+
 import {
   Calendar,
   Plus,
@@ -27,8 +30,11 @@ import {
   Loader2,
   AlertCircle,
   Link2,
-  Download
+  Download,
+  Mountain,
+  RefreshCw,
 } from 'lucide-react';
+
 
 
 
@@ -40,6 +46,10 @@ export interface RaceEvent {
   trackLocation: string;
   trackAddress?: string;
   trackZip?: string;
+  // Elevation in feet — auto-lookup via lookup-track-elevation edge function
+  // (Open-Meteo / Open-Elevation / USGS), but always editable. Synced to
+  // saved_tracks so it appears in Initial Setup → Racetracks too.
+  trackElevation?: number;
   startDate: string;
   endDate?: string;
   startTime?: string;
@@ -54,6 +64,7 @@ export interface RaceEvent {
   bestMPH?: number;
   roundsWon?: number;
 }
+
 
 
 
@@ -75,6 +86,9 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
   const [selectedEvent, setSelectedEvent] = useState<RaceEvent | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  // Elevation lookup state — separate from main save so the user can keep editing
+  const [isLookingUpElevation, setIsLookingUpElevation] = useState(false);
+  const [elevationLookupNote, setElevationLookupNote] = useState<string | null>(null);
 
   const [newEvent, setNewEvent] = useState<Partial<RaceEvent>>({
     title: '',
@@ -97,7 +111,7 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
     });
   }, [savedTracks]);
 
-  // Handle saved track selection in the event form — also fills trackAddress and trackZip
+  // Handle saved track selection in the event form — also fills trackAddress, trackZip, AND trackElevation
 
   const handleSavedTrackSelect = (trackId: string) => {
     if (!trackId) return;
@@ -108,12 +122,53 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
         trackName: track.name,
         trackLocation: track.location,
         trackAddress: track.address || '',
-        trackZip: track.zip || ''
+        trackZip: track.zip || '',
+        trackElevation: track.elevation || undefined,
       }));
     }
     // Reset the select back to placeholder
     if (trackSelectRef.current) {
       trackSelectRef.current.value = '';
+    }
+  };
+
+  // ── ELEVATION AUTO-LOOKUP ────────────────────────────────────────────────
+  // Calls the lookup-track-elevation edge function which uses Open-Meteo /
+  // Open-Elevation / USGS to resolve elevation from a "City, State" string,
+  // an address, or a ZIP code.  Always editable afterward.
+  const handleLookupElevation = async () => {
+    const trackName = newEvent.trackName?.trim() || 'Track';
+    const location = newEvent.trackLocation?.trim();
+    const address = newEvent.trackAddress?.trim();
+    const zip = newEvent.trackZip?.trim();
+
+    // We need at least SOMETHING to geocode — prefer most-specific first
+    const queryLocation = address || zip || location;
+    if (!queryLocation) {
+      setElevationLookupNote('Enter an address, ZIP, or city/state first.');
+      setTimeout(() => setElevationLookupNote(null), 4000);
+      return;
+    }
+
+    setIsLookingUpElevation(true);
+    setElevationLookupNote('Looking up elevation…');
+    try {
+      const { data, error } = await supabase.functions.invoke('lookup-track-elevation', {
+        body: { location: queryLocation, trackName },
+      });
+      if (!error && data?.success && typeof data.elevationFt === 'number') {
+        const elev = Math.round(data.elevationFt);
+        setNewEvent(prev => ({ ...prev, trackElevation: elev }));
+        setElevationLookupNote(`Auto-filled: ${elev.toLocaleString()} ft (editable)`);
+      } else {
+        setElevationLookupNote(data?.error || 'Lookup failed — enter manually.');
+      }
+    } catch (err: any) {
+      console.warn('[RaceCalendar] Elevation lookup failed:', err);
+      setElevationLookupNote('Lookup failed — enter manually.');
+    } finally {
+      setIsLookingUpElevation(false);
+      setTimeout(() => setElevationLookupNote(null), 5000);
     }
   };
 
@@ -128,42 +183,57 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
     return anyMatch ? anyMatch[1] : '';
   };
 
-  // Auto-save a new track to saved_tracks if it doesn't already exist
-  // Now includes trackAddress, trackZip, and parses city/state from trackLocation
-  const autoSaveTrackIfNew = async (trackName: string, trackLocation: string, trackAddress?: string, trackZip?: string) => {
+  // Auto-save a new track to saved_tracks if it doesn't already exist.
+  // Includes trackAddress, trackZip, trackElevation, and parses city/state.
+  // Also updates an existing track if elevation/address/zip are missing.
+  const autoSaveTrackIfNew = async (
+    trackName: string,
+    trackLocation: string,
+    trackAddress?: string,
+    trackZip?: string,
+    trackElevation?: number,
+  ) => {
     if (!trackName.trim() || !trackLocation.trim()) return;
 
     // Resolve ZIP: use explicit value, or try to parse from address
     const resolvedZip = trackZip?.trim() || parseZipFromAddress(trackAddress || '');
 
     // Check if this track already exists (case-insensitive match on name + location)
-    const exists = savedTracks.some(
+    const existingTrack = savedTracks.find(
       t => t.name.toLowerCase() === trackName.trim().toLowerCase() &&
            t.location.toLowerCase() === trackLocation.trim().toLowerCase()
     );
 
-    if (exists) {
-      // Track already exists — but update its address/zip if we have data and it's missing
-      const existingTrack = savedTracks.find(
-        t => t.name.toLowerCase() === trackName.trim().toLowerCase() &&
-             t.location.toLowerCase() === trackLocation.trim().toLowerCase()
-      );
-      if (existingTrack) {
-        const needsAddressUpdate = trackAddress?.trim() && !existingTrack.address?.trim();
-        const needsZipUpdate = resolvedZip && !existingTrack.zip?.trim();
-        if (needsAddressUpdate || needsZipUpdate) {
-          const parsed = parseCityState(trackLocation);
-          try {
-            await addSavedTrack({
-              ...existingTrack,
-              address: trackAddress?.trim() || existingTrack.address || '',
-              zip: resolvedZip || existingTrack.zip || '',
-              city: parsed.city || existingTrack.city || '',
-              state: parsed.state || existingTrack.state || '',
-            });
-          } catch (err) {
-            console.warn('Auto-update track address/zip failed (non-blocking):', err);
+    if (existingTrack) {
+      // Track already exists — update its address/zip/elevation if we have data and it's missing
+      const needsAddressUpdate = trackAddress?.trim() && !existingTrack.address?.trim();
+      const needsZipUpdate = resolvedZip && !existingTrack.zip?.trim();
+      const needsElevationUpdate = (trackElevation && trackElevation > 0) && (!existingTrack.elevation || existingTrack.elevation === 0);
+      if (needsAddressUpdate || needsZipUpdate || needsElevationUpdate) {
+        const parsed = parseCityState(trackLocation);
+        try {
+          // Use updateSavedTrack so we don't double-insert
+          const updated: SavedTrack = {
+            ...existingTrack,
+            address: trackAddress?.trim() || existingTrack.address || '',
+            zip: resolvedZip || existingTrack.zip || '',
+            city: parsed.city || existingTrack.city || '',
+            state: parsed.state || existingTrack.state || '',
+            elevation: needsElevationUpdate ? (trackElevation as number) : (existingTrack.elevation || 0),
+          };
+          if (typeof updateSavedTrack === 'function') {
+            await updateSavedTrack(existingTrack.id, updated);
+          } else {
+            await addSavedTrack(updated);
           }
+          if (needsElevationUpdate) {
+            toast.success(`Updated "${trackName}" elevation to ${trackElevation} ft`, {
+              description: 'Synced to Initial Setup → Racetracks.',
+              duration: 3500,
+            });
+          }
+        } catch (err) {
+          console.warn('Auto-update saved track failed (non-blocking):', err);
         }
       }
       return;
@@ -187,26 +257,26 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
         city: parsed.city || '',
         state: parsed.state || '',
         zip: resolvedZip,
-        elevation: 0,
+        elevation: trackElevation || 0,
         trackLength: '1/8 mile',
         surfaceType: 'Concrete',
         notes: '',
         isFavorite: false,
         visitCount: 1,
-        lastVisited: getLocalDateString()
-
-
+        lastVisited: getLocalDateString(),
       };
 
       await addSavedTrack(newTrack);
+      const elevNote = trackElevation && trackElevation > 0 ? ` (elev ${trackElevation} ft)` : '';
       toast.success(`Track "${trackName}" auto-saved to Initial Setup`, {
-        description: `${trackLocation}${trackAddress ? ' — address included' : ''}${resolvedZip ? ` (ZIP: ${resolvedZip})` : ''}. Now available in Pass Log, Setup, and Calendar.`,
+        description: `${trackLocation}${trackAddress ? ' — address included' : ''}${resolvedZip ? ` (ZIP: ${resolvedZip})` : ''}${elevNote}. Now available in Pass Log, Setup, and Calendar.`,
         duration: 4000,
       });
     } catch (err) {
       console.warn('Auto-save track failed (non-blocking):', err);
     }
   };
+
 
 
 
@@ -301,6 +371,7 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
       trackLocation: newEvent.trackLocation || '',
       trackAddress: newEvent.trackAddress || undefined,
       trackZip: newEvent.trackZip || parseZipFromAddress(newEvent.trackAddress || '') || undefined,
+      trackElevation: newEvent.trackElevation && newEvent.trackElevation > 0 ? newEvent.trackElevation : undefined,
       startDate: newEvent.startDate || '',
       endDate: newEvent.endDate || undefined,
       startTime: newEvent.startTime || undefined,
@@ -324,11 +395,12 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
         await addRaceEvent(event);
       }
 
-      // Auto-save the track to saved_tracks if it's a new track (non-blocking)
-      // Passes trackZip so it syncs to Initial Setup
+      // Auto-save the track to saved_tracks if it's a new track (non-blocking).
+      // Passes trackZip + trackElevation so it syncs to Initial Setup → Racetracks.
       if (event.trackName && event.trackLocation) {
-        autoSaveTrackIfNew(event.trackName, event.trackLocation, event.trackAddress, event.trackZip).catch(() => {});
+        autoSaveTrackIfNew(event.trackName, event.trackLocation, event.trackAddress, event.trackZip, event.trackElevation).catch(() => {});
       }
+
 
 
 
@@ -925,15 +997,12 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
                       className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                     >
                       <option value="">Select...</option>
-                      <option value="NHRA">NHRA</option>
-                      <option value="PDRA">PDRA</option>
-                      <option value="IHRA">IHRA</option>
-                      <option value="Radial Outlaws">Radial Outlaws</option>
-                      <option value="No Time">No Time</option>
-                      <option value="DI Winter Series">DI Winter Series</option>
-                      <option value="Other">Other</option>
+                      {SANCTIONING_BODIES.map(body => (
+                        <option key={body} value={body}>{body}</option>
+                      ))}
                     </select>
                   </div>
+
 
 
 
@@ -1060,6 +1129,44 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
                     />
                     <p className="text-xs text-slate-500 mt-1">Auto-parsed from address or enter manually</p>
                   </div>
+
+
+                  {/* Elevation (auto-lookup, editable) */}
+                  <div className="md:col-span-2">
+                    <label className="text-sm text-slate-400 mb-1 flex items-center gap-1.5">
+                      <Mountain className="w-3.5 h-3.5 text-orange-400" />
+                      Track Elevation (ft)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={newEvent.trackElevation ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setNewEvent(prev => ({
+                            ...prev,
+                            trackElevation: v === '' ? undefined : parseInt(v, 10) || 0,
+                          }));
+                        }}
+                        className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                        placeholder="e.g., 250"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleLookupElevation}
+                        disabled={isLookingUpElevation}
+                        title="Auto-lookup elevation from address"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-orange-500/20 hover:bg-orange-500/30 disabled:bg-slate-700 disabled:opacity-50 text-orange-400 hover:text-orange-300 rounded-lg text-sm font-medium transition-colors border border-orange-500/30 disabled:cursor-not-allowed whitespace-nowrap"
+                      >
+                        {isLookingUpElevation ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        Auto-fill
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {elevationLookupNote || 'Auto-detected from address (Open-Meteo / USGS) — always editable. Used for accurate Density Altitude.'}
+                    </p>
+                  </div>
+
 
 
 

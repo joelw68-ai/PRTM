@@ -670,6 +670,43 @@ const InitialSetup: React.FC<InitialSetupProps> = ({ currentRole }) => {
   };
 
   // ============ FORM RENDERERS ============
+  const [elevationLookupBusy, setElevationLookupBusy] = React.useState(false);
+  const [elevationLookupNote, setElevationLookupNote] = React.useState<string | null>(null);
+
+  // ── ELEVATION AUTO-LOOKUP ────────────────────────────────────────────────
+  // Uses the lookup-track-elevation edge function (Open-Meteo / Open-Elevation
+  // / USGS) to resolve elevation from address/city/state.  Always editable.
+  const handleAutoLookupElevation = async () => {
+    const queryLocation = trackForm.address?.trim()
+      || (trackForm.city && trackForm.state ? `${trackForm.city}, ${trackForm.state}` : '')
+      || trackForm.zip?.trim();
+    if (!queryLocation) {
+      setElevationLookupNote('Enter an address, city/state, or ZIP first.');
+      setTimeout(() => setElevationLookupNote(null), 4000);
+      return;
+    }
+    setElevationLookupBusy(true);
+    setElevationLookupNote('Looking up elevation…');
+    try {
+      const { data, error } = await supabase.functions.invoke('lookup-track-elevation', {
+        body: { location: queryLocation, trackName: trackForm.name || 'Track' },
+      });
+      if (!error && data?.success && typeof data.elevationFt === 'number') {
+        const elev = Math.round(data.elevationFt);
+        setTrackForm({ ...trackForm, elevation: elev });
+        setElevationLookupNote(`Auto-filled: ${elev.toLocaleString()} ft (editable)`);
+      } else {
+        setElevationLookupNote(data?.error || 'Lookup failed — enter manually.');
+      }
+    } catch (err: any) {
+      console.warn('[InitialSetup] Elevation lookup failed:', err);
+      setElevationLookupNote('Lookup failed — enter manually.');
+    } finally {
+      setElevationLookupBusy(false);
+      setTimeout(() => setElevationLookupNote(null), 5000);
+    }
+  };
+
   const renderTrackForm = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       <InputField label="Track Name" value={trackForm.name} onChange={(e: any) => setTrackForm({ ...trackForm, name: e.target.value })} required placeholder="e.g. South Georgia Motorsports Park" />
@@ -678,7 +715,32 @@ const InitialSetup: React.FC<InitialSetupProps> = ({ currentRole }) => {
       <SelectField label="State" value={trackForm.state} onChange={(e: any) => setTrackForm({ ...trackForm, state: e.target.value })} options={getStateSelectOptions()} />
 
       <InputField label="ZIP Code" value={trackForm.zip} onChange={(e: any) => setTrackForm({ ...trackForm, zip: e.target.value })} placeholder="31601" />
-      <InputField label="Elevation (ft)" value={trackForm.elevation} onChange={(e: any) => setTrackForm({ ...trackForm, elevation: parseInt(e.target.value) || 0 })} type="number" />
+      {/* Elevation with auto-lookup button — replaces the plain InputField */}
+      <div>
+        <label className="block text-xs font-medium text-slate-400 mb-1">Elevation (ft)</label>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            value={trackForm.elevation}
+            onChange={(e) => setTrackForm({ ...trackForm, elevation: parseInt(e.target.value) || 0 })}
+            className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-orange-500 focus:ring-1 focus:ring-orange-500 outline-none"
+            placeholder="e.g., 250"
+          />
+          <button
+            type="button"
+            onClick={handleAutoLookupElevation}
+            disabled={elevationLookupBusy}
+            title="Auto-detect elevation from address"
+            className="flex items-center gap-1 px-2.5 py-2 bg-orange-500/20 hover:bg-orange-500/30 disabled:bg-slate-700 disabled:opacity-50 text-orange-400 hover:text-orange-300 rounded-lg text-xs font-medium transition-colors border border-orange-500/30 disabled:cursor-not-allowed whitespace-nowrap"
+          >
+            {elevationLookupBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : '⛰'}
+            Auto-fill
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500 mt-1">
+          {elevationLookupNote || 'Auto-detected from address — always editable.'}
+        </p>
+      </div>
       <SelectField label="Track Length" value={trackForm.trackLength} onChange={(e: any) => setTrackForm({ ...trackForm, trackLength: e.target.value })} options={['1/8 mile', '1/4 mile', '1/8 & 1/4 mile']} />
       <SelectField label="Surface Type" value={trackForm.surfaceType} onChange={(e: any) => setTrackForm({ ...trackForm, surfaceType: e.target.value })} options={['Concrete', 'Asphalt', 'Mixed']} />
       <div className="flex items-end">
@@ -691,6 +753,7 @@ const InitialSetup: React.FC<InitialSetupProps> = ({ currentRole }) => {
       <TextAreaField label="Notes" value={trackForm.notes} onChange={(e: any) => setTrackForm({ ...trackForm, notes: e.target.value })} className="md:col-span-2 lg:col-span-3" />
     </div>
   );
+
 
   const renderEngineForm = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

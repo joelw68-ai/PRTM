@@ -370,9 +370,13 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = ({ trackElevation = 0 
     } catch {
       // ignore
     }
-
-    fetchWeatherByIP();
+    // ── GPS-FIRST AUTO-FETCH ───────────────────────────────────────────────
+    // Use GPS (with Wi-Fi fallback inside getPositionWithFallback) instead of
+    // IP for higher accuracy.  fetchWeatherByGPS automatically falls back to
+    // IP if the user denies permission or both GPS and Wi-Fi positioning fail.
+    fetchWeatherByGPS();
   }, []);
+
 
   const processWeatherResult = useCallback((result: any, source: LocationSource) => {
     // fetchWeatherData returns DA/SAE without elevation correction (it doesn't

@@ -7,6 +7,7 @@ import { useApp } from '@/contexts/AppContext';
 import TeamInviteFlow from './TeamInviteFlow';
 import TeamPhotos from './TeamPhotos';
 import { carClasses, engineTypes, fuelTypes, memberRoles, specialtyOptions } from '@/data/carClasses';
+import { SANCTIONING_BODIES, LICENSE_ISSUING_BODIES } from '@/lib/sanctioningBodies';
 
 
 import { CrewRole, hasPermission, getRoleColor as getPermissionRoleColor, getRoleDescription } from '@/lib/permissions';
@@ -186,11 +187,12 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
         setLicenses(profile.driverLicenses);
       } else if (profile.driverLicenseNumber || profile.driverLicenseClass) {
         // Migrate legacy single-license to multi-license
-        const body = (profile.driverLicenseClass || '').startsWith('IHRA') ? 'IHRA' : 'NHRA';
+        const cls = profile.driverLicenseClass || '';
+        const body = cls.startsWith('IHRA') ? 'IHRA' : cls.startsWith('PDRA') ? 'PDRA' : 'NHRA';
         setLicenses([{
           id: `legacy-${Date.now()}`,
-          sanctioningBody: body as 'NHRA' | 'IHRA',
-          licenseClass: profile.driverLicenseClass || '',
+          sanctioningBody: body,
+          licenseClass: cls,
           licenseNumber: profile.driverLicenseNumber || '',
           expirationDate: profile.driverLicenseExpiration || '',
           isPrimary: true,
@@ -668,9 +670,18 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
                                       <Star className="w-2.5 h-2.5" /> Primary
                                     </span>
                                   )}
-                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${lic.sanctioningBody === 'NHRA' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 'bg-purple-500/20 text-purple-400 border border-purple-500/30'}`}>
+                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                                    lic.sanctioningBody === 'NHRA' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' :
+                                    lic.sanctioningBody === 'IHRA' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' :
+                                    lic.sanctioningBody === 'PDRA' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' :
+                                    lic.sanctioningBody === 'Radial Outlaws' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+                                    lic.sanctioningBody === 'No Time' ? 'bg-slate-500/20 text-slate-300 border border-slate-500/30' :
+                                    lic.sanctioningBody === 'DI Winter Series' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' :
+                                    'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                                  }`}>
                                     {lic.sanctioningBody}
                                   </span>
+
                                   {exp.isExpired && (
                                     <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded text-[10px] border border-red-500/30">
                                       <AlertTriangle className="w-2.5 h-2.5" /> Expired
@@ -732,20 +743,32 @@ const TeamProfile: React.FC<TeamProfileProps> = ({ currentRole = 'Crew' }) => {
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs text-slate-400 mb-1">Sanctioning Body</label>
-                          <select value={newLicenseForm.sanctioningBody} onChange={e => setNewLicenseForm({ ...newLicenseForm, sanctioningBody: e.target.value as 'NHRA' | 'IHRA', licenseClass: '' })} className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
-                            <option value="NHRA">NHRA</option>
-                            <option value="IHRA">IHRA</option>
+                          <select value={newLicenseForm.sanctioningBody} onChange={e => setNewLicenseForm({ ...newLicenseForm, sanctioningBody: e.target.value, licenseClass: '' })} className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                            {SANCTIONING_BODIES.map(body => (
+                              <option key={body} value={body}>{body}</option>
+                            ))}
                           </select>
                         </div>
                         <div>
                           <label className="block text-xs text-slate-400 mb-1">License Class</label>
-                          <select value={newLicenseForm.licenseClass} onChange={e => setNewLicenseForm({ ...newLicenseForm, licenseClass: e.target.value })} className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
-                            <option value="">Select Class</option>
-                            {(newLicenseForm.sanctioningBody === 'NHRA' ? nhraLicenseClasses : ihraLicenseClasses).map(cls => (
-                              <option key={cls} value={cls}>{cls}</option>
-                            ))}
-                          </select>
+                          {newLicenseForm.sanctioningBody === 'NHRA' || newLicenseForm.sanctioningBody === 'IHRA' ? (
+                            <select value={newLicenseForm.licenseClass} onChange={e => setNewLicenseForm({ ...newLicenseForm, licenseClass: e.target.value })} className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                              <option value="">Select Class</option>
+                              {(newLicenseForm.sanctioningBody === 'NHRA' ? nhraLicenseClasses : ihraLicenseClasses).map(cls => (
+                                <option key={cls} value={cls}>{cls}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={newLicenseForm.licenseClass}
+                              onChange={e => setNewLicenseForm({ ...newLicenseForm, licenseClass: e.target.value })}
+                              placeholder={`e.g., ${newLicenseForm.sanctioningBody} Pro Mod`}
+                              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          )}
                         </div>
+
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>

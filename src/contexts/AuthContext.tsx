@@ -6,12 +6,16 @@ import { TeamMembershipRowSchema } from '@/lib/validators';
 
 export interface DriverLicense {
   id: string;
-  sanctioningBody: 'NHRA' | 'IHRA';
+  // Widened from `'NHRA' | 'IHRA'` to `string` so the licence dropdown can stay
+  // in sync with the master sanctioning-body list (NHRA, PDRA, IHRA, Radial
+  // Outlaws, No Time, DI Winter Series, Other).  See src/lib/sanctioningBodies.ts.
+  sanctioningBody: string;
   licenseClass: string;
   licenseNumber: string;
   expirationDate: string;
   isPrimary: boolean;
 }
+
 
 export interface UserProfile {
   id: string;
