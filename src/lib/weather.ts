@@ -14,6 +14,16 @@
 // value to take effect (Vercel → Deployments → Redeploy).
 // ─────────────────────────────────────────────────────────────────────────────
 import { parseLocalDate, getLocalDateString } from './utils';
+import {
+  getStoredWeatherSource,
+  fetchOpenMeteo,
+  fetchNWS,
+  fetchAeris,
+  type WeatherSource,
+  type ProviderObservation,
+} from './weatherProviders';
+import { bleMeter } from './bleWeatherMeter';
+
 
 
 
@@ -785,7 +795,7 @@ async function fetchHistoricalWeather(location: string, date: string, time?: str
 
 // ─── Main export: fetch weather (auto-detects current vs historical vs today) ─
 
-export async function fetchWeatherData(
+async function _fetchWeatherDataViaWeatherAPI(
   location: string,
   date?: string,
   time?: string
@@ -819,7 +829,7 @@ export async function fetchWeatherData(
 
 // ─── Fetch extended weather data for the dashboard widget ────────────────────
 
-export async function fetchWeatherForWidget(location: string, elevationFt: number = 0): Promise<WeatherWidgetData> {
+async function _fetchWeatherForWidgetViaWeatherAPI(location: string, elevationFt: number = 0): Promise<WeatherWidgetData> {
   const data = await callWeatherApi({
     endpoint: 'forecast',
     location,
@@ -961,7 +971,7 @@ export interface RaceDayHour {
 }
 
 
-export async function fetchRaceDayForecast(
+async function _fetchRaceDayForecastViaWeatherAPI(
   location: string,
   eventDate: string,
   elevationFt: number = 0
@@ -1224,4 +1234,298 @@ export function calculateSTDCorrection(tempF: number, pressureInHg: number, humi
   const dryPressure = pressureInHg - vaporPressure;
   const stdCorrection = (29.235 / dryPressure) * ((tempF + 460) / 520);
   return Math.round(stdCorrection * 10000) / 10000;
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PROVIDER DISPATCH LAYER
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// The three public functions below (fetchWeatherData, fetchWeatherForWidget,
+// fetchRaceDayForecast) now route through the user-selected weather source:
+//
+//   • weatherapi  — original WeatherAPI.com path (the _*ViaWeatherAPI fns above)
+//   • openmeteo   — free global, no key (DWD/GFS/HRRR ensemble)
+//   • nws         — US-only, nearest METAR observation
+//   • aeris       — AerisWeather / Xweather (DRWS upstream)
+//
+// Pick the source via AdminSettings → Weather Source, or programmatically
+// via setStoredWeatherSource() from '@/lib/weatherProviders'.
+
+// A shared helper so '@/lib/weatherProviders' can re-use our existing
+// WeatherAPI current-observation logic for the Compare Sources panel.
+export async function __fetchWeatherApiObservation(location: string): Promise<ProviderObservation> {
+  const data = await callWeatherApi({ endpoint: 'current', location });
+  const current = data.current as Record<string, unknown>;
+  const loc = data.location as Record<string, unknown>;
+  const condition = (current.condition as Record<string, unknown>) || {};
+  const tempF = current.temp_f as number;
+  const humidity = current.humidity as number;
+  const pressureInHg = current.pressure_in as number;
+  const windMph = (current.wind_mph as number) || 0;
+  const windDeg = (current.wind_degree as number) || 0;
+  const conditionText = (condition.text as string) || 'Clear';
+
+  return {
+    temperature: Math.round(tempF * 10) / 10,
+    humidity: Math.round(humidity),
+    pressure: Math.round(pressureInHg * 100) / 100,
+    stationPressure: null,
+    windSpeed: Math.round(windMph),
+    windGust: Math.round((current.gust_mph as number) || 0),
+    windDirection: degreeToDirection(windDeg),
+    windDegree: windDeg,
+    conditions: mapCondition(conditionText),
+    conditionIcon: (condition.icon as string) ? `https:${condition.icon}` : '',
+    dewPoint: calculateDewPoint(tempF, humidity),
+    feelsLike: Math.round((current.feelslike_f as number) || tempF),
+    visibility: (current.vis_miles as number) || 10,
+    uvIndex: (current.uv as number) || 0,
+    cloudCover: (current.cloud as number) || 0,
+    precipInches: (current.precip_in as number) || 0,
+    location: (loc.name as string) || '',
+    region: (loc.region as string) || '',
+    country: (loc.country as string) || '',
+    localTime: (loc.localtime as string) || '',
+    isDay: (current.is_day as number) === 1,
+    provider: 'weatherapi',
+    timestamp: (current.last_updated as string) || new Date().toISOString(),
+    rawStation: null,
+  };
+}
+
+// Get a provider observation, honoring the user's selected source.
+async function getProviderObservation(location: string): Promise<ProviderObservation> {
+  const src = getStoredWeatherSource();
+  try {
+    switch (src) {
+      case 'openmeteo': return await fetchOpenMeteo(location);
+      case 'nws':       return await fetchNWS(location);
+      case 'aeris':     return await fetchAeris(location);
+      case 'weatherapi':
+      default:          return await __fetchWeatherApiObservation(location);
+    }
+  } catch (err) {
+    // Hard fallback: if the chosen provider fails AND WeatherAPI is configured,
+    // use it.  This keeps the app working even when the selected source
+    // (e.g. NWS outside the US) can't answer.
+    console.warn(`[weather] Provider "${src}" failed, falling back to WeatherAPI:`, err);
+    if (src !== 'weatherapi' && WEATHER_API_KEY) {
+      return await __fetchWeatherApiObservation(location);
+    }
+    throw err;
+  }
+}
+
+// Turn a ProviderObservation into the legacy WeatherResult shape used by the
+// Log-Pass auto-fill.  Elevation is NOT applied here — the caller layers on
+// the track elevation itself via calculateSAECorrection(…, elevationFt).
+function observationToWeatherResult(obs: ProviderObservation, isHistorical: boolean): WeatherResult {
+  const sae = calculateSAECorrectionInternal(obs.temperature, obs.pressure, obs.humidity, 0);
+  return {
+    weather: {
+      temperature: Math.round(obs.temperature),
+      humidity: Math.round(obs.humidity),
+      pressure: Math.round(obs.pressure * 100) / 100,
+      windSpeed: Math.round(obs.windSpeed),
+      windDirection: obs.windDirection,
+      conditions: mapCondition(obs.conditions),
+      location: obs.location,
+      region: obs.region,
+      dewPoint: obs.dewPoint,
+    },
+    ...sae,
+    isHistorical,
+  };
+}
+
+// ─── BLE meter bridge ────────────────────────────────────────────────────────
+// Intercepts the provider dispatch when a trackside BLE weather meter is
+// actively streaming readings.  Returns `null` if no live reading is
+// available so the normal provider chain runs unchanged.
+function tryBleObservation(location: string): ProviderObservation | null {
+  try {
+    if (!bleMeter.hasLiveReading()) return null;
+    const obs = bleMeter.getAsObservation(location);
+    if (obs) {
+      console.log(`[weather] Using BLE meter reading: ${obs.temperature}°F / ${obs.humidity}% / ${obs.pressure}" (${obs.rawStation})`);
+    }
+    return obs;
+  } catch (e) {
+    console.warn('[weather] BLE bridge failed, falling back to API:', e);
+    return null;
+  }
+}
+
+/**
+ * Public fetchWeatherData — routes through the selected provider for current
+ * conditions.  For historical dates, WeatherAPI is always used (it's the
+ * only provider in our list with a public archive API).
+ *
+ * Intercept order:
+ *   1. BLE weather meter (if paired and streaming)
+ *   2. Selected API provider (weatherapi / openmeteo / nws / aeris)
+ *   3. WeatherAPI fallback
+ */
+export async function fetchWeatherData(
+  location: string,
+  date?: string,
+  time?: string
+): Promise<WeatherResult> {
+  const src = getStoredWeatherSource();
+  const todayStr = getLocalDateString();
+
+  // Historical requests — always WeatherAPI (only archive endpoint available).
+  // Skip BLE here: a paired meter can't produce historical data.
+  if (date && date < todayStr) {
+    return _fetchWeatherDataViaWeatherAPI(location, date, time);
+  }
+
+  // Current / today — check BLE meter first
+  if (!date || date === todayStr) {
+    const bleObs = tryBleObservation(location);
+    if (bleObs) return observationToWeatherResult(bleObs, false);
+  }
+
+  // Current (or future within range).  If the user picked a non-WeatherAPI
+  // provider, pull the current observation from it and return immediately —
+  // future-date predictions for non-WeatherAPI providers fall back to the
+  // WeatherAPI forecast since that's what already powers the UI.
+  if (src !== 'weatherapi' && (!date || date === todayStr)) {
+    try {
+      const obs = await getProviderObservation(location);
+      console.log(`[fetchWeatherData] provider=${src} temp=${obs.temperature}°F rh=${obs.humidity}% p=${obs.pressure}inHg (station=${obs.stationPressure ?? 'n/a'})`);
+      return observationToWeatherResult(obs, false);
+    } catch (err) {
+      console.warn(`[fetchWeatherData] provider ${src} failed, falling back to WeatherAPI:`, err);
+    }
+  }
+
+  return _fetchWeatherDataViaWeatherAPI(location, date, time);
+}
+
+/**
+ * Public fetchWeatherForWidget — routes the headline current-conditions block
+ * through the BLE meter first (if live), then the selected provider.  The
+ * hourly forecast strip continues to use WeatherAPI regardless of source.
+ */
+export async function fetchWeatherForWidget(location: string, elevationFt: number = 0): Promise<WeatherWidgetData> {
+  const src = getStoredWeatherSource();
+
+  // ── BLE intercept ─────────────────────────────────────────────────────────
+  // If a meter is streaming, build the widget payload from the meter reading
+  // and still pull hourly forecast from WeatherAPI for the strip.
+  const bleObs = tryBleObservation(location);
+  if (bleObs) {
+    let hourlyForecast: HourlyForecast[] = [];
+    if (WEATHER_API_KEY) {
+      try {
+        const richer = await _fetchWeatherForWidgetViaWeatherAPI(location, elevationFt);
+        hourlyForecast = richer.hourlyForecast;
+      } catch { /* ignore, strip stays empty */ }
+    }
+    // BLE pressure is already station pressure — pass elevationFt=0 so we
+    // don't double-apply the SLP→station conversion.
+    const sae = calculateSAECorrectionInternal(bleObs.temperature, bleObs.pressure, bleObs.humidity, 0);
+    const airDensity = calculateAirDensity(bleObs.temperature, bleObs.pressure, bleObs.humidity, 0);
+    return {
+      temperature: Math.round(bleObs.temperature),
+      feelsLike: Math.round(bleObs.feelsLike ?? bleObs.temperature),
+      humidity: Math.round(bleObs.humidity),
+      pressure: Math.round(bleObs.pressure * 100) / 100,
+      windSpeed: Math.round(bleObs.windSpeed),
+      windGust: Math.round(bleObs.windGust ?? 0),
+      windDirection: bleObs.windDirection,
+      windDegree: bleObs.windDegree,
+      conditions: mapCondition(bleObs.conditions),
+      conditionIcon: bleObs.conditionIcon || '',
+      dewPoint: bleObs.dewPoint,
+      visibility: bleObs.visibility ?? 10,
+      uvIndex: bleObs.uvIndex ?? 0,
+      cloudCover: bleObs.cloudCover ?? 0,
+      precipInches: bleObs.precipInches ?? 0,
+      location: bleObs.location,
+      region: bleObs.region,
+      country: bleObs.country ?? '',
+      localTime: bleObs.localTime ?? new Date().toISOString(),
+      isDay: bleObs.isDay ?? true,
+      ...sae,
+      airDensity,
+      hourlyForecast,
+      lastUpdated: bleObs.timestamp ?? new Date().toISOString(),
+    };
+  }
+
+  // WeatherAPI path — unchanged behavior
+  if (src === 'weatherapi') {
+    return _fetchWeatherForWidgetViaWeatherAPI(location, elevationFt);
+  }
+
+  // Try the selected provider for the headline block
+  let obs: ProviderObservation;
+  try {
+    obs = await getProviderObservation(location);
+  } catch (err) {
+    console.warn(`[fetchWeatherForWidget] provider ${src} failed, falling back to WeatherAPI widget:`, err);
+    return _fetchWeatherForWidgetViaWeatherAPI(location, elevationFt);
+  }
+
+  // For the hourly strip, try WeatherAPI if it's configured (gives us a
+  // richer UI); otherwise just emit an empty strip so the component degrades
+  // gracefully.
+  let hourlyForecast: HourlyForecast[] = [];
+  if (WEATHER_API_KEY) {
+    try {
+      const richer = await _fetchWeatherForWidgetViaWeatherAPI(location, elevationFt);
+      hourlyForecast = richer.hourlyForecast;
+    } catch {
+      // ignore — leave hourlyForecast empty
+    }
+  }
+
+  const sae = calculateSAECorrectionInternal(obs.temperature, obs.pressure, obs.humidity, elevationFt);
+  const airDensity = calculateAirDensity(obs.temperature, obs.pressure, obs.humidity, elevationFt);
+
+  return {
+    temperature: Math.round(obs.temperature),
+    feelsLike: Math.round(obs.feelsLike ?? obs.temperature),
+    humidity: Math.round(obs.humidity),
+    pressure: Math.round(obs.pressure * 100) / 100,
+    windSpeed: Math.round(obs.windSpeed),
+    windGust: Math.round(obs.windGust ?? 0),
+    windDirection: obs.windDirection,
+    windDegree: obs.windDegree,
+    conditions: mapCondition(obs.conditions),
+    conditionIcon: obs.conditionIcon || '',
+    dewPoint: obs.dewPoint,
+    visibility: obs.visibility ?? 10,
+    uvIndex: obs.uvIndex ?? 0,
+    cloudCover: obs.cloudCover ?? 0,
+    precipInches: obs.precipInches ?? 0,
+    location: obs.location,
+    region: obs.region,
+    country: obs.country ?? '',
+    localTime: obs.localTime ?? new Date().toISOString(),
+    isDay: obs.isDay ?? true,
+    ...sae,
+    airDensity,
+    hourlyForecast,
+    lastUpdated: obs.timestamp ?? new Date().toISOString(),
+  };
+}
+
+/**
+ * Public fetchRaceDayForecast — multi-hour racing forecast.  WeatherAPI is
+ * used for the hourly racing timeline regardless of the selected provider
+ * (its forecastday.hour array already matches the shape we need for a 13-hour
+ * racing window).  Users who want DRWS/Aeris-matched numbers for LIVE racing
+ * should rely on the Weather Widget + Log Pass auto-fill, which DO honor the
+ * provider selection AND the paired BLE meter.
+ */
+export async function fetchRaceDayForecast(
+  location: string,
+  eventDate: string,
+  elevationFt: number = 0
+): Promise<RaceDayForecastData> {
+  return _fetchRaceDayForecastViaWeatherAPI(location, eventDate, elevationFt);
 }

@@ -35,6 +35,7 @@ export interface UserProfile {
   contactEmail?: string;
   contactPhone?: string;
   notes?: string;
+  weatherSource?: 'weatherapi' | 'openmeteo' | 'nws' | 'aeris';
   createdAt: string;
   updatedAt: string;
 }
@@ -112,6 +113,7 @@ const toUserProfile = (row: any): UserProfile => ({
   contactEmail: row.contact_email,
   contactPhone: row.contact_phone,
   notes: row.notes,
+  weatherSource: row.weather_source || 'weatherapi',
   createdAt: row.created_at,
   updatedAt: row.updated_at
 });
@@ -722,8 +724,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         contact_email: updates.contactEmail ?? null,
         contact_phone: updates.contactPhone ?? null,
         notes: updates.notes ?? null,
+        weather_source: updates.weatherSource ?? undefined,
         updated_at: new Date().toISOString(),
       };
+
 
       // Remove undefined keys so they don't overwrite existing data
       Object.keys(payload).forEach(key => {

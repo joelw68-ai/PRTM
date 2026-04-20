@@ -7,6 +7,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { AppProvider, useApp } from '@/contexts/AppContext';
 import { ThemeColorProvider } from '@/contexts/ThemeColorContext';
 import { RaceDayProvider, useRaceDay } from '@/contexts/RaceDayContext';
+import { BleMeterProvider } from '@/contexts/BleMeterContext';
+import BleStatusPill from './race/BleStatusPill';
 
 
 
@@ -527,7 +529,13 @@ const AppLayout: React.FC = () => {
     <AppProvider>
       <ThemeColorProvider>
         <RaceDayProvider>
-          <AppLayoutContent />
+          <BleMeterProvider>
+            <AppLayoutContent />
+            {/* Fixed BLE meter status pill — bottom-right, visible across the app */}
+            <div className="fixed bottom-3 right-3 z-40 pointer-events-auto">
+              <BleStatusPill />
+            </div>
+          </BleMeterProvider>
         </RaceDayProvider>
       </ThemeColorProvider>
     </AppProvider>

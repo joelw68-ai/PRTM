@@ -10,10 +10,13 @@ import DatabaseHealthCheck from './DatabaseHealthCheck';
 
 import StorageSetupGuide from './StorageSetupGuide';
 import SyncHistoryTab from './SyncHistoryTab';
+import WeatherSourceSettings from './WeatherSourceSettings';
+import BleMeterConnect from './BleMeterConnect';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { TeamMember } from './TeamProfile';
 import { carClasses, memberRoles, specialtyOptions } from '@/data/carClasses';
+
 
 
 import {
@@ -92,8 +95,11 @@ import {
   DollarSign,
   Phone,
   RotateCcw,
-  Activity
+  Activity,
+  Cloud,
+  Bluetooth
 } from 'lucide-react';
+
 
 
 
@@ -116,7 +122,8 @@ interface AdminSettingsProps {
   currentRole: CrewRole;
 }
 
-type AdminSection = 'roles' | 'team' | 'engines' | 'superchargers' | 'heads' | 'maintenance' | 'sfi' | 'parts' | 'auditlog' | 'sampledata' | 'backup' | 'storage' | 'alerts' | 'synchistory' | 'healthcheck';
+type AdminSection = 'roles' | 'team' | 'engines' | 'superchargers' | 'heads' | 'maintenance' | 'sfi' | 'parts' | 'auditlog' | 'sampledata' | 'backup' | 'storage' | 'alerts' | 'synchistory' | 'healthcheck' | 'weather';
+
 
 
 
@@ -621,6 +628,7 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
 
   const sections = [
 
+    { id: 'weather', label: 'Weather & BLE Meter', icon: Bluetooth, adminOnly: false },
     { id: 'healthcheck', label: 'DB Health Check', icon: Activity, adminOnly: false },
     { id: 'storage', label: 'Storage & Uploads', icon: Upload, adminOnly: false },
     { id: 'backup', label: 'Backup & Restore', icon: HardDrive, adminOnly: false },
@@ -639,6 +647,7 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
     { id: 'sfi', label: 'SFI Certs', icon: Shield, count: sfiCertifications.length },
     { id: 'parts', label: 'Parts Inventory', icon: Package, count: partsInventory.length }
   ];
+
 
 
 
@@ -1848,7 +1857,19 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
             {activeSection === 'healthcheck' && (
               <DatabaseHealthCheck />
             )}
+
+            {/* Weather Source + BLE Meter */}
+            {activeSection === 'weather' && (
+              <div className="space-y-6">
+                <BleMeterConnect />
+                <WeatherSourceSettings
+                  trackLocation={profile?.homeTrack || 'auto:ip'}
+                  trackElevation={0}
+                />
+              </div>
+            )}
           </div>
+
 
 
 
@@ -2169,5 +2190,9 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
     </section>
   );
 };
+
+// Note: WeatherSourceSettings is rendered independently in AppLayout (Admin tab)
+// and ProfileSettings so it appears under both Profile / Admin Settings.
+
 
 export default AdminSettings;

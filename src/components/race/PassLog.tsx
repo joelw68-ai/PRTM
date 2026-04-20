@@ -115,7 +115,8 @@ import {
   Package,
   Undo2,
   Mountain,
-  Scan
+  Scan,
+  LocateFixed
 
 } from 'lucide-react';
 
@@ -213,6 +214,29 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
   const [savingTrack, setSavingTrack] = useState(false);
   const [trackSaveSuccess, setTrackSaveSuccess] = useState<string | null>(null);
   const [isHistoricalFetch, setIsHistoricalFetch] = useState(false);
+
+  // ═══════════════════════════════════════════════════════════════════
+  // "USE MY CURRENT LOCATION" — one-tap GPS → city/state → elevation → weather → DA
+  // ═══════════════════════════════════════════════════════════════════
+  // When the driver taps this button at a brand-new track, we chain four
+  // asynchronous steps into a single tap, showing a consolidated progress
+  // indicator the entire time:
+  //   1. GPS fix          (navigator.geolocation)
+  //   2. Location         (reverse-geocode lat/lon → City, State via Nominatim)
+  //   3. Elevation        (lookup-track-elevation edge function)
+  //   4. Weather + DA     (fetchWeatherData → SAE/DA w/ station pressure)
+  // Each step renders its own row in the progress indicator with states:
+  //   pending / active / done / error / skipped.
+  type GpsStepStatus = 'pending' | 'active' | 'done' | 'error' | 'skipped';
+  type GpsStepKey = 'gps' | 'location' | 'elevation' | 'weather';
+  const INITIAL_GPS_STEPS: Record<GpsStepKey, GpsStepStatus> = {
+    gps: 'pending',
+    location: 'pending',
+    elevation: 'pending',
+    weather: 'pending',
+  };
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [gpsSteps, setGpsSteps] = useState<Record<GpsStepKey, GpsStepStatus>>(INITIAL_GPS_STEPS);
 
   // ═══════════════════════════════════════════════════════════════════
   // SAVE-IN-PROGRESS GUARD — prevents duplicate saves from double-clicks
@@ -373,29 +397,60 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
   // Auto-fetch weather when opening the modal for a new pass (not editing)
   // Uses the last-used track location, home track from profile, or favorite saved track
+  // Auto-fetch weather when opening the modal for a new pass (not editing)
+  // Uses the last-used track location, home track from profile, or favorite saved track.
+  //
+  // ═══════════════════════════════════════════════════════════════════
+  // IMPORTANT — TRACK ELEVATION AUTO-LOOKUP
+  // ═══════════════════════════════════════════════════════════════════
+  // Whenever we auto-fill the track from a previous pass, a favorite,
+  // or the profile's home track, we ALSO look up that track in the
+  // savedTracks list to retrieve its elevation.  Without this, DA was
+  // being calculated at elevation 0 even when the user had a proper
+  // elevation saved in Manage Tracks — producing a DA that reads
+  // several hundred feet LOW compared to DRWS / Computech / RaceAir.
+  //
+  // After setting the elevation we pass it into calculateSAECorrection
+  // so the SLP → station-pressure conversion is applied and the DA
+  // matches what the handheld weather station at the track reports.
   useEffect(() => {
     if (showModal && !editingPassId && !autoFetchTriggered.current) {
       // Determine best location for auto-fetch
       let autoLocation = '';
       let autoTrackName = '';
-      
+      let autoElevation = 0;
+
       // Priority: 1) Last pass location, 2) Favorite saved track, 3) Home track from profile
       if (passLogs.length > 0 && passLogs[0].location) {
         autoLocation = passLogs[0].location;
         autoTrackName = passLogs[0].track;
+        // Try to match the last-pass track against savedTracks to get its elevation
+        const matched = savedTracks.find(t =>
+          t.name.toLowerCase() === autoTrackName.toLowerCase() &&
+          t.location.toLowerCase() === autoLocation.toLowerCase()
+        ) || savedTracks.find(t => t.name.toLowerCase() === autoTrackName.toLowerCase());
+        if (matched) autoElevation = matched.elevation || 0;
       } else {
         const favTrack = savedTracks.find(t => t.isFavorite);
         if (favTrack) {
           autoLocation = favTrack.location;
           autoTrackName = favTrack.name;
+          autoElevation = favTrack.elevation || 0;
         } else if (profile?.homeTrack) {
           autoLocation = profile.homeTrack;
           autoTrackName = profile.homeTrack;
+          const matched = savedTracks.find(t =>
+            t.name.toLowerCase() === profile.homeTrack!.toLowerCase()
+          );
+          if (matched) autoElevation = matched.elevation || 0;
         }
       }
-      
+
       if (autoLocation) {
         autoFetchTriggered.current = true;
+        // Store the elevation so DA calculations use the correct value
+        setTrackElevation(autoElevation);
+        console.log(`[PassLog auto-fill] Track: ${autoTrackName}, Location: ${autoLocation}, Elevation: ${autoElevation} ft`);
         // Pre-fill track info and parse city/state
         const parsed = parseCityState(autoLocation);
         setTrackCity(parsed.city);
@@ -406,7 +461,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
           location: prev.location || autoLocation
         }));
 
-        
+
         // Auto-fetch weather for today (not historical)
         // Use local date components to avoid UTC shift from toISOString()
         const now = new Date();
@@ -421,6 +476,27 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
               const data = await fetchWeatherData(autoLocation);
               if (data?.weather) {
                 const dewPt = calculateDewPoint(data.weather.temperature, data.weather.humidity);
+
+                // ── Recalculate DA/SAE with track elevation ──
+                // fetchWeatherData() does NOT apply elevation correction, so if
+                // we have a valid elevation we MUST recompute here — otherwise
+                // DA will be ~250-500 ft low at a typical US drag strip.
+                let sae = data.saeCorrection;
+                let da = data.densityAltitude;
+                let hp = data.correctedHP;
+                if (autoElevation > 0) {
+                  const corrected = calculateSAECorrection(
+                    data.weather.temperature,
+                    data.weather.pressure,
+                    data.weather.humidity,
+                    autoElevation
+                  );
+                  sae = corrected.saeCorrection;
+                  da = corrected.densityAltitude;
+                  hp = corrected.correctedHP;
+                  console.log(`[PassLog auto-fetch] Elevation-corrected DA: ${da} ft (elev ${autoElevation} ft) — was ${data.densityAltitude} ft at elev 0`);
+                }
+
                 setFormData(prev => ({
                   ...prev,
                   weather: {
@@ -433,14 +509,15 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                     conditions: data.weather.conditions,
                     dewPoint: dewPt
                   },
-                  saeCorrection: data.saeCorrection,
-                  densityAltitude: data.densityAltitude,
-                  correctedHP: data.correctedHP
+                  saeCorrection: sae,
+                  densityAltitude: da,
+                  correctedHP: hp
                 }));
-                const locName = data.weather.location 
+                const locName = data.weather.location
                   ? `${data.weather.location}${data.weather.region ? `, ${data.weather.region}` : ''}`
                   : autoLocation;
-                setWeatherSuccess(`Weather auto-loaded for ${locName}`);
+                const elevNote = autoElevation > 0 ? ` (elev ${autoElevation} ft)` : '';
+                setWeatherSuccess(`Weather auto-loaded for ${locName}${elevNote}`);
                 setTimeout(() => setWeatherSuccess(null), 5000);
               }
             } catch (err) {
@@ -453,7 +530,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
         }
       }
     }
-    
+
     if (!showModal) {
       autoFetchTriggered.current = false;
     }
@@ -575,58 +652,415 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
 
 
-  // Save current track as preset
+  // Save current track as preset — with automatic elevation lookup
+  //
+  // ═══════════════════════════════════════════════════════════════════
+  // AUTO-LOOKUP TRACK ELEVATION VIA lookup-track-elevation EDGE FUNCTION
+  // ═══════════════════════════════════════════════════════════════════
+  // When the user saves a new track, we invoke the edge function which:
+  //   1. Geocodes "City, State" via Photon/Nominatim
+  //   2. Fetches elevation from Open-Meteo → Open-Elevation → USGS EPQS
+  //   3. Returns elevation in feet, rounded to the nearest foot
+  // If the lookup fails, we save the track with elevation=0 and tell the
+  // user to edit it manually in Manage Tracks (link to whatsmyelevation.com).
   const handleSaveTrack = async () => {
     const trackName = formData.track?.trim();
     const location = formData.location?.trim();
-    
+
     if (!trackName || !location) {
       setWeatherError('Please enter both track name and location to save');
       setTimeout(() => setWeatherError(null), 4000);
       return;
     }
-    
+
     // Check if track already exists
     const existingTrack = savedTracks.find(
-      t => t.name.toLowerCase() === trackName.toLowerCase() && 
+      t => t.name.toLowerCase() === trackName.toLowerCase() &&
            t.location.toLowerCase() === location.toLowerCase()
     );
-    
+
     if (existingTrack) {
       setWeatherError('This track is already saved');
       setTimeout(() => setWeatherError(null), 4000);
       return;
     }
-    
+
     setSavingTrack(true);
-    
+    setTrackSaveSuccess('Looking up elevation…');
+
     try {
+      // Try to auto-lookup elevation via the edge function
+      let elevationFt = 0;
+      let lookupNote = '';
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        const { data, error } = await supabase.functions.invoke('lookup-track-elevation', {
+          body: { location, trackName }
+        });
+        if (!error && data?.success && typeof data.elevationFt === 'number') {
+          elevationFt = data.elevationFt;
+          lookupNote = ` (elev ${elevationFt.toLocaleString()} ft auto-detected)`;
+          console.log(`[handleSaveTrack] Auto-detected elevation for ${trackName}: ${elevationFt} ft (source: ${data.source})`);
+        } else {
+          console.warn('[handleSaveTrack] Elevation lookup failed:', error || data?.error);
+          lookupNote = ' — set elevation manually in Manage Tracks';
+        }
+      } catch (lookupErr) {
+        console.warn('[handleSaveTrack] Elevation lookup exception:', lookupErr);
+        lookupNote = ' — set elevation manually in Manage Tracks';
+      }
+
       const newTrack: SavedTrack = {
         id: crypto.randomUUID(),
-
         name: trackName,
         location: location,
-        elevation: 0,
+        elevation: elevationFt,
         trackLength: '1/8 mile',
         surfaceType: 'Concrete',
         notes: '',
         isFavorite: false,
         visitCount: 1,
         lastVisited: getLocalDateString()
-
       };
-      
+
       await addSavedTrack(newTrack);
-      setTrackSaveSuccess(`"${trackName}" saved to your tracks!`);
-      setTimeout(() => setTrackSaveSuccess(null), 4000);
+
+      // If elevation was found, update trackElevation state so DA recalculates live
+      if (elevationFt > 0) {
+        setTrackElevation(elevationFt);
+        if (formData.weather?.pressure && formData.weather?.temperature) {
+          const corrected = calculateSAECorrection(
+            formData.weather.temperature,
+            formData.weather.pressure,
+            formData.weather.humidity || 50,
+            elevationFt
+          );
+          setFormData(prev => ({
+            ...prev,
+            saeCorrection: corrected.saeCorrection,
+            densityAltitude: corrected.densityAltitude,
+            correctedHP: corrected.correctedHP,
+          }));
+        }
+      }
+
+      setTrackSaveSuccess(`"${trackName}" saved${lookupNote}`);
+      setTimeout(() => setTrackSaveSuccess(null), 6000);
     } catch (error) {
       console.error('Error saving track:', error);
       setWeatherError('Failed to save track');
       setTimeout(() => setWeatherError(null), 4000);
+      setTrackSaveSuccess(null);
     } finally {
       setSavingTrack(false);
     }
   };
+
+  // ═══════════════════════════════════════════════════════════════════
+  // REFRESH ELEVATION for an existing saved track
+  // ═══════════════════════════════════════════════════════════════════
+  // Per-track spinner state so the user sees which track is currently
+  // being looked up in the Manage Tracks modal.
+  const [refreshingElevId, setRefreshingElevId] = useState<string | null>(null);
+
+  const handleRefreshElevation = async (track: SavedTrack) => {
+    setRefreshingElevId(track.id);
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      const { data, error } = await supabase.functions.invoke('lookup-track-elevation', {
+        body: { location: track.location, trackName: track.name }
+      });
+      if (!error && data?.success && typeof data.elevationFt === 'number') {
+        const newElev = data.elevationFt;
+        await updateSavedTrack(track.id, { elevation: newElev });
+        // If this is the currently-loaded track, recalc DA live
+        if (formData.track === track.name) {
+          setTrackElevation(newElev);
+          if (formData.weather?.pressure && formData.weather?.temperature) {
+            const corrected = calculateSAECorrection(
+              formData.weather.temperature,
+              formData.weather.pressure,
+              formData.weather.humidity || 50,
+              newElev
+            );
+            setFormData(prev => ({
+              ...prev,
+              saeCorrection: corrected.saeCorrection,
+              densityAltitude: corrected.densityAltitude,
+              correctedHP: corrected.correctedHP,
+            }));
+            toast.success(`${track.name}: ${newElev.toLocaleString()} ft — DA recalculated to ${corrected.densityAltitude} ft`);
+          } else {
+            toast.success(`${track.name}: elevation set to ${newElev.toLocaleString()} ft`);
+          }
+        } else {
+          toast.success(`${track.name}: elevation set to ${newElev.toLocaleString()} ft`);
+        }
+      } else {
+        const msg = (data?.error as string) || (error?.message as string) || 'Lookup failed';
+        toast.error(
+          `Could not auto-detect elevation for ${track.name}. ${msg}`,
+          {
+            description: 'Visit whatsmyelevation.com, then type the value in the Elevation field.',
+            duration: 8000,
+          }
+        );
+      }
+    } catch (err) {
+      console.error('[handleRefreshElevation] error:', err);
+      toast.error(`Elevation lookup failed for ${track.name}`, {
+        description: 'Enter elevation manually or try again later.',
+        duration: 6000,
+      });
+    } finally {
+      setRefreshingElevId(null);
+    }
+  };
+
+
+  // ═══════════════════════════════════════════════════════════════════
+  // USE MY CURRENT LOCATION — one-tap GPS → City/State → elevation → weather → DA
+  // ═══════════════════════════════════════════════════════════════════
+  // Four-step chained flow, each step updating gpsSteps[key] so the UI
+  // can render a consolidated progress indicator next to the button:
+  //   1. gps       — navigator.geolocation.getCurrentPosition
+  //   2. location  — Nominatim reverse-geocode → City, State
+  //   3. elevation — lookup-track-elevation edge function (lat/lon + text)
+  //   4. weather   — fetchWeatherData → SAE/DA recomputed w/ elevation
+  //
+  // Weather is skipped (status = "skipped") if the pass date is not today,
+  // since fetchWeather handles historical fetches via a different branch.
+  // Any step failure still allows subsequent steps to run when possible
+  // (e.g. elevation lookup can proceed with raw lat/lon even if Nominatim
+  // fails; weather can run with lat/lon location string when City/State
+  // couldn't be resolved). Step failures are shown inline in the progress
+  // indicator as red X marks without halting the chain.
+  const handleUseCurrentLocation = async () => {
+    if (!('geolocation' in navigator)) {
+      toast.error('Your browser does not support GPS location', {
+        description: 'Type the city and state manually instead.',
+        duration: 6000,
+      });
+      return;
+    }
+
+    // Reset progress state — every run starts fresh with all pending
+    const startingSteps: Record<GpsStepKey, GpsStepStatus> = {
+      gps: 'active',
+      location: 'pending',
+      elevation: 'pending',
+      weather: isDateInPast() ? 'skipped' : 'pending',
+    };
+    setGpsSteps(startingSteps);
+    setGpsLoading(true);
+
+    // Local helper to update a single step without losing sibling states
+    const markStep = (key: GpsStepKey, status: GpsStepStatus) => {
+      setGpsSteps(prev => ({ ...prev, [key]: status }));
+    };
+
+    // Promise wrapper around the callback-style API so we can await it
+    const getPos = () => new Promise<GeolocationPosition>((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 60000, // accept a position up to 1 min old
+      });
+    });
+
+    try {
+      // ── Step 1: GPS fix ──────────────────────────────────────────────
+      const pos = await getPos();
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      console.log(`[UseCurrentLocation] GPS fix: ${lat.toFixed(5)}, ${lon.toFixed(5)} (±${Math.round(pos.coords.accuracy)} m)`);
+      markStep('gps', 'done');
+
+      // ── Step 2: Reverse-geocode via Nominatim ────────────────────────
+      markStep('location', 'active');
+      let resolvedCity = '';
+      let resolvedState = '';
+      let resolvedLocation = '';
+      try {
+        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=12&addressdetails=1`;
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        if (res.ok) {
+          const json = await res.json();
+          const addr = json?.address || {};
+          // Nominatim may return city/town/village/hamlet/municipality
+          resolvedCity =
+            addr.city || addr.town || addr.village || addr.hamlet ||
+            addr.municipality || addr.county || '';
+          // US state code: ISO3166-2-lvl4 is typically "US-TX"; fall back to state name
+          const iso = addr['ISO3166-2-lvl4'] as string | undefined;
+          if (iso && iso.includes('-')) {
+            resolvedState = iso.split('-')[1];
+          } else if (addr.state_code) {
+            resolvedState = String(addr.state_code).toUpperCase();
+          } else if (addr.state) {
+            // Try to match full state name to a 2-letter code from stateOptions
+            const match = stateOptions.find(
+              o => o.label.toLowerCase() === String(addr.state).toLowerCase() ||
+                   o.value.toLowerCase() === String(addr.state).toLowerCase()
+            );
+            resolvedState = match ? match.value : String(addr.state);
+          }
+          resolvedLocation = combineCityState(resolvedCity, resolvedState);
+          console.log(`[UseCurrentLocation] Reverse geocode: "${resolvedLocation}" (city="${resolvedCity}" state="${resolvedState}")`);
+        } else {
+          console.warn('[UseCurrentLocation] Nominatim responded with', res.status);
+        }
+      } catch (geoErr) {
+        console.warn('[UseCurrentLocation] Reverse geocode failed:', geoErr);
+      }
+
+      if (resolvedCity || resolvedState) {
+        setTrackCity(resolvedCity);
+        setTrackState(resolvedState);
+        setFormData(prev => ({ ...prev, location: resolvedLocation }));
+        markStep('location', 'done');
+      } else {
+        // Fallback: stash raw lat/lon as the location string so the edge
+        // function can still attempt geocoding on its own.
+        resolvedLocation = `${lat.toFixed(5)},${lon.toFixed(5)}`;
+        setFormData(prev => ({ ...prev, location: resolvedLocation }));
+        markStep('location', 'error');
+      }
+
+      // ── Step 3: Invoke lookup-track-elevation with resolved location ─
+      markStep('elevation', 'active');
+      let elevationFt = 0;
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        const trackName = formData.track?.trim() || resolvedLocation || 'Current Location';
+        const { data, error } = await supabase.functions.invoke('lookup-track-elevation', {
+          body: { location: resolvedLocation, trackName, lat, lon },
+        });
+        if (!error && data?.success && typeof data.elevationFt === 'number') {
+          elevationFt = data.elevationFt;
+          console.log(`[UseCurrentLocation] Elevation: ${elevationFt} ft (source: ${data.source})`);
+        } else {
+          console.warn('[UseCurrentLocation] Elevation edge function failed:', error || data?.error);
+        }
+      } catch (elevErr) {
+        console.warn('[UseCurrentLocation] Elevation lookup exception:', elevErr);
+      }
+
+      // `localElevation` is captured for use in step 4 (weather) because
+      // setTrackElevation is async — the closure below would otherwise
+      // read the OLD value when recomputing SAE/DA.
+      let localElevation = trackElevation;
+      if (elevationFt > 0) {
+        setTrackElevation(elevationFt);
+        localElevation = elevationFt;
+        markStep('elevation', 'done');
+      } else {
+        markStep('elevation', 'error');
+      }
+
+      // ── Step 4: Fetch current weather + compute DA ───────────────────
+      // Skip if the pass date is historical (user should click "Fetch
+      // Historical" manually to pick the correct archival time window).
+      if (isDateInPast()) {
+        console.log('[UseCurrentLocation] Skipping weather — date is in the past, use Fetch Historical');
+      } else {
+        markStep('weather', 'active');
+        const weatherLocation = resolvedLocation || `${lat.toFixed(5)},${lon.toFixed(5)}`;
+        try {
+          const data = await fetchWeatherData(weatherLocation);
+          if (data?.weather) {
+            // Recompute SAE/DA with elevation if we have it, otherwise use
+            // the sea-level DA that fetchWeatherData returned.
+            let sae = data.saeCorrection;
+            let da = data.densityAltitude;
+            let hp = data.correctedHP;
+            if (localElevation > 0) {
+              const corrected = calculateSAECorrection(
+                data.weather.temperature,
+                data.weather.pressure,
+                data.weather.humidity,
+                localElevation
+              );
+              sae = corrected.saeCorrection;
+              da = corrected.densityAltitude;
+              hp = corrected.correctedHP;
+              console.log(`[UseCurrentLocation] Weather + elev-corrected DA: ${da} ft (elev ${localElevation} ft)`);
+            }
+            setFormData(prev => ({
+              ...prev,
+              weather: {
+                ...prev.weather!,
+                temperature: data.weather.temperature,
+                humidity: data.weather.humidity,
+                pressure: data.weather.pressure,
+                windSpeed: data.weather.windSpeed,
+                windDirection: data.weather.windDirection,
+                conditions: data.weather.conditions,
+              },
+              saeCorrection: sae,
+              densityAltitude: da,
+              correctedHP: hp,
+            }));
+
+            const locName = data.weather.location
+              ? `${data.weather.location}${data.weather.region ? `, ${data.weather.region}` : ''}`
+              : weatherLocation;
+            const elevNote = localElevation > 0 ? ` · elev ${localElevation.toLocaleString()} ft` : '';
+            setWeatherSuccess(`Current weather loaded for ${locName}${elevNote} — DA: ${da} ft`);
+            setTimeout(() => setWeatherSuccess(null), 6000);
+            markStep('weather', 'done');
+          } else {
+            markStep('weather', 'error');
+          }
+        } catch (wxErr) {
+          console.warn('[UseCurrentLocation] Weather fetch failed:', wxErr);
+          markStep('weather', 'error');
+        }
+      }
+
+      // ── Consolidated success toast ───────────────────────────────────
+      // Choose the toast variant based on whether every critical step
+      // completed. GPS is the only hard-required step; the others gracefully
+      // degrade and we still want to give the user something useful.
+      const locLabel = resolvedLocation || `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
+      const elevLabel = elevationFt > 0 ? `${elevationFt.toLocaleString()} ft` : 'not found';
+      if (elevationFt > 0 && (resolvedCity || resolvedState)) {
+        // Full success — all chained lookups completed
+        toast.success(`One-tap setup complete: ${locLabel}`, {
+          description: `Elevation ${elevLabel} · ${isDateInPast() ? 'click Fetch Historical for weather' : 'weather + DA loaded'}`,
+          duration: 6000,
+        });
+      } else {
+        // Partial success — GPS worked but one or more chained steps failed
+        const issues: string[] = [];
+        if (!resolvedCity && !resolvedState) issues.push('city/state');
+        if (elevationFt === 0) issues.push('elevation');
+        toast.warning(`Location set: ${locLabel}`, {
+          description: `Could not auto-detect ${issues.join(' & ')} — enter manually or try Manage Tracks.`,
+          duration: 8000,
+        });
+      }
+    } catch (err: any) {
+      console.error('[UseCurrentLocation] error:', err);
+      markStep('gps', 'error');
+      let msg = 'Could not get your location';
+      if (err?.code === 1) msg = 'Location permission denied — enable it in your browser settings';
+      else if (err?.code === 2) msg = 'GPS signal unavailable — try moving to an area with better reception';
+      else if (err?.code === 3) msg = 'GPS request timed out — try again';
+      toast.error(msg, {
+        description: 'Type City/State manually, or visit whatsmyelevation.com for elevation.',
+        duration: 7000,
+      });
+    } finally {
+      setGpsLoading(false);
+      // Keep the step statuses visible for 6s so the user can confirm
+      // everything turned green. Then reset so the button returns to its
+      // default "Use My Current Location" state.
+      setTimeout(() => setGpsSteps(INITIAL_GPS_STEPS), 6000);
+    }
+  };
+
+
 
   // Check if the selected date is in the past (for historical weather)
   const isDateInPast = (): boolean => {
@@ -1837,7 +2271,113 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                       className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                     />
                   </div>
-                  
+
+                  {/* ═══════════════════════════════════════════════════════════
+                      USE MY CURRENT LOCATION — one-tap GPS → City/State + elevation + weather + DA
+                      ═══════════════════════════════════════════════════════════
+                      Chains four async steps into a single tap:
+                        1. GPS fix (navigator.geolocation)
+                        2. Reverse-geocode to City/State (Nominatim)
+                        3. Look up track elevation (edge function)
+                        4. Fetch weather + recompute DA with station pressure
+                      The consolidated progress indicator below the button shows
+                      the status of every step in real time. */}
+                  <div>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={handleUseCurrentLocation}
+                          disabled={gpsLoading}
+                          className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                            gpsLoading
+                              ? 'bg-cyan-600/40 text-cyan-200 cursor-not-allowed'
+                              : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-500/20'
+                          }`}
+                        >
+                          {gpsLoading ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              One-Tap Setup in Progress…
+                            </>
+                          ) : (
+                            <>
+                              <LocateFixed className="w-4 h-4" />
+                              Use My Current Location
+                            </>
+                          )}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs bg-slate-900 border-slate-700 text-white">
+                        <p className="text-sm">
+                          <strong>One-tap setup:</strong> GPS → City/State → Track Elevation → Current Weather → Density Altitude — all in a single tap. Your DA will match the trackside DRWS/Computech on the very first pass.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+
+                    {/* ═══════════════════════════════════════════════════════
+                        Consolidated 4-step progress indicator.
+                        Shown while the chain is running, and for 6s afterwards
+                        so the user can verify every step completed.  Each step
+                        renders an icon reflecting its status:
+                          pending → gray circle
+                          active  → spinning blue loader
+                          done    → green checkmark
+                          error   → red X
+                          skipped → dim gray dash
+                        ═══════════════════════════════════════════════════════ */}
+                    {(gpsLoading || Object.values(gpsSteps).some(s => s !== 'pending')) && (
+                      <div className="mt-2 p-3 bg-slate-900/70 border border-cyan-500/30 rounded-lg space-y-1.5">
+                        {([
+                          { key: 'gps' as GpsStepKey,       label: '1. GPS Location',          hint: 'Reading device GPS coordinates' },
+                          { key: 'location' as GpsStepKey,  label: '2. City & State',          hint: 'Reverse-geocoding coords to City, State' },
+                          { key: 'elevation' as GpsStepKey, label: '3. Track Elevation',       hint: 'Looking up elevation for accurate DA' },
+                          { key: 'weather' as GpsStepKey,   label: '4. Weather + DA',          hint: 'Fetching current weather and computing Density Altitude' },
+                        ]).map(({ key, label, hint }) => {
+                          const status = gpsSteps[key];
+                          // Pick an icon + color based on the step's current status
+                          let icon: React.ReactNode;
+                          let textColor = 'text-slate-400';
+                          if (status === 'active') {
+                            icon = <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-400" />;
+                            textColor = 'text-cyan-300 font-medium';
+                          } else if (status === 'done') {
+                            icon = <CheckCircle className="w-3.5 h-3.5 text-green-400" />;
+                            textColor = 'text-green-300';
+                          } else if (status === 'error') {
+                            icon = <X className="w-3.5 h-3.5 text-red-400" />;
+                            textColor = 'text-red-300';
+                          } else if (status === 'skipped') {
+                            icon = (
+                              <svg className="w-3.5 h-3.5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                              </svg>
+                            );
+                            textColor = 'text-slate-500 italic';
+                          } else {
+                            // pending — empty gray circle
+                            icon = (
+                              <svg className="w-3.5 h-3.5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="12" cy="12" r="9" />
+                              </svg>
+                            );
+                            textColor = 'text-slate-500';
+                          }
+                          return (
+                            <div key={key} className="flex items-center gap-2 text-xs" title={hint}>
+                              <span className="flex-shrink-0">{icon}</span>
+                              <span className={textColor}>{label}</span>
+                              {status === 'skipped' && (
+                                <span className="text-[10px] text-slate-600">— historical date, use Fetch Historical</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+
                   {/* Location — separate City and State fields */}
                   <div>
                     <label className="block text-sm text-slate-400 mb-1">City</label>
@@ -2729,7 +3269,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                 ) : (
                   <div className="space-y-3 max-h-[60vh] overflow-y-auto">
                     {sortedTracks.map(track => (
-                      <div 
+                      <div
                         key={track.id}
                         className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700"
                       >
@@ -2747,13 +3287,95 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                               <span>Last: {track.lastVisited}</span>
                             )}
                           </div>
+                          {/* ═══════════════════════════════════════════════════════════
+                              ELEVATION EDITOR — critical for correct DA/SAE.
+                              ═══════════════════════════════════════════════════════════
+                              Weather APIs report sea-level corrected pressure.  The DA
+                              formula needs STATION pressure, which requires the track's
+                              actual elevation in feet above sea level.  Without this
+                              value the DA reads ~200-500 ft LOW vs a Drag Racing Weather
+                              Station / Computech / RaceAir at the track.
+                              Look up your track's elevation on Google Maps or
+                              whatsmyelevation.com (e.g. Galot Motorsports = 230 ft,
+                              Bradenton Motorsports = 25 ft, Bandimere Speedway = 5800 ft). */}
+                          <div className="flex items-center gap-2 mt-2">
+                            <Mountain className="w-3.5 h-3.5 text-orange-400" />
+                            <label className="text-xs text-slate-400">Elevation:</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              defaultValue={track.elevation || 0}
+                              onBlur={async (e) => {
+                                const newElev = parseInt(e.target.value) || 0;
+                                if (newElev !== (track.elevation || 0)) {
+                                  await updateSavedTrack(track.id, { elevation: newElev });
+                                  console.log(`[TrackManager] Updated ${track.name} elevation: ${track.elevation || 0} → ${newElev} ft`);
+                                  // If this is the currently-loaded track in the form,
+                                  // update trackElevation state so DA recalculates immediately.
+                                  if (formData.track === track.name) {
+                                    setTrackElevation(newElev);
+                                    // Recalculate DA/SAE with the new elevation
+                                    if (formData.weather?.pressure && formData.weather?.temperature) {
+                                      const corrected = calculateSAECorrection(
+                                        formData.weather.temperature,
+                                        formData.weather.pressure,
+                                        formData.weather.humidity || 50,
+                                        newElev
+                                      );
+                                      setFormData(prev => ({
+                                        ...prev,
+                                        saeCorrection: corrected.saeCorrection,
+                                        densityAltitude: corrected.densityAltitude,
+                                        correctedHP: corrected.correctedHP,
+                                      }));
+                                      toast.success(`${track.name} elevation saved — DA recalculated to ${corrected.densityAltitude} ft`);
+                                    } else {
+                                      toast.success(`${track.name} elevation saved (${newElev} ft)`);
+                                    }
+                                  } else {
+                                    toast.success(`${track.name} elevation saved (${newElev} ft)`);
+                                  }
+                                }
+                              }}
+                              className="w-24 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white text-sm font-mono focus:border-orange-500 focus:outline-none"
+                            />
+                            <span className="text-xs text-slate-500">ft</span>
+                            {(track.elevation || 0) === 0 && (
+                              <span className="text-[10px] text-amber-400/80 ml-1">⚠ not set — DA will be inaccurate</span>
+                            )}
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          {/* ══════════════════════════════════════════════════════
+                              REFRESH ELEVATION — auto-lookup via edge function.
+                              Replaces whatever elevation is currently stored with
+                              a fresh geocode + elevation-API result.  Falls back
+                              to a toast pointing to whatsmyelevation.com if all
+                              services are unavailable. */}
+                          <button
+                            onClick={() => handleRefreshElevation(track)}
+                            disabled={refreshingElevId === track.id}
+                            className="p-2 bg-blue-600/20 text-blue-400 rounded-lg hover:bg-blue-600/30 transition-colors disabled:opacity-50 flex items-center gap-1 text-xs"
+                            title="Auto-detect elevation from location"
+                          >
+                            {refreshingElevId === track.id ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <span className="hidden sm:inline">Looking up…</span>
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="w-4 h-4" />
+                                <span className="hidden sm:inline">Refresh Elev</span>
+                              </>
+                            )}
+                          </button>
                           <button
                             onClick={() => handleToggleFavorite(track.id, track.isFavorite)}
                             className={`p-2 rounded-lg transition-colors ${
-                              track.isFavorite 
-                                ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30' 
+                              track.isFavorite
+                                ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30'
                                 : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
                             }`}
                             title={track.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
@@ -2772,6 +3394,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                     ))}
                   </div>
                 )}
+
+
                 
                 <div className="flex justify-end mt-6 pt-4 border-t border-slate-700">
                   <button
