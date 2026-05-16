@@ -3,12 +3,14 @@ import DateInputDark from '@/components/ui/DateInputDark';
 import { getStateSelectOptions, parseCityState } from '@/data/usStates';
 import { useApp } from '@/contexts/AppContext';
 import RaceDayWeatherCard from '@/components/race/RaceDayWeatherCard';
+import TrackMapView from '@/components/race/TrackMapView';
 import { SavedTrack } from '@/lib/database';
 import { toast } from 'sonner';
 import { getLocalDateString } from '@/lib/utils';
 import { SANCTIONING_BODIES } from '@/lib/sanctioningBodies';
 import { supabase } from '@/lib/supabase';
 import { CrewRole } from '@/lib/permissions';
+
 
 
 import {
@@ -80,7 +82,8 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
 
   const trackSelectRef = useRef<HTMLSelectElement>(null);
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
+  const [viewMode, setViewMode] = useState<'calendar' | 'list' | 'map'>('calendar');
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState<RaceEvent | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<RaceEvent | null>(null);
@@ -632,6 +635,7 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
 
 
           <div className="flex items-center gap-3">
+
             <div className="flex bg-slate-800 rounded-lg p-1">
               <button
                 onClick={() => setViewMode('calendar')}
@@ -645,7 +649,16 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
               >
                 List
               </button>
+              <button
+                onClick={() => setViewMode('map')}
+                title="Interactive Leaflet map of all saved tracks"
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors flex items-center gap-1.5 ${viewMode === 'map' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'}`}
+              >
+                <MapPin className="w-3.5 h-3.5" />
+                Map
+              </button>
             </div>
+
             <button
               onClick={handleExportCSV}
               title="Export events to CSV"
@@ -700,8 +713,20 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
           </div>
         </div>
 
+        {viewMode === 'map' ? (
+          <TrackMapView
+            savedTracks={savedTracks}
+            raceEvents={raceEvents}
+            onSelectEvent={(evt) => {
+              // Switch to list view with the event selected so the user sees its full details
+              setSelectedEvent(evt);
+              setViewMode('list');
+            }}
+          />
+        ) : (
         <div className="grid lg:grid-cols-4 gap-6">
           {/* Calendar/List View */}
+
           <div className="lg:col-span-3">
             {viewMode === 'calendar' ? (
               <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
@@ -939,6 +964,7 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
             </div>
           </div>
         </div>
+        )}
 
         {/* Add/Edit Event Modal */}
         {showAddModal && (
