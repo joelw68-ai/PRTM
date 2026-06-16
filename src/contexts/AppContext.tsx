@@ -2112,9 +2112,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const expiredCerts = sfiCertifications.filter(
       c => c.daysUntilExpiration <= 0 && notSnoozed(alertKey.cert(c.id))
     ).length;
-    const dueMaintenance = maintenanceItems.filter(
-      m => (m.status === 'Due' || m.status === 'Overdue') && notSnoozed(alertKey.maintenance(m.id))
-    ).length;
+    // Maintenance: recompute status from current pass counts + per-item threshold
+    // so the bell matches the dashboard and respects configured thresholds.
+    //   • Items WITH a custom threshold alert only once they leave "Good"
+    //     (i.e. remaining passes have reached the configured threshold).
+    //   • Items WITHOUT a threshold use the legacy Due/Overdue rule.
+    const dueMaintenance = maintenanceItems.filter((m) => {
+      if (!notSnoozed(alertKey.maintenance(m.id))) return false;
+      const status = calculateMaintenanceStatus(m);
+      const hasThreshold = m.threshold != null && m.threshold >= 0;
+      return hasThreshold ? status !== 'Good' : (status === 'Due' || status === 'Overdue');
+    }).length;
+
     const lowStockParts = partsInventory.filter(
       p => (p.status === 'Low Stock' || p.status === 'Out of Stock') && notSnoozed(alertKey.part(p.id))
     ).length;

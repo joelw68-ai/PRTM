@@ -16,6 +16,7 @@ import {
 
 import { fetchToDoItems, ToDoItem } from '@/lib/database';
 import { parseLocalDate } from '@/lib/utils';
+import { calculateMaintenanceStatus } from '@/data/proModData';
 import { checkSFIAlerts, loadSFIAlertSettings } from '@/lib/sfiAlerts';
 import { checkMaintenanceAlerts, loadAlertSettings } from '@/lib/maintenanceAlerts';
 
@@ -71,7 +72,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
   const [lastRealtimeEvent, setLastRealtimeEvent] = useState<Date | null>(null);
   const [showAllPasses, setShowAllPasses] = useState(false);
   const [showAllActivity, setShowAllActivity] = useState(false);
-  const [showAlertsModal, setShowAlertsModal] = useState(false);
+  // Which alert modal is open: maintenance (maintenance + SFI certs) or parts (low/out of stock)
+  const [alertModalView, setAlertModalView] = useState<null | 'maintenance' | 'parts'>(null);
   const [pulsePass, setPulsePass] = useState(false);
   const [pulseChecklist, setPulseChecklist] = useState(false);
   const [pulseMaintenance, setPulseMaintenance] = useState(false);
@@ -303,32 +305,48 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
 
     const lowStockParts = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
 
-    // ── Maintenance: items already flagged Due/Overdue, PLUS configurable
-    //    threshold alerts (approaching service) that drive the nav bell count. ──
-    const dueMaintenanceBase = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Overdue');
-    let dueMaintenance = dueMaintenanceBase;
+    // ── Maintenance alerts ──
+    // Recompute each item's status from its current pass counts + per-item
+    // threshold so stale stored statuses can't trigger early/false alerts.
+    const itemsWithStatus = maintenanceItems.map(m => ({
+      ...m,
+      status: calculateMaintenanceStatus(m),
+    }));
+
+    // Items that DEFINE a per-item threshold are governed SOLELY by that
+    // threshold: they may only alert once their computed status leaves "Good"
+    // (i.e. remaining passes have dropped to/under the configured threshold).
+    // The global percentage-based alert system is NOT applied to them.
+    const thresholdItems = itemsWithStatus.filter(m => m.threshold != null && m.threshold >= 0);
+    const thresholdDue = thresholdItems.filter(m => m.status !== 'Good');
+
+    // Items WITHOUT a per-item threshold keep the legacy behavior: Due/Overdue
+    // by computed status, plus the configurable global percentage thresholds.
+    const noThresholdItems = itemsWithStatus.filter(m => !(m.threshold != null && m.threshold >= 0));
+    const dueMaintenanceBase = noThresholdItems.filter(m => m.status === 'Due' || m.status === 'Overdue');
+
+    let dueMaintenance = [...thresholdDue, ...dueMaintenanceBase];
     try {
       const alertSettings = loadAlertSettings();
       if (alertSettings.enabled && alertSettings.showBellAlerts) {
-        const thresholdAlerts = checkMaintenanceAlerts(maintenanceItems, alertSettings);
-        const dueIds = new Set(dueMaintenanceBase.map(m => m.id));
-        const extraMaint = thresholdAlerts
-          .filter(a => !dueIds.has(a.maintenanceItemId))
-          .map(a => {
-            const item = maintenanceItems.find(m => m.id === a.maintenanceItemId);
-            return item
-              ? { ...item, status: (item.status === 'Overdue' ? 'Overdue' : 'Due') as any }
-              : null;
-          })
-          .filter(Boolean) as typeof dueMaintenanceBase;
-        // De-dupe by id
-        const seen = new Set(dueMaintenanceBase.map(m => m.id));
-        dueMaintenance = [...dueMaintenanceBase];
-        extraMaint.forEach(m => { if (!seen.has(m.id)) { seen.add(m.id); dueMaintenance.push(m); } });
+        // Only run the global percentage check against items WITHOUT a custom
+        // threshold, so configured thresholds are never overridden.
+        const thresholdAlerts = checkMaintenanceAlerts(noThresholdItems, alertSettings);
+        const seen = new Set(dueMaintenance.map(m => m.id));
+        thresholdAlerts
+          .filter(a => !seen.has(a.maintenanceItemId))
+          .forEach(a => {
+            const item = noThresholdItems.find(m => m.id === a.maintenanceItemId);
+            if (item) {
+              seen.add(item.id);
+              dueMaintenance.push({ ...item, status: (item.status === 'Overdue' ? 'Overdue' : 'Due') as any });
+            }
+          });
       }
     } catch (err) {
       console.warn('[TeamDashboard] maintenance threshold check failed:', err);
     }
+
 
     // ── SFI certs: expired (days <= 0) PLUS configurable "expiring soon"
     //    threshold alerts. This makes the dashboard match the nav bell count,
@@ -454,20 +472,22 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
     const certs = componentStatus.certAlerts.filter((c) => !isSnoozed(`cert-${c.id}`));
     const parts = componentStatus.lowStockParts.filter((p) => !isSnoozed(`part-${p.id}`));
     const total = maintenance.length + certs.length + parts.length;
+    // Maintenance modal groups maintenance + SFI certs; Parts modal shows parts only
+    const maintTotal = maintenance.length + certs.length;
+    const partsTotal = parts.length;
     const snoozedCount =
       (componentStatus.dueMaintenance.length - maintenance.length) +
       (componentStatus.certAlerts.length - certs.length) +
       (componentStatus.lowStockParts.length - parts.length);
-    return { maintenance, certs, parts, total, snoozedCount };
+    return { maintenance, certs, parts, total, maintTotal, partsTotal, snoozedCount };
   }, [componentStatus, isSnoozed]);
 
-  // Count reflected by the currently active filter
+  // Count reflected by the currently active filter (maintenance modal only)
   const filteredCount = useMemo(() => {
     switch (alertFilter) {
       case 'maintenance': return activeAlerts.maintenance.length;
       case 'certs': return activeAlerts.certs.length;
-      case 'parts': return activeAlerts.parts.length;
-      default: return activeAlerts.total;
+      default: return activeAlerts.maintTotal;
     }
   }, [alertFilter, activeAlerts]);
 
@@ -1003,38 +1023,51 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             <p className="text-[10px] text-slate-500 mt-1">installed / active</p>
           </button>
 
-          <button onClick={() => onNavigate('maintenance')} className="bg-slate-800/60 rounded-xl border border-slate-700/50 p-4 hover:bg-slate-800 transition-colors text-left">
-            <div className="flex items-center gap-2 mb-2">
-              <Wrench className="w-4 h-4 text-blue-400" />
-              <span className="text-xs text-slate-400">Maintenance</span>
-            </div>
-            <p className={`text-2xl font-bold ${componentStatus.dueMaintenance.length > 0 ? 'text-red-400' : 'text-white'}`}>
-              {componentStatus.dueMaintenance.length}
-            </p>
-            <p className="text-[10px] text-slate-500 mt-1">items due</p>
-          </button>
-
-          {/* Parts — combined Low Stock + Total Alerts card (snooze-aware) */}
+          {/* Maintenance — opens Maintenance modal (maintenance + SFI certs) */}
           <button
-            onClick={() => setShowAlertsModal(true)}
+            onClick={() => { setAlertFilter('all'); setAlertModalView('maintenance'); }}
             className={`bg-slate-800/60 rounded-xl border p-4 transition-colors text-left ${
-              activeAlerts.total > 0
+              activeAlerts.maintTotal > 0
                 ? 'border-red-500/40 hover:bg-red-500/10'
                 : 'border-slate-700/50 hover:bg-slate-800'
             }`}
           >
             <div className="flex items-center gap-2 mb-2">
-              <Package className={`w-4 h-4 ${activeAlerts.total > 0 ? 'text-red-400' : 'text-purple-400'}`} />
-              <span className="text-xs text-slate-400">Parts</span>
+              <Wrench className={`w-4 h-4 ${activeAlerts.maintTotal > 0 ? 'text-red-400' : 'text-blue-400'}`} />
+              <span className="text-xs text-slate-400">Maintenance</span>
             </div>
-            <p className={`text-2xl font-bold ${activeAlerts.total > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-              {activeAlerts.total}
+            <p className={`text-2xl font-bold ${activeAlerts.maintTotal > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+              {activeAlerts.maintTotal}
             </p>
             <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
-              {activeAlerts.total === 0
-                ? (activeAlerts.snoozedCount > 0 ? `All clear · ${activeAlerts.snoozedCount} snoozed` : 'All clear')
-                : `${activeAlerts.parts.length} low/out · view details`}
-              {activeAlerts.total > 0 && <ChevronRight className="w-3 h-3" />}
+              {activeAlerts.maintTotal === 0
+                ? 'all current'
+                : `${activeAlerts.maintenance.length} due · ${activeAlerts.certs.length} certs`}
+              {activeAlerts.maintTotal > 0 && <ChevronRight className="w-3 h-3" />}
+            </p>
+          </button>
+
+          {/* Parts — Low / Out of Stock only (snooze-aware) */}
+          <button
+            onClick={() => setAlertModalView('parts')}
+            className={`bg-slate-800/60 rounded-xl border p-4 transition-colors text-left ${
+              activeAlerts.partsTotal > 0
+                ? 'border-red-500/40 hover:bg-red-500/10'
+                : 'border-slate-700/50 hover:bg-slate-800'
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <Package className={`w-4 h-4 ${activeAlerts.partsTotal > 0 ? 'text-red-400' : 'text-purple-400'}`} />
+              <span className="text-xs text-slate-400">Parts</span>
+            </div>
+            <p className={`text-2xl font-bold ${activeAlerts.partsTotal > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+              {activeAlerts.partsTotal}
+            </p>
+            <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
+              {activeAlerts.partsTotal === 0
+                ? 'all stocked'
+                : `${activeAlerts.partsTotal} low/out · view details`}
+              {activeAlerts.partsTotal > 0 && <ChevronRight className="w-3 h-3" />}
             </p>
           </button>
 
@@ -1542,11 +1575,20 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
           </div>
         </div>
 
-        {/* ═══════════ Total Alerts Modal ═══════════ */}
-        {showAlertsModal && (
+        {/* ═══════════ Alerts Modal (Maintenance OR Parts) ═══════════ */}
+        {alertModalView !== null && (() => {
+          const isMaint = alertModalView === 'maintenance';
+          const viewTotal = isMaint ? activeAlerts.maintTotal : activeAlerts.partsTotal;
+          // Snoozed count relevant to this view only
+          const viewSnoozed = isMaint
+            ? (componentStatus.dueMaintenance.length - activeAlerts.maintenance.length) +
+              (componentStatus.certAlerts.length - activeAlerts.certs.length)
+            : (componentStatus.lowStockParts.length - activeAlerts.parts.length);
+          const shownCount = isMaint ? filteredCount : activeAlerts.parts.length;
+          return (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-            onClick={() => setShowAlertsModal(false)}
+            onClick={() => setAlertModalView(null)}
           >
             <div
               className="bg-slate-900 rounded-2xl border border-slate-700 w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl"
@@ -1556,20 +1598,24 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
               <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/70">
                 <div className="flex items-center gap-3">
                   <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
-                    activeAlerts.total > 0 ? 'bg-red-500/15' : 'bg-emerald-500/15'
+                    viewTotal > 0 ? 'bg-red-500/15' : 'bg-emerald-500/15'
                   }`}>
-                    <AlertTriangle className={`w-5 h-5 ${activeAlerts.total > 0 ? 'text-red-400' : 'text-emerald-400'}`} />
+                    {isMaint
+                      ? <Wrench className={`w-5 h-5 ${viewTotal > 0 ? 'text-red-400' : 'text-emerald-400'}`} />
+                      : <Package className={`w-5 h-5 ${viewTotal > 0 ? 'text-red-400' : 'text-emerald-400'}`} />}
                   </div>
                   <div>
-                    <h2 className="text-base font-bold text-white">Parts &amp; Alerts</h2>
+                    <h2 className="text-base font-bold text-white">
+                      {isMaint ? 'Maintenance & SFI Certs' : 'Parts Stock'}
+                    </h2>
                     <p className="text-xs text-slate-400">
-                      {activeAlerts.total} item{activeAlerts.total === 1 ? '' : 's'} need attention
-                      {activeAlerts.snoozedCount > 0 && ` · ${activeAlerts.snoozedCount} snoozed`}
+                      {viewTotal} item{viewTotal === 1 ? '' : 's'} need attention
+                      {viewSnoozed > 0 && ` · ${viewSnoozed} snoozed`}
                     </p>
                   </div>
                 </div>
                 <button
-                  onClick={() => setShowAlertsModal(false)}
+                  onClick={() => setAlertModalView(null)}
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
                   aria-label="Close"
                 >
@@ -1579,69 +1625,71 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
 
               {/* Modal Body */}
               <div className="p-6 overflow-y-auto space-y-5">
-                {componentStatus.totalAlerts === 0 ? (
-
+                {viewTotal === 0 ? (
                   <div className="text-center py-10">
                     <div className="w-14 h-14 rounded-full bg-emerald-500/15 flex items-center justify-center mx-auto mb-3">
                       <CheckSquare className="w-7 h-7 text-emerald-400" />
                     </div>
                     <p className="text-sm font-medium text-white">All clear</p>
-                    <p className="text-xs text-slate-400 mt-1">No maintenance, certification, or stock alerts right now.</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {isMaint
+                        ? 'No maintenance or certification alerts right now.'
+                        : 'No low or out of stock parts right now.'}
+                    </p>
                   </div>
                 ) : (
                   <>
-                    {/* Filter toggle buttons */}
-                    <div className="flex flex-wrap items-center gap-1.5 -mt-1">
-                      {([
-                        { id: 'all', label: 'All', count: activeAlerts.total },
-                        { id: 'maintenance', label: 'Maintenance', count: activeAlerts.maintenance.length },
-                        { id: 'certs', label: 'SFI Certs', count: activeAlerts.certs.length },
-                        { id: 'parts', label: 'Parts', count: activeAlerts.parts.length },
-                      ] as const).map((f) => (
-                        <button
-                          key={f.id}
-                          onClick={() => setAlertFilter(f.id)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                            alertFilter === f.id
-                              ? 'bg-blue-600 border-blue-500 text-white'
-                              : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white'
-                          }`}
-                        >
-                          {f.label}
-                          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                            alertFilter === f.id ? 'bg-white/20 text-white' : 'bg-slate-900 text-slate-400'
-                          }`}>{f.count}</span>
-                        </button>
-                      ))}
-                    </div>
+                    {/* Filter toggle buttons — maintenance view only */}
+                    {isMaint && (
+                      <div className="flex flex-wrap items-center gap-1.5 -mt-1">
+                        {([
+                          { id: 'all', label: 'All', count: activeAlerts.maintTotal },
+                          { id: 'maintenance', label: 'Maintenance', count: activeAlerts.maintenance.length },
+                          { id: 'certs', label: 'SFI Certs', count: activeAlerts.certs.length },
+                        ] as const).map((f) => (
+                          <button
+                            key={f.id}
+                            onClick={() => setAlertFilter(f.id)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                              alertFilter === f.id
+                                ? 'bg-blue-600 border-blue-500 text-white'
+                                : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white'
+                            }`}
+                          >
+                            {f.label}
+                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                              alertFilter === f.id ? 'bg-white/20 text-white' : 'bg-slate-900 text-slate-400'
+                            }`}>{f.count}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
 
                     <p className="text-[11px] text-slate-400 flex items-center gap-1.5 flex-wrap">
                       <Users className="w-3.5 h-3.5 text-slate-500" />
-                      Showing <span className="text-slate-200 font-semibold">{filteredCount}</span> alert{filteredCount === 1 ? '' : 's'}.
+                      Showing <span className="text-slate-200 font-semibold">{shownCount}</span> alert{shownCount === 1 ? '' : 's'}.
                       Assign a crew member, snooze items handled later, then print the sign-off punch list.
-                      {activeAlerts.snoozedCount > 0 && (
+                      {viewSnoozed > 0 && (
                         <span className="inline-flex items-center gap-1 text-indigo-300">
-                          <BellOff className="w-3 h-3" />{activeAlerts.snoozedCount} snoozed
+                          <BellOff className="w-3 h-3" />{viewSnoozed} snoozed
                         </span>
                       )}
                     </p>
 
-                    {filteredCount === 0 && (
+                    {isMaint && shownCount === 0 && (
                       <div className="text-center py-8">
                         <div className="w-12 h-12 rounded-full bg-emerald-500/15 flex items-center justify-center mx-auto mb-2">
                           <CheckSquare className="w-6 h-6 text-emerald-400" />
                         </div>
                         <p className="text-sm font-medium text-white">Nothing to show</p>
                         <p className="text-xs text-slate-400 mt-1">
-                          {activeAlerts.snoozedCount > 0
-                            ? 'All matching alerts are snoozed for now.'
-                            : 'No alerts match this filter.'}
+                          {viewSnoozed > 0 ? 'All matching alerts are snoozed for now.' : 'No alerts match this filter.'}
                         </p>
                       </div>
                     )}
 
-                    {/* Maintenance Due */}
-                    {(alertFilter === 'all' || alertFilter === 'maintenance') && activeAlerts.maintenance.length > 0 && (
+                    {/* Maintenance Due — maintenance view */}
+                    {isMaint && (alertFilter === 'all' || alertFilter === 'maintenance') && activeAlerts.maintenance.length > 0 && (
                       <div>
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
@@ -1652,7 +1700,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                             </span>
                           </div>
                           <button
-                            onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
+                            onClick={() => { setAlertModalView(null); onNavigate('maintenance'); }}
                             className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1"
                           >
                             Go to Maintenance <ChevronRight className="w-3 h-3" />
@@ -1667,7 +1715,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                                 className="flex items-center gap-2 p-3 rounded-lg bg-slate-800/60 border border-slate-700/40"
                               >
                                 <button
-                                  onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
+                                  onClick={() => { setAlertModalView(null); onNavigate('maintenance'); }}
                                   className="min-w-0 flex-1 text-left hover:opacity-80 transition-opacity"
                                 >
                                   <p className="text-xs font-medium text-white truncate">{m.component || 'Maintenance Item'}</p>
@@ -1693,8 +1741,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                       </div>
                     )}
 
-                    {/* Expired Certifications */}
-                    {(alertFilter === 'all' || alertFilter === 'certs') && activeAlerts.certs.length > 0 && (
+                    {/* SFI Certifications — maintenance view */}
+                    {isMaint && (alertFilter === 'all' || alertFilter === 'certs') && activeAlerts.certs.length > 0 && (
                       <div>
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
@@ -1705,7 +1753,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                             </span>
                           </div>
                           <button
-                            onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
+                            onClick={() => { setAlertModalView(null); onNavigate('maintenance'); }}
                             className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1"
                           >
                             View Certs <ChevronRight className="w-3 h-3" />
@@ -1720,7 +1768,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                                 className="flex items-center gap-2 p-3 rounded-lg bg-slate-800/60 border border-slate-700/40"
                               >
                                 <button
-                                  onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
+                                  onClick={() => { setAlertModalView(null); onNavigate('maintenance'); }}
                                   className="min-w-0 flex-1 text-left hover:opacity-80 transition-opacity"
                                 >
                                   <p className="text-xs font-medium text-white truncate">{c.item}</p>
@@ -1750,8 +1798,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                       </div>
                     )}
 
-                    {/* Low / Out of Stock Parts */}
-                    {(alertFilter === 'all' || alertFilter === 'parts') && activeAlerts.parts.length > 0 && (
+                    {/* Low / Out of Stock Parts — parts view */}
+                    {!isMaint && activeAlerts.parts.length > 0 && (
                       <div>
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
@@ -1762,7 +1810,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                             </span>
                           </div>
                           <button
-                            onClick={() => { setShowAlertsModal(false); onNavigate('parts'); }}
+                            onClick={() => { setAlertModalView(null); onNavigate('parts'); }}
                             className="text-[10px] text-orange-400 hover:text-orange-300 flex items-center gap-1"
                           >
                             Go to Parts <ChevronRight className="w-3 h-3" />
@@ -1777,7 +1825,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                                 className="flex items-center gap-2 p-3 rounded-lg bg-slate-800/60 border border-slate-700/40"
                               >
                                 <button
-                                  onClick={() => { setShowAlertsModal(false); onNavigate('parts'); }}
+                                  onClick={() => { setAlertModalView(null); onNavigate('parts'); }}
                                   className="min-w-0 flex-1 text-left hover:opacity-80 transition-opacity"
                                 >
                                   <p className="text-xs font-medium text-white truncate">{p.name || p.description}</p>
@@ -1832,7 +1880,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                   </button>
                 </div>
                 <button
-                  onClick={() => setShowAlertsModal(false)}
+                  onClick={() => setAlertModalView(null)}
                   className="px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors text-xs font-medium"
                 >
                   Close
@@ -1840,7 +1888,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* ═══════════ To Do Items Modal ═══════════ */}
         {showTodoModal && (

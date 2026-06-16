@@ -1078,7 +1078,33 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                     placeholder="e.g., 5"
                   />
+                  {/* Live helper: explains exactly when this item will switch to "Due Soon" */}
+                  {(() => {
+                    const interval = newMaintenance.passInterval || 0;
+                    const remaining = interval - (newMaintenance.currentPasses || 0);
+                    const threshold = newMaintenance.threshold ?? 0;
+                    // Use the canonical status function so the helper matches actual behavior.
+                    const liveStatus = calculateMaintenanceStatus(newMaintenance);
+                    const statusColor =
+                      liveStatus === 'Overdue' ? 'text-red-400' :
+                      liveStatus === 'Due' ? 'text-orange-400' :
+                      liveStatus === 'Due Soon' ? 'text-yellow-400' :
+                      'text-green-400';
+                    return (
+                      <p className="mt-1.5 text-xs text-slate-400 leading-relaxed">
+                        Alerts when{' '}
+                        <span className="text-cyan-300 font-medium">{threshold} pass{threshold === 1 ? '' : 'es'}</span>{' '}
+                        remain — currently{' '}
+                        <span className={`font-medium ${remaining <= 0 ? 'text-red-400' : 'text-white'}`}>
+                          {remaining} remaining
+                        </span>
+                        {', '}
+                        <span className={`font-semibold ${statusColor}`}>{liveStatus}</span>
+                      </p>
+                    );
+                  })()}
                 </div>
+
               </div>
 
               

@@ -367,14 +367,29 @@ export const getDueSoonMaintenanceItems = () => maintenanceItems.filter(m => m.s
 
 export const calculateMaintenanceStatus = (item: MaintenanceItem): MaintenanceItem['status'] => {
   const remaining = item.nextServicePasses - item.currentPasses;
+
+  // ── Per-item alert threshold (number of passes REMAINING before alert) ──
+  // When the user configures `threshold`, the item must stay "Good" until the
+  // remaining passes drop to/under that number. Only then does it become
+  // "Due Soon", and only "Overdue" once the service interval is reached/passed.
+  // This makes the configured threshold the single source of truth for when an
+  // alert (Due Soon / dashboard / bell) is allowed to appear for this item.
+  if (item.threshold != null && item.threshold >= 0) {
+    if (remaining <= 0) return 'Overdue';
+    if (remaining <= item.threshold) return 'Due Soon';
+    return 'Good';
+  }
+
+  // ── Fallback: percentage-based status for items with no custom threshold ──
   const interval = item.passInterval;
-  const percentage = (remaining / interval) * 100;
-  
+  const percentage = interval > 0 ? (remaining / interval) * 100 : 0;
+
   if (remaining <= 0) return 'Overdue';
   if (percentage <= 10) return 'Due';
   if (percentage <= 25) return 'Due Soon';
   return 'Good';
 };
+
 
 export const calculateSFIStatus = (cert: SFICertification): SFICertification['status'] => {
   if (cert.daysUntilExpiration <= 0) return 'Expired';
