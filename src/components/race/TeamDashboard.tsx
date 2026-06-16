@@ -750,7 +750,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
         </div>
 
         {/* ═══════════ Quick Stats Row ═══════════ */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
           <button onClick={() => onNavigate('passlog')} className="bg-slate-800/60 rounded-xl border border-slate-700/50 p-4 hover:bg-slate-800 transition-colors text-left group">
             <div className="flex items-center gap-2 mb-2">
               <Gauge className="w-4 h-4 text-green-400" />
@@ -784,20 +784,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             <p className="text-[10px] text-slate-500 mt-1">items due</p>
           </button>
 
-
-
-
-          <button onClick={() => onNavigate('parts')} className="bg-slate-800/60 rounded-xl border border-slate-700/50 p-4 hover:bg-slate-800 transition-colors text-left">
-            <div className="flex items-center gap-2 mb-2">
-              <Package className="w-4 h-4 text-purple-400" />
-              <span className="text-xs text-slate-400">Low Stock</span>
-            </div>
-            <p className={`text-2xl font-bold ${componentStatus.lowStockParts.length > 0 ? 'text-orange-400' : 'text-white'}`}>
-              {componentStatus.lowStockParts.length}
-            </p>
-            <p className="text-[10px] text-slate-500 mt-1">parts low/out</p>
-          </button>
-
+          {/* Parts — combined Low Stock + Total Alerts card */}
           <button
             onClick={() => setShowAlertsModal(true)}
             className={`bg-slate-800/60 rounded-xl border p-4 transition-colors text-left ${
@@ -807,14 +794,16 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             }`}
           >
             <div className="flex items-center gap-2 mb-2">
-              <AlertTriangle className="w-4 h-4 text-red-400" />
-              <span className="text-xs text-slate-400">Total Alerts</span>
+              <Package className={`w-4 h-4 ${componentStatus.totalAlerts > 0 ? 'text-red-400' : 'text-purple-400'}`} />
+              <span className="text-xs text-slate-400">Parts</span>
             </div>
             <p className={`text-2xl font-bold ${componentStatus.totalAlerts > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
               {componentStatus.totalAlerts}
             </p>
             <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
-              {componentStatus.totalAlerts === 0 ? 'All clear' : 'view details'}
+              {componentStatus.totalAlerts === 0
+                ? 'All clear'
+                : `${componentStatus.lowStockParts.length} low/out · view details`}
               {componentStatus.totalAlerts > 0 && <ChevronRight className="w-3 h-3" />}
             </p>
           </button>
@@ -1342,7 +1331,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                     <AlertTriangle className={`w-5 h-5 ${componentStatus.totalAlerts > 0 ? 'text-red-400' : 'text-emerald-400'}`} />
                   </div>
                   <div>
-                    <h2 className="text-base font-bold text-white">Total Alerts</h2>
+                    <h2 className="text-base font-bold text-white">Parts &amp; Alerts</h2>
                     <p className="text-xs text-slate-400">
                       {componentStatus.totalAlerts} item{componentStatus.totalAlerts === 1 ? '' : 's'} need attention
                     </p>
