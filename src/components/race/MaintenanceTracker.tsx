@@ -31,7 +31,8 @@ import {
   X,
   Package,
   History,
-  BookOpen
+  BookOpen,
+  Download
 } from 'lucide-react';
 
 
@@ -316,6 +317,78 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
       await deleteSFICertification(id);
     }
   };
+
+  // ============ EXPORT SFI CERTIFICATIONS TO CSV ============
+  // Builds a tech-inspection-ready CSV of every certification, including the
+  // effective alert thresholds (custom per-cert overrides or global fallback).
+  const handleExportSFICSV = () => {
+    if (sortedCertifications.length === 0) {
+      alert('There are no SFI certifications to export.');
+      return;
+    }
+
+    const escapeCsv = (val: unknown): string => {
+      const s = val === null || val === undefined ? '' : String(val);
+      // Quote fields containing comma, quote, or newline; escape inner quotes.
+      if (/[",\n\r]/.test(s)) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    };
+
+    const formatThresholds = (cert: SFICertification): string => {
+      const effective = getEffectiveThresholdsForCert(cert, globalEnabledThresholds);
+      if (effective.length === 0) return 'None';
+      return effective
+        .map(t => `${t.days <= 0 ? 'Expired' : `${t.days}d`} (${t.severity})`)
+        .join('; ');
+    };
+
+    const headers = [
+      'Item',
+      'SFI Spec',
+      'Vendor',
+      'Serial Number',
+      'Certification Date',
+      'Expiration Date',
+      'Days Remaining',
+      'Status',
+      'Alert Threshold Source',
+      'Effective Alert Thresholds',
+      'Notes',
+    ];
+
+    const rows = sortedCertifications.map(cert => {
+      const isCustom = !!(cert.alertThresholdDays && cert.alertThresholdDays.length > 0);
+      return [
+        cert.item,
+        cert.sfiSpec,
+        cert.vendor,
+        cert.serialNumber,
+        cert.certificationDate,
+        cert.expirationDate,
+        cert.daysUntilExpiration <= 0 ? 'EXPIRED' : cert.daysUntilExpiration,
+        cert.status,
+        isCustom ? 'Custom' : 'Global',
+        formatThresholds(cert),
+        cert.notes || '',
+      ].map(escapeCsv).join(',');
+    });
+
+    const csvContent = [headers.map(escapeCsv).join(','), ...rows].join('\r\n');
+
+    // Prepend UTF-8 BOM so Excel correctly renders special characters.
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sfi-certifications-${getLocalDateString()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -657,8 +730,17 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
         {activeTab === 'sfi' && (
           <>
-            {/* Add SFI Button */}
-            <div className="flex justify-end mb-6">
+            {/* Export CSV + Add SFI Buttons */}
+            <div className="flex flex-wrap justify-end gap-3 mb-6">
+              <button
+                onClick={handleExportSFICSV}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-white rounded-lg font-medium hover:bg-slate-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={sortedCertifications.length === 0}
+                title="Export all certifications to a CSV file for tech-inspection records"
+              >
+                <Download className="w-4 h-4" />
+                Export CSV
+              </button>
               <button
                 onClick={() => {
                   setEditingSFI(null);
