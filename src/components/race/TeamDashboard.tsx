@@ -18,7 +18,11 @@ import { fetchToDoItems, ToDoItem } from '@/lib/database';
 import { parseLocalDate } from '@/lib/utils';
 import { calculateMaintenanceStatus } from '@/data/proModData';
 import { checkSFIAlerts, loadSFIAlertSettings } from '@/lib/sfiAlerts';
-import { checkMaintenanceAlerts, loadAlertSettings } from '@/lib/maintenanceAlerts';
+// NOTE: The global percentage-based maintenance alert system
+// (checkMaintenanceAlerts) is intentionally NOT used here. Maintenance "due"
+// status is derived solely from each item's threshold-aware computed status via
+// calculateMaintenanceStatus, matching the Maintenance page and the nav bell.
+
 
 
 
@@ -305,47 +309,20 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
 
     const lowStockParts = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
 
-    // ── Maintenance alerts ──
-    // Recompute each item's status from its current pass counts + per-item
-    // threshold so stale stored statuses can't trigger early/false alerts.
-    const itemsWithStatus = maintenanceItems.map(m => ({
-      ...m,
-      status: calculateMaintenanceStatus(m),
-    }));
+    // ── Maintenance alerts (CANONICAL RULE) ──
+    // An item is "due" ONLY when its threshold-aware computed status leaves
+    // "Good". This matches the Maintenance page badges, the nav bell
+    // (alertDetails.ts) and the login popup EXACTLY.
+    //
+    // The legacy GLOBAL percentage threshold check (80/90/100% used) has been
+    // intentionally REMOVED here: it was flagging items as "due" (e.g. an item
+    // at 80% used / 8 passes remaining) that the Maintenance page still showed
+    // as "Good", which is exactly the disconnect being reported. Per product
+    // rule, NO alert may appear unless an item's own threshold has been reached.
+    const dueMaintenance = maintenanceItems
+      .map(m => ({ ...m, status: calculateMaintenanceStatus(m) }))
+      .filter(m => m.status === 'Due Soon' || m.status === 'Due' || m.status === 'Overdue');
 
-    // Items that DEFINE a per-item threshold are governed SOLELY by that
-    // threshold: they may only alert once their computed status leaves "Good"
-    // (i.e. remaining passes have dropped to/under the configured threshold).
-    // The global percentage-based alert system is NOT applied to them.
-    const thresholdItems = itemsWithStatus.filter(m => m.threshold != null && m.threshold >= 0);
-    const thresholdDue = thresholdItems.filter(m => m.status !== 'Good');
-
-    // Items WITHOUT a per-item threshold keep the legacy behavior: Due/Overdue
-    // by computed status, plus the configurable global percentage thresholds.
-    const noThresholdItems = itemsWithStatus.filter(m => !(m.threshold != null && m.threshold >= 0));
-    const dueMaintenanceBase = noThresholdItems.filter(m => m.status === 'Due' || m.status === 'Overdue');
-
-    let dueMaintenance = [...thresholdDue, ...dueMaintenanceBase];
-    try {
-      const alertSettings = loadAlertSettings();
-      if (alertSettings.enabled && alertSettings.showBellAlerts) {
-        // Only run the global percentage check against items WITHOUT a custom
-        // threshold, so configured thresholds are never overridden.
-        const thresholdAlerts = checkMaintenanceAlerts(noThresholdItems, alertSettings);
-        const seen = new Set(dueMaintenance.map(m => m.id));
-        thresholdAlerts
-          .filter(a => !seen.has(a.maintenanceItemId))
-          .forEach(a => {
-            const item = noThresholdItems.find(m => m.id === a.maintenanceItemId);
-            if (item) {
-              seen.add(item.id);
-              dueMaintenance.push({ ...item, status: (item.status === 'Overdue' ? 'Overdue' : 'Due') as any });
-            }
-          });
-      }
-    } catch (err) {
-      console.warn('[TeamDashboard] maintenance threshold check failed:', err);
-    }
 
 
     // ── SFI certs: expired (days <= 0) PLUS configurable "expiring soon"
