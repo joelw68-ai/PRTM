@@ -8,8 +8,9 @@ import DateInputDark from '@/components/ui/DateInputDark';
 import { useApp } from '@/contexts/AppContext';
 import { CrewRole } from '@/lib/permissions';
 import { MaintenanceItem, SFICertification, calculateMaintenanceStatus } from '@/data/proModData';
+import { loadSFIAlertSettings, getEffectiveThresholdsForCert } from '@/lib/sfiAlerts';
 import MaintenanceTemplates from './MaintenanceTemplates';
-import TireTracking from './TireTracking';
+
 import CompleteMaintenanceModal, {
   MaintenanceHistoryEntry,
   loadMaintenanceHistory
@@ -30,8 +31,7 @@ import {
   X,
   Package,
   History,
-  BookOpen,
-  Circle
+  BookOpen
 } from 'lucide-react';
 
 
@@ -64,7 +64,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
 
   
-  const [activeTab, setActiveTab] = useState<'maintenance' | 'sfi' | 'templates' | 'tires'>('maintenance');
+  const [activeTab, setActiveTab] = useState<'maintenance' | 'sfi' | 'templates'>('maintenance');
 
 
 
@@ -140,6 +140,15 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   const sortedCertifications = [...filteredSfiCertifications].sort((a, b) => 
     a.daysUntilExpiration - b.daysUntilExpiration
   );
+
+  // Global SFI alert thresholds (enabled only), used to display the effective
+  // alert threshold on every certification card — including those that fall
+  // back to the global thresholds (no per-cert custom override).
+  const globalEnabledThresholds = useMemo(() => {
+    const settings = loadSFIAlertSettings();
+    return settings.thresholds.filter(t => t.enabled).sort((a, b) => a.days - b.days);
+  }, []);
+
 
 
   // Default new maintenance item
@@ -384,18 +393,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
             <BookOpen className="w-4 h-4" />
             Templates
           </button>
-
-          <button
-            onClick={() => setActiveTab('tires')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === 'tires' 
-                ? 'bg-orange-500 text-white' 
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            <Circle className="w-4 h-4" />
-            Wheels & Tires
-          </button>
+        
         </div>
 
 
@@ -761,6 +759,43 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                         {cert.daysUntilExpiration <= 0 ? 'EXPIRED' : cert.daysUntilExpiration}
                       </span>
                     </div>
+
+                    {/* Alert Threshold — shown on EVERY cert (custom override or global fallback) */}
+                    {(() => {
+                      const effective = getEffectiveThresholdsForCert(cert, globalEnabledThresholds);
+                      const isCustom = !!(cert.alertThresholdDays && cert.alertThresholdDays.length > 0);
+                      return (
+                        <div className="pt-2 border-t border-slate-700">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-slate-400 flex items-center gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5 text-cyan-400" />
+                              Alert Threshold
+                            </span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${isCustom ? 'bg-cyan-500/15 text-cyan-300' : 'bg-slate-700/60 text-slate-400'}`}>
+                              {isCustom ? 'Custom' : 'Global'}
+                            </span>
+                          </div>
+                          {effective.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {effective.map((t, i) => {
+                                const cls = t.severity === 'critical'
+                                  ? 'bg-red-500/15 text-red-300 border-red-500/40'
+                                  : t.severity === 'warning'
+                                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                                    : 'bg-blue-500/15 text-blue-300 border-blue-500/40';
+                                return (
+                                  <span key={`${t.days}-${i}`} className={`px-2 py-0.5 rounded text-[11px] border ${cls}`}>
+                                    {t.days <= 0 ? 'Expired' : `${t.days}d`}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-slate-500 italic">No alert thresholds configured</p>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                   
                   {cert.notes && (
@@ -779,9 +814,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
           <MaintenanceTemplates onApplyTemplate={() => setActiveTab('maintenance')} />
         )}
 
-        {activeTab === 'tires' && (
-          <TireTracking />
-        )}
+
       </div>
 
 

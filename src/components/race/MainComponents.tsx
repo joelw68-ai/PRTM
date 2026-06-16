@@ -8,6 +8,7 @@ import { CrewRole } from '@/lib/permissions';
 import { DrivetrainComponent, DrivetrainCategory, ComponentPart, ComponentExtraFieldsRecord, checkComponentPartsSchema, didLastComponentPartsFetchHitSchemaCache } from '@/lib/database';
 import * as db from '@/lib/database';
 import RebuildWizard from './RebuildWizard';
+import TireSetLifecycleLog from './TireSetLifecycleLog';
 
 
 
@@ -1596,6 +1597,11 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
 
             {/* Standalone Parts List */}
             {renderPartsList(data.id)}
+
+            {/* Tire/Wheel Set Usage & Lifecycle Log (rear tires & wheels only) */}
+            {tab === 'rearTiresWheels' && (
+              <TireSetLifecycleLog componentId={data.id} currentPasses={data.totalPasses} />
+            )}
           </div>
         )}
       </div>
