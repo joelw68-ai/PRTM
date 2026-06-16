@@ -10,8 +10,12 @@ import {
   Radio, Users, ClipboardList, Wrench, Gauge, Activity,
   Zap, CheckSquare, AlertTriangle, Package,
   RefreshCw, Loader2, Circle, Wifi, Eye, ChevronDown, ChevronUp,
-  ArrowRight, Cog, RotateCcw, Flame, X, ShieldCheck, ChevronRight, Download, Printer
+  ArrowRight, Cog, RotateCcw, Flame, X, ShieldCheck, ChevronRight, Download, Printer,
+  ListTodo, Clock, Calendar, Flag
 } from 'lucide-react';
+import { fetchToDoItems, ToDoItem } from '@/lib/database';
+import { parseLocalDate } from '@/lib/utils';
+
 
 
 
@@ -68,6 +72,10 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
   const [pulsePass, setPulsePass] = useState(false);
   const [pulseChecklist, setPulseChecklist] = useState(false);
   const [pulseMaintenance, setPulseMaintenance] = useState(false);
+
+  const [todoItems, setTodoItems] = useState<ToDoItem[]>([]);
+  const [showTodoModal, setShowTodoModal] = useState(false);
+
 
   const channelRef = useRef<any>(null);
   const presenceChannelRef = useRef<any>(null);
@@ -295,6 +303,70 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
   const displayedActivity = useMemo(() => {
     return showAllActivity ? activityFeed.slice(0, 30) : activityFeed.slice(0, 8);
   }, [activityFeed, showAllActivity]);
+
+  // ── Load open To Do items (skip completed/archived) ──
+  const loadTodos = useCallback(async () => {
+    if (isDemoMode) return;
+    try {
+      const items = await fetchToDoItems(effectiveUserId || user?.id);
+      if (mountedRef.current) setTodoItems(items || []);
+    } catch (err) {
+      console.warn('[TeamDashboard] Failed to fetch to-do items:', err);
+    }
+  }, [isDemoMode, effectiveUserId, user?.id]);
+
+  useEffect(() => {
+    loadTodos();
+  }, [loadTodos]);
+
+  // Refresh todos when the realtime "Refresh" handler fires (lightweight)
+  useEffect(() => {
+    if (!isDemoMode && effectiveUserId) {
+      const todoChannel = supabase
+        .channel('team-dashboard-todos')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'todo_items' }, () => {
+          loadTodos();
+        })
+        .subscribe();
+      return () => { supabase.removeChannel(todoChannel); };
+    }
+  }, [isDemoMode, effectiveUserId, loadTodos]);
+
+  // ── Compute open / overdue To Do stats ──
+  const todoStats = useMemo(() => {
+    const isItemOverdue = (dueDate?: string) => {
+      if (!dueDate) return false;
+      const due = parseLocalDate(dueDate);
+      const now = new Date();
+      return due < now && due.toDateString() !== now.toDateString();
+    };
+
+    const open = todoItems.filter(
+      (i) => !i.isArchived && i.status !== 'Completed'
+    );
+    const withOverdue = open.map((i) => ({ item: i, overdue: isItemOverdue(i.dueDate) }));
+    const overdue = withOverdue.filter((x) => x.overdue);
+    const urgent = open.filter((i) => i.priority === 'Urgent');
+
+    const priorityRank: Record<string, number> = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
+    // Sort: overdue first, then due date, then priority
+    const sorted = [...withOverdue].sort((a, b) => {
+      if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
+      const da = a.item.dueDate ? parseLocalDate(a.item.dueDate).getTime() : Infinity;
+      const db = b.item.dueDate ? parseLocalDate(b.item.dueDate).getTime() : Infinity;
+      if (da !== db) return da - db;
+      return (priorityRank[a.item.priority] ?? 9) - (priorityRank[b.item.priority] ?? 9);
+    });
+
+    return {
+      open: open.length,
+      overdueCount: overdue.length,
+      urgentCount: urgent.length,
+      sorted,
+      isItemOverdue,
+    };
+  }, [todoItems]);
+
 
   // ── Export all current alerts to CSV (crew pre-race prep records) ──
   const handleExportAlertsCSV = useCallback(() => {
@@ -707,7 +779,43 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
               {componentStatus.totalAlerts > 0 && <ChevronRight className="w-3 h-3" />}
             </p>
           </button>
+
+          {/* To Do Items — overdue emphasized */}
+          <button
+            onClick={() => setShowTodoModal(true)}
+            className={`bg-slate-800/60 rounded-xl border p-4 transition-colors text-left ${
+              todoStats.overdueCount > 0
+                ? 'border-red-500/40 hover:bg-red-500/10'
+                : todoStats.open > 0
+                  ? 'border-orange-500/30 hover:bg-slate-800'
+                  : 'border-slate-700/50 hover:bg-slate-800'
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <ListTodo className="w-4 h-4 text-orange-400" />
+              <span className="text-xs text-slate-400">To Do</span>
+            </div>
+            <p className={`text-2xl font-bold ${
+              todoStats.overdueCount > 0 ? 'text-red-400' : todoStats.open > 0 ? 'text-white' : 'text-emerald-400'
+            }`}>
+              {todoStats.open}
+            </p>
+            <p className="text-[10px] mt-1 flex items-center gap-1">
+              {todoStats.overdueCount > 0 ? (
+                <span className="text-red-400 font-semibold flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" />
+                  {todoStats.overdueCount} overdue
+                </span>
+              ) : todoStats.open > 0 ? (
+                <span className="text-slate-500">open tasks</span>
+              ) : (
+                <span className="text-slate-500">all done</span>
+              )}
+              {todoStats.open > 0 && <ChevronRight className="w-3 h-3 text-slate-500" />}
+            </p>
+          </button>
         </div>
+
 
         {/* ═══════════ Main Grid ═══════════ */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1375,6 +1483,140 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             </div>
           </div>
         )}
+
+        {/* ═══════════ To Do Items Modal ═══════════ */}
+        {showTodoModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            onClick={() => setShowTodoModal(false)}
+          >
+            <div
+              className="bg-slate-900 rounded-2xl border border-slate-700 w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/70">
+                <div className="flex items-center gap-3">
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+                    todoStats.overdueCount > 0 ? 'bg-red-500/15' : todoStats.open > 0 ? 'bg-orange-500/15' : 'bg-emerald-500/15'
+                  }`}>
+                    <ListTodo className={`w-5 h-5 ${
+                      todoStats.overdueCount > 0 ? 'text-red-400' : todoStats.open > 0 ? 'text-orange-400' : 'text-emerald-400'
+                    }`} />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-white">To Do List</h2>
+                    <p className="text-xs text-slate-400">
+                      {todoStats.open} open task{todoStats.open === 1 ? '' : 's'}
+                      {todoStats.overdueCount > 0 && (
+                        <span className="text-red-400 font-medium"> · {todoStats.overdueCount} overdue</span>
+                      )}
+                      {todoStats.urgentCount > 0 && (
+                        <span className="text-orange-400 font-medium"> · {todoStats.urgentCount} urgent</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowTodoModal(false)}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                  aria-label="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 overflow-y-auto space-y-1.5">
+                {isDemoMode ? (
+                  <div className="text-center py-10">
+                    <ListTodo className="w-10 h-10 text-slate-600 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-white">Sign in to track tasks</p>
+                    <p className="text-xs text-slate-400 mt-1">The To Do List requires an account to sync tasks.</p>
+                  </div>
+                ) : todoStats.open === 0 ? (
+                  <div className="text-center py-10">
+                    <div className="w-14 h-14 rounded-full bg-emerald-500/15 flex items-center justify-center mx-auto mb-3">
+                      <CheckSquare className="w-7 h-7 text-emerald-400" />
+                    </div>
+                    <p className="text-sm font-medium text-white">No open tasks</p>
+                    <p className="text-xs text-slate-400 mt-1">Everything on the to-do list is complete.</p>
+                  </div>
+                ) : (
+                  todoStats.sorted.map(({ item, overdue }) => {
+                    const priorityColor =
+                      item.priority === 'Urgent' ? 'bg-red-500/20 text-red-400' :
+                      item.priority === 'High' ? 'bg-orange-500/20 text-orange-400' :
+                      item.priority === 'Medium' ? 'bg-yellow-500/20 text-yellow-400' :
+                      'bg-green-500/20 text-green-400';
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => { setShowTodoModal(false); onNavigate('todo'); }}
+                        className={`w-full flex items-center justify-between p-3 rounded-lg border transition-colors text-left ${
+                          overdue
+                            ? 'bg-red-500/5 border-red-500/30 hover:bg-red-500/10'
+                            : 'bg-slate-800/60 border-slate-700/40 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            {overdue && <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />}
+                            <p className="text-xs font-medium text-white truncate">{item.title}</p>
+                          </div>
+                          <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-400">
+                            <span className="flex items-center gap-1"><Flag className="w-3 h-3" />{item.category || 'General'}</span>
+                            {item.assignedTo && (
+                              <span className="flex items-center gap-1"><Users className="w-3 h-3" />{item.assignedTo}</span>
+                            )}
+                            {item.dueDate && (
+                              <span className={`flex items-center gap-1 ${overdue ? 'text-red-400 font-semibold' : ''}`}>
+                                {overdue ? <Clock className="w-3 h-3" /> : <Calendar className="w-3 h-3" />}
+                                {(() => {
+                                  const due = parseLocalDate(item.dueDate);
+                                  const today = new Date();
+                                  const diffDays = Math.round((due.getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) / 86400000);
+                                  if (overdue) return `${Math.abs(diffDays)}d overdue`;
+                                  if (diffDays === 0) return 'Due today';
+                                  if (diffDays === 1) return 'Due tomorrow';
+                                  return `Due in ${diffDays}d`;
+                                })()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${priorityColor}`}>{item.priority}</span>
+                          {item.status === 'In Progress' && (
+                            <span className="text-[10px] px-2 py-0.5 rounded font-medium bg-blue-500/20 text-blue-400">In Progress</span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-3 border-t border-slate-700/70 flex items-center justify-between gap-2">
+                <button
+                  onClick={() => { setShowTodoModal(false); onNavigate('todo'); }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-orange-600 text-white hover:bg-orange-500 transition-colors text-xs font-medium"
+                >
+                  <ListTodo className="w-4 h-4" />
+                  Open To Do List
+                </button>
+                <button
+                  onClick={() => setShowTodoModal(false)}
+                  className="px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors text-xs font-medium"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );
