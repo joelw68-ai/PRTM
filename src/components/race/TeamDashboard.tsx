@@ -10,7 +10,7 @@ import {
   Radio, Users, ClipboardList, Wrench, Gauge, Activity,
   Zap, CheckSquare, AlertTriangle, Package,
   RefreshCw, Loader2, Circle, Wifi, Eye, ChevronDown, ChevronUp,
-  ArrowRight, Cog, RotateCcw, Flame
+  ArrowRight, Cog, RotateCcw, Flame, X, ShieldCheck, ChevronRight, Download, Printer
 } from 'lucide-react';
 
 
@@ -64,6 +64,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
   const [lastRealtimeEvent, setLastRealtimeEvent] = useState<Date | null>(null);
   const [showAllPasses, setShowAllPasses] = useState(false);
   const [showAllActivity, setShowAllActivity] = useState(false);
+  const [showAlertsModal, setShowAlertsModal] = useState(false);
   const [pulsePass, setPulsePass] = useState(false);
   const [pulseChecklist, setPulseChecklist] = useState(false);
   const [pulseMaintenance, setPulseMaintenance] = useState(false);
@@ -295,6 +296,216 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
     return showAllActivity ? activityFeed.slice(0, 30) : activityFeed.slice(0, 8);
   }, [activityFeed, showAllActivity]);
 
+  // ── Export all current alerts to CSV (crew pre-race prep records) ──
+  const handleExportAlertsCSV = useCallback(() => {
+    const escape = (val: any) => {
+      const s = val === null || val === undefined ? '' : String(val);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const headers = ['Alert Type', 'Item Name', 'Status', 'Days Remaining / Overdue', 'Recommended Action'];
+    const rows: string[][] = [];
+
+    // Maintenance Due
+    componentStatus.dueMaintenance.forEach((m) => {
+      rows.push([
+        'Maintenance',
+        m.component || 'Maintenance Item',
+        m.status || 'Due',
+        m.status === 'Overdue' ? 'Overdue' : 'Due now',
+        m.status === 'Overdue'
+          ? `Service ${m.component || 'item'} immediately before running`
+          : `Perform scheduled service on ${m.component || 'item'}`,
+      ]);
+    });
+
+    // Expired SFI Certifications
+    componentStatus.expiredCerts.forEach((c) => {
+      const days = c.daysUntilExpiration ?? 0;
+      const daysLabel = days < 0 ? `${Math.abs(days)} days overdue` : days === 0 ? 'Expires today' : `${days} days remaining`;
+      rows.push([
+        'SFI Certification',
+        `${c.item}${c.sfiSpec ? ` (${c.sfiSpec})` : ''}`,
+        days <= 0 ? 'Expired' : 'Expiring',
+        daysLabel,
+        `Recertify or replace ${c.item} before tech inspection`,
+      ]);
+    });
+
+    // Low / Out of Stock Parts
+    componentStatus.lowStockParts.forEach((p) => {
+      rows.push([
+        'Parts Stock',
+        p.name || p.description || 'Part',
+        p.status || 'Low Stock',
+        `On hand ${p.onHand ?? 0}${p.minQuantity != null ? ` / min ${p.minQuantity}` : ''}`,
+        p.status === 'Out of Stock'
+          ? `Reorder ${p.name || p.description || 'part'} — out of stock`
+          : `Restock ${p.name || p.description || 'part'} to minimum level`,
+      ]);
+    });
+
+    const csvLines = [
+      headers.map(escape).join(','),
+      ...rows.map((r) => r.map(escape).join(',')),
+    ];
+    // UTF-8 BOM for Excel compatibility
+    const csv = '\uFEFF' + csvLines.join('\r\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `team-alerts-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [componentStatus]);
+
+  // ── Print a clean, printer-friendly punch list of all current alerts ──
+  const handlePrintAlerts = useCallback(() => {
+    const esc = (val: any) => {
+      const s = val === null || val === undefined ? '' : String(val);
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    };
+
+    interface PrintRow { item: string; status: string; days: string; action: string; overdue: boolean; }
+    const groups: { title: string; rows: PrintRow[] }[] = [];
+
+    if (componentStatus.dueMaintenance.length > 0) {
+      groups.push({
+        title: 'Maintenance Due',
+        rows: componentStatus.dueMaintenance.map((m) => ({
+          item: m.component || 'Maintenance Item',
+          status: m.status || 'Due',
+          days: m.status === 'Overdue' ? 'Overdue' : 'Due now',
+          action: m.status === 'Overdue'
+            ? `Service ${m.component || 'item'} immediately before running`
+            : `Perform scheduled service on ${m.component || 'item'}`,
+          overdue: m.status === 'Overdue',
+        })),
+      });
+    }
+
+    if (componentStatus.expiredCerts.length > 0) {
+      groups.push({
+        title: 'Expired SFI Certifications',
+        rows: componentStatus.expiredCerts.map((c) => {
+          const days = c.daysUntilExpiration ?? 0;
+          return {
+            item: `${c.item}${c.sfiSpec ? ` (${c.sfiSpec})` : ''}`,
+            status: days <= 0 ? 'Expired' : 'Expiring',
+            days: days < 0 ? `${Math.abs(days)} days overdue` : days === 0 ? 'Expires today' : `${days} days remaining`,
+            action: `Recertify or replace ${c.item} before tech inspection`,
+            overdue: days <= 0,
+          };
+        }),
+      });
+    }
+
+    if (componentStatus.lowStockParts.length > 0) {
+      groups.push({
+        title: 'Low / Out of Stock Parts',
+        rows: componentStatus.lowStockParts.map((p) => ({
+          item: p.name || p.description || 'Part',
+          status: p.status || 'Low Stock',
+          days: `On hand ${p.onHand ?? 0}${p.minQuantity != null ? ` / min ${p.minQuantity}` : ''}`,
+          action: p.status === 'Out of Stock'
+            ? `Reorder ${p.name || p.description || 'part'} — out of stock`
+            : `Restock ${p.name || p.description || 'part'} to minimum level`,
+          overdue: p.status === 'Out of Stock',
+        })),
+      });
+    }
+
+    const printedOn = new Date().toLocaleString();
+    const total = componentStatus.totalAlerts;
+
+    const groupsHtml = groups.length === 0
+      ? `<p class="allclear">No active alerts. All maintenance, certifications, and parts stock are in good standing.</p>`
+      : groups.map((g) => `
+        <section class="group">
+          <h2>${esc(g.title)} <span class="count">(${g.rows.length})</span></h2>
+          <table>
+            <thead>
+              <tr>
+                <th class="chk"></th>
+                <th>Item</th>
+                <th>Status</th>
+                <th>Days Remaining / Overdue</th>
+                <th>Recommended Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${g.rows.map((r) => `
+                <tr>
+                  <td class="chk"><span class="box"></span></td>
+                  <td class="item">${esc(r.item)}</td>
+                  <td><span class="status ${r.overdue ? 'crit' : 'warn'}">${esc(r.status)}</span></td>
+                  <td>${esc(r.days)}</td>
+                  <td class="action">${esc(r.action)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </section>`).join('');
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Pre-Race Alerts Punch List</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #111; margin: 32px; }
+    header { border-bottom: 3px solid #111; padding-bottom: 12px; margin-bottom: 20px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .meta { font-size: 12px; color: #555; }
+    .summary { font-size: 14px; font-weight: bold; margin-top: 8px; }
+    .group { margin-bottom: 24px; page-break-inside: avoid; }
+    h2 { font-size: 16px; margin: 0 0 8px; border-left: 5px solid #111; padding-left: 8px; }
+    .count { font-weight: normal; color: #666; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border: 1px solid #999; padding: 6px 8px; text-align: left; vertical-align: top; }
+    th { background: #eee; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+    .chk { width: 28px; text-align: center; }
+    .box { display: inline-block; width: 14px; height: 14px; border: 2px solid #333; }
+    .item { font-weight: bold; }
+    .action { color: #333; }
+    .status { font-weight: bold; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+    .status.crit { color: #b00020; }
+    .status.warn { color: #8a5b00; }
+    .allclear { font-size: 14px; padding: 20px; border: 1px dashed #999; text-align: center; color: #060; }
+    footer { margin-top: 28px; border-top: 1px solid #ccc; padding-top: 8px; font-size: 11px; color: #777; }
+    @media print { body { margin: 12mm; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Pre-Race Alerts Punch List</h1>
+    <div class="meta">Printed: ${esc(printedOn)}</div>
+    <div class="summary">${total} item${total === 1 ? '' : 's'} require attention before race day</div>
+  </header>
+  ${groupsHtml}
+  <footer>Generated by the Team Dashboard — check each box as the item is resolved. Post at the trailer for crew reference.</footer>
+</body>
+</html>`;
+
+    const printWindow = window.open('', '_blank', 'width=900,height=700');
+    if (!printWindow) {
+      alert('Unable to open print window. Please allow pop-ups for this site.');
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    // Give the new window a moment to render before invoking print
+    setTimeout(() => {
+      try { printWindow.print(); } catch (e) { /* user can print manually */ }
+    }, 300);
+  }, [componentStatus]);
+
   // ── Helper: format relative time ──
   const formatRelativeTime = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -476,7 +687,14 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             <p className="text-[10px] text-slate-500 mt-1">parts low/out</p>
           </button>
 
-          <div className="bg-slate-800/60 rounded-xl border border-slate-700/50 p-4">
+          <button
+            onClick={() => setShowAlertsModal(true)}
+            className={`bg-slate-800/60 rounded-xl border p-4 transition-colors text-left ${
+              componentStatus.totalAlerts > 0
+                ? 'border-red-500/40 hover:bg-red-500/10'
+                : 'border-slate-700/50 hover:bg-slate-800'
+            }`}
+          >
             <div className="flex items-center gap-2 mb-2">
               <AlertTriangle className="w-4 h-4 text-red-400" />
               <span className="text-xs text-slate-400">Total Alerts</span>
@@ -484,10 +702,11 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             <p className={`text-2xl font-bold ${componentStatus.totalAlerts > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
               {componentStatus.totalAlerts}
             </p>
-            <p className="text-[10px] text-slate-500 mt-1">
-              {componentStatus.totalAlerts === 0 ? 'All clear' : 'need attention'}
+            <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
+              {componentStatus.totalAlerts === 0 ? 'All clear' : 'view details'}
+              {componentStatus.totalAlerts > 0 && <ChevronRight className="w-3 h-3" />}
             </p>
-          </div>
+          </button>
         </div>
 
         {/* ═══════════ Main Grid ═══════════ */}
@@ -956,6 +1175,206 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             </div>
           </div>
         </div>
+
+        {/* ═══════════ Total Alerts Modal ═══════════ */}
+        {showAlertsModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            onClick={() => setShowAlertsModal(false)}
+          >
+            <div
+              className="bg-slate-900 rounded-2xl border border-slate-700 w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/70">
+                <div className="flex items-center gap-3">
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+                    componentStatus.totalAlerts > 0 ? 'bg-red-500/15' : 'bg-emerald-500/15'
+                  }`}>
+                    <AlertTriangle className={`w-5 h-5 ${componentStatus.totalAlerts > 0 ? 'text-red-400' : 'text-emerald-400'}`} />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-white">Total Alerts</h2>
+                    <p className="text-xs text-slate-400">
+                      {componentStatus.totalAlerts} item{componentStatus.totalAlerts === 1 ? '' : 's'} need attention
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowAlertsModal(false)}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                  aria-label="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 overflow-y-auto space-y-5">
+                {componentStatus.totalAlerts === 0 ? (
+                  <div className="text-center py-10">
+                    <div className="w-14 h-14 rounded-full bg-emerald-500/15 flex items-center justify-center mx-auto mb-3">
+                      <CheckSquare className="w-7 h-7 text-emerald-400" />
+                    </div>
+                    <p className="text-sm font-medium text-white">All clear</p>
+                    <p className="text-xs text-slate-400 mt-1">No maintenance, certification, or stock alerts right now.</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Maintenance Due */}
+                    {componentStatus.dueMaintenance.length > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Wrench className="w-4 h-4 text-blue-400" />
+                            <span className="text-sm font-semibold text-white">Maintenance Due</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 font-medium">
+                              {componentStatus.dueMaintenance.length}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
+                            className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                          >
+                            Go to Maintenance <ChevronRight className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <div className="space-y-1.5">
+                          {componentStatus.dueMaintenance.map((m) => (
+                            <button
+                              key={m.id}
+                              onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
+                              className="w-full flex items-center justify-between p-3 rounded-lg bg-slate-800/60 border border-slate-700/40 hover:bg-slate-800 transition-colors text-left"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-white truncate">{m.component || 'Maintenance Item'}</p>
+                                {m.category && <p className="text-[10px] text-slate-400 truncate">{m.category}</p>}
+                              </div>
+                              <span className={`text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 ml-2 ${
+                                m.status === 'Overdue' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'
+                              }`}>{m.status}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Expired Certifications */}
+                    {componentStatus.expiredCerts.length > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <ShieldCheck className="w-4 h-4 text-amber-400" />
+                            <span className="text-sm font-semibold text-white">Expired SFI Certifications</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 font-medium">
+                              {componentStatus.expiredCerts.length}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
+                            className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1"
+                          >
+                            View Certs <ChevronRight className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <div className="space-y-1.5">
+                          {componentStatus.expiredCerts.map((c) => (
+                            <button
+                              key={c.id}
+                              onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
+                              className="w-full flex items-center justify-between p-3 rounded-lg bg-slate-800/60 border border-slate-700/40 hover:bg-slate-800 transition-colors text-left"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-white truncate">{c.item}</p>
+                                <p className="text-[10px] text-slate-400 truncate">
+                                  {c.sfiSpec ? `${c.sfiSpec} · ` : ''}Exp: {c.expirationDate || 'N/A'}
+                                </p>
+                              </div>
+                              <span className="text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 ml-2 bg-red-500/20 text-red-400">
+                                {c.daysUntilExpiration < 0 ? `${Math.abs(c.daysUntilExpiration)}d expired` : 'Expired'}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Low / Out of Stock Parts */}
+                    {componentStatus.lowStockParts.length > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Package className="w-4 h-4 text-orange-400" />
+                            <span className="text-sm font-semibold text-white">Low / Out of Stock Parts</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 font-medium">
+                              {componentStatus.lowStockParts.length}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => { setShowAlertsModal(false); onNavigate('parts'); }}
+                            className="text-[10px] text-orange-400 hover:text-orange-300 flex items-center gap-1"
+                          >
+                            Go to Parts <ChevronRight className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <div className="space-y-1.5">
+                          {componentStatus.lowStockParts.map((p) => (
+                            <button
+                              key={p.id}
+                              onClick={() => { setShowAlertsModal(false); onNavigate('parts'); }}
+                              className="w-full flex items-center justify-between p-3 rounded-lg bg-slate-800/60 border border-slate-700/40 hover:bg-slate-800 transition-colors text-left"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-white truncate">{p.name || p.description}</p>
+                                <p className="text-[10px] text-slate-400 truncate">
+                                  On hand: {p.onHand ?? 0}{p.minQuantity != null ? ` / min ${p.minQuantity}` : ''}
+                                </p>
+                              </div>
+                              <span className={`text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 ml-2 ${
+                                p.status === 'Out of Stock' ? 'bg-red-500/20 text-red-400' : 'bg-orange-500/20 text-orange-400'
+                              }`}>{p.status}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-3 border-t border-slate-700/70 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleExportAlertsCSV}
+                    disabled={componentStatus.totalAlerts === 0}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition-colors text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={componentStatus.totalAlerts === 0 ? 'No alerts to export' : 'Export all current alerts to CSV'}
+                  >
+                    <Download className="w-4 h-4" />
+                    Export CSV
+                  </button>
+                  <button
+                    onClick={handlePrintAlerts}
+                    disabled={componentStatus.totalAlerts === 0}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-700 text-white hover:bg-slate-600 transition-colors text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={componentStatus.totalAlerts === 0 ? 'No alerts to print' : 'Print a clean punch list of all current alerts'}
+                  >
+                    <Printer className="w-4 h-4" />
+                    Print
+                  </button>
+                </div>
+                <button
+                  onClick={() => setShowAlertsModal(false)}
+                  className="px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors text-xs font-medium"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
