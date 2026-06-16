@@ -204,6 +204,11 @@ export interface SFICertification {
   status: 'Valid' | 'Expiring Soon' | 'Expired';
   daysUntilExpiration: number;
   notes: string;
+  // Optional per-certification alert threshold overrides (in days before expiration).
+  // When set, these custom day thresholds REPLACE the global SFI alert thresholds
+  // for this specific certification. Backward compatible — undefined = use global.
+  // Example: [120, 60, 14] fires alerts at 120, 60, and 14 days out.
+  alertThresholdDays?: number[];
 }
 
 

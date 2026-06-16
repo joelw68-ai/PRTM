@@ -76,7 +76,8 @@ interface RaceCalendarProps {
 
 const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => {
 
-  const { raceEvents, addRaceEvent, updateRaceEvent, deleteRaceEvent, savedTracks, addSavedTrack, updateSavedTrack } = useApp();
+  const { raceEvents, addRaceEvent, updateRaceEvent, deleteRaceEvent, savedTracks, addSavedTrack, updateSavedTrack, passLogs } = useApp();
+
 
 
 
@@ -717,6 +718,7 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
           <TrackMapView
             savedTracks={savedTracks}
             raceEvents={raceEvents}
+            passLogs={passLogs}
             onSelectEvent={(evt) => {
               // Switch to list view with the event selected so the user sees its full details
               setSelectedEvent(evt);
@@ -724,6 +726,7 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
             }}
           />
         ) : (
+
         <div className="grid lg:grid-cols-4 gap-6">
           {/* Calendar/List View */}
 

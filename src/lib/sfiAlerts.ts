@@ -168,7 +168,51 @@ export function getDefaultSFISettings(): SFIAlertSettings {
 }
 
 /**
+ * Derive a sensible severity for a custom per-cert day threshold based on how
+ * close to expiration it is. Tighter day windows are more urgent.
+ */
+function deriveSeverityForDays(days: number): SFIAlertThreshold['severity'] {
+  if (days <= 0) return 'critical';
+  if (days <= 30) return 'critical';
+  if (days <= 60) return 'warning';
+  return 'info';
+}
+
+/**
+ * Resolve the EFFECTIVE alert thresholds for a single certification.
+ *
+ * If the cert defines its own `alertThresholdDays` overrides, those custom day
+ * values take precedence and REPLACE the global thresholds for that cert.
+ * Otherwise the global enabled thresholds are used.
+ *
+ * Returned thresholds are sorted lowest-days-first (most critical first) to
+ * match the matching logic in checkSFIAlerts.
+ */
+export function getEffectiveThresholdsForCert(
+  cert: SFICertification,
+  globalEnabledThresholds: SFIAlertThreshold[]
+): SFIAlertThreshold[] {
+  const overrides = cert.alertThresholdDays;
+  if (overrides && overrides.length > 0) {
+    const custom = overrides
+      .filter(d => Number.isFinite(d) && d >= 0)
+      // de-duplicate
+      .filter((d, i, arr) => arr.indexOf(d) === i)
+      .map(d => ({
+        days: d,
+        label: d <= 0 ? 'Expired (custom)' : `Custom: ${d} days`,
+        severity: deriveSeverityForDays(d),
+        enabled: true,
+      } as SFIAlertThreshold));
+    return custom.sort((a, b) => a.days - b.days);
+  }
+  return globalEnabledThresholds;
+}
+
+/**
  * Check SFI certifications against configured day thresholds.
+ * Per-certification overrides (cert.alertThresholdDays) take precedence over
+ * the global thresholds when present.
  * Returns triggered alerts sorted by severity (most critical first).
  */
 export function checkSFIAlerts(
@@ -179,20 +223,22 @@ export function checkSFIAlerts(
 
   if (!alertSettings.enabled) return [];
 
-  const enabledThresholds = alertSettings.thresholds
+  const globalEnabled = alertSettings.thresholds
     .filter(t => t.enabled)
     .sort((a, b) => a.days - b.days); // lowest days first (most critical)
-
-  if (enabledThresholds.length === 0) return [];
 
   const alerts: TriggeredSFIAlert[] = [];
 
   for (const cert of sfiCertifications) {
     const daysLeft = cert.daysUntilExpiration;
 
+    // Resolve effective thresholds for this specific cert (custom overrides win)
+    const effectiveThresholds = getEffectiveThresholdsForCert(cert, globalEnabled);
+    if (effectiveThresholds.length === 0) continue;
+
     // Find the most critical threshold that has been reached
     // (lowest days threshold that the cert has crossed)
-    for (const threshold of enabledThresholds) {
+    for (const threshold of effectiveThresholds) {
       if (daysLeft <= threshold.days) {
         alerts.push({
           certId: cert.id,

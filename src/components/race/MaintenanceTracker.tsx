@@ -180,6 +180,20 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   const [newMaintenance, setNewMaintenance] = useState<MaintenanceItem>(defaultMaintenance);
   const [newSFI, setNewSFI] = useState<SFICertification>(defaultSFI);
 
+  // Raw text for per-cert custom alert thresholds (comma-separated days).
+  // Empty string = use the global SFI alert thresholds for this cert.
+  const [sfiThresholdText, setSfiThresholdText] = useState<string>('');
+
+  // Parse a comma/space separated day string into a sorted unique number[] (descending).
+  const parseThresholdDays = (text: string): number[] => {
+    return Array.from(new Set(
+      text
+        .split(/[,\s]+/)
+        .map(s => parseInt(s.trim(), 10))
+        .filter(n => Number.isFinite(n) && n >= 0)
+    )).sort((a, b) => b - a);
+  };
+
   // Active vendors derived from centralized AppContext (no more independent fetching)
   const vendorsList = useMemo(() => allVendors.filter(v => v.isActive), [allVendors]);
 
@@ -255,7 +269,15 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   const handleSaveSFI = async () => {
     try {
       const { status, daysUntilExpiration } = calculateSFIStatus(newSFI.expirationDate);
-      const sfiToSave = { ...newSFI, status, daysUntilExpiration };
+      const customDays = parseThresholdDays(sfiThresholdText);
+      const sfiToSave: SFICertification = {
+        ...newSFI,
+        status,
+        daysUntilExpiration,
+        // Persist per-cert custom alert thresholds (undefined when none entered,
+        // so the cert falls back to the global SFI alert thresholds).
+        alertThresholdDays: customDays.length > 0 ? customDays : undefined,
+      };
       
       if (editingSFI) {
         await updateSFICertification(editingSFI.id, sfiToSave);
@@ -275,6 +297,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
       setShowSFIModal(false);
       setEditingSFI(null);
       setNewSFI(defaultSFI);
+      setSfiThresholdText('');
     }
   };
 
@@ -642,6 +665,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                 onClick={() => {
                   setEditingSFI(null);
                   setNewSFI(defaultSFI);
+                  setSfiThresholdText('');
                   setShowSFIModal(true);
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
@@ -691,6 +715,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                         onClick={() => {
                           setEditingSFI(cert);
                           setNewSFI(cert);
+                          setSfiThresholdText((cert.alertThresholdDays || []).join(', '));
                           setShowSFIModal(true);
                         }}
                         className="p-1 text-slate-400 hover:text-blue-400"
@@ -1116,6 +1141,70 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                   rows={3}
                   className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                 />
+              </div>
+
+              {/* Per-Certification Custom Alert Thresholds */}
+              <div className="bg-cyan-500/5 border border-cyan-500/30 rounded-lg p-4">
+                <label className="text-sm font-medium text-cyan-300 mb-1 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-cyan-400" />
+                  Custom Alert Thresholds (days)
+                </label>
+                <p className="text-xs text-slate-400 mb-2">
+                  Optional. Enter comma-separated days before expiration to fire reminders for
+                  <span className="text-slate-300"> this certification only</span>. Leave blank to use the
+                  global SFI alert thresholds. Severity is auto-assigned (≤30d critical, ≤60d warning, else info).
+                </p>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={sfiThresholdText}
+                  onChange={(e) => setSfiThresholdText(e.target.value)}
+                  placeholder="e.g., 120, 60, 14"
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                />
+                <div className="flex flex-wrap items-center gap-2 mt-2">
+                  <span className="text-[11px] text-slate-500">Quick set:</span>
+                  {[
+                    { label: '90 / 30 / 7', value: '90, 30, 7' },
+                    { label: '120 / 60 / 14', value: '120, 60, 14' },
+                    { label: '60 / 14', value: '60, 14' },
+                  ].map(preset => (
+                    <button
+                      key={preset.value}
+                      type="button"
+                      onClick={() => setSfiThresholdText(preset.value)}
+                      className="px-2 py-1 text-[11px] rounded bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 transition-colors"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                  {sfiThresholdText.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => setSfiThresholdText('')}
+                      className="px-2 py-1 text-[11px] rounded bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
+                    >
+                      Clear (use global)
+                    </button>
+                  )}
+                </div>
+                {parseThresholdDays(sfiThresholdText).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    {parseThresholdDays(sfiThresholdText).map(d => {
+                      const sev = d <= 30 ? 'critical' : d <= 60 ? 'warning' : 'info';
+                      const cls = sev === 'critical'
+                        ? 'bg-red-500/15 text-red-300 border-red-500/40'
+                        : sev === 'warning'
+                          ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                          : 'bg-blue-500/15 text-blue-300 border-blue-500/40';
+                      return (
+                        <span key={d} className={`px-2 py-0.5 rounded text-[11px] border ${cls}`}>
+                          {d}d · {sev}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
             

@@ -5,6 +5,14 @@ import RaceDayWeatherCard from '@/components/race/RaceDayWeatherCard';
 import { supabase } from '@/lib/supabase';
 import { getLocalDateString } from '@/lib/utils';
 import { toast } from 'sonner';
+import { PassLogEntry } from '@/data/proModData';
+import {
+  computeTrackRecordSet,
+  checkBeatsRecord,
+  persistTrackRecordSet,
+  TrackRecordSet,
+} from '@/lib/trackRecords';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   MapPin,
   Mountain,
@@ -20,7 +28,12 @@ import {
   Cloud,
   Flag,
   Navigation as NavigationIcon,
+  Zap,
+  TrendingUp,
+  Award,
+  Sparkles,
 } from 'lucide-react';
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // TrackMapView — interactive Leaflet map of all saved tracks
@@ -120,14 +133,20 @@ const loadLeaflet = (): Promise<any> => {
 interface TrackMapViewProps {
   savedTracks: SavedTrack[];
   raceEvents: RaceEvent[];
+  passLogs?: PassLogEntry[];
   onSelectEvent?: (event: RaceEvent) => void;
 }
 
-const TrackMapView: React.FC<TrackMapViewProps> = ({ savedTracks, raceEvents, onSelectEvent }) => {
+const TrackMapView: React.FC<TrackMapViewProps> = ({ savedTracks, raceEvents, passLogs = [], onSelectEvent }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
   const markersLayerRef = useRef<any>(null);
   const leafletRef = useRef<any>(null);
+
+  // Auth context — used to scope persisted track records to the current user
+  const { user } = useAuth();
+  const userId = user?.id;
+
 
   const [leafletReady, setLeafletReady] = useState(false);
   const [leafletError, setLeafletError] = useState<string | null>(null);
@@ -139,7 +158,6 @@ const TrackMapView: React.FC<TrackMapViewProps> = ({ savedTracks, raceEvents, on
   const [selectedTrack, setSelectedTrack] = useState<SavedTrack | null>(null);
   const [showWeather, setShowWeather] = useState(false);
 
-  // Tracks that need geocoding (missing lat/lon in cache) — memoized
   const tracksNeedingGeocode = useMemo(() => {
     return savedTracks.filter(t => !geoCache[t.id]);
   }, [savedTracks, geoCache]);
@@ -397,6 +415,45 @@ const TrackMapView: React.FC<TrackMapViewProps> = ({ savedTracks, raceEvents, on
       .sort((a, b) => b.startDate.localeCompare(a.startDate))
       .slice(0, 5);
   }, [raceEvents, selectedTrack]);
+
+  // ── Step 5: Compute Track Records (PRs) for the selected track ──────
+  // Computed live from pass logs every time the selected track changes.
+  // Also persisted (fire-and-forget) to the track_records table for history.
+  const trackRecordSet: TrackRecordSet | null = useMemo(() => {
+    if (!selectedTrack) return null;
+    return computeTrackRecordSet(selectedTrack.id, selectedTrack.name, passLogs);
+  }, [selectedTrack, passLogs]);
+
+  // Persist PRs to the `track_records` table (graceful no-op if table missing).
+  useEffect(() => {
+    if (!trackRecordSet || trackRecordSet.totalPasses === 0) return;
+    persistTrackRecordSet(trackRecordSet, userId).catch(() => {});
+  }, [trackRecordSet, userId]);
+
+  // Most-recent pass at the selected track — drives the "Beat This" indicator.
+  // We compare it to the COMPLETE record set (which includes itself) and surface
+  // a "NEW PR!" badge when this pass actually set the record.
+  const latestPassAtTrack = useMemo(() => {
+    if (!selectedTrack) return null;
+    const trackPasses = passLogs
+      .filter(p => !p.aborted && p.track?.toLowerCase().trim() === selectedTrack.name.toLowerCase().trim())
+      .sort((a, b) => {
+        const dA = (a.date || '') + (a.time || '');
+        const dB = (b.date || '') + (b.time || '');
+        return dB.localeCompare(dA);
+      });
+    return trackPasses[0] || null;
+  }, [passLogs, selectedTrack]);
+
+  // For each PR, this latest pass "set" the record if its pass.id matches.
+  const latestPassBeats = useMemo(() => {
+    if (!latestPassAtTrack || !trackRecordSet) return null;
+    return checkBeatsRecord(latestPassAtTrack, trackRecordSet);
+  }, [latestPassAtTrack, trackRecordSet]);
+
+  // Helper: is THIS the pass that owns the PR? (vs. an earlier pass that does)
+  const passSetRecord = (passId: string | undefined, recordPassId: string | undefined) =>
+    passId && recordPassId && passId === recordPassId;
 
   // Re-geocode one track manually (used by "Retry" button)
   const handleRetryGeocode = async (track: SavedTrack) => {
@@ -683,7 +740,168 @@ const TrackMapView: React.FC<TrackMapViewProps> = ({ savedTracks, raceEvents, on
                 </div>
               )}
             </div>
+
+            {/* ── Personal Records at this Track ───────────────────────── */}
+            <div className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 rounded-xl border border-purple-500/30 p-4">
+              <h4 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
+                <Award className="w-4 h-4 text-purple-400" />
+                Track Records
+                {trackRecordSet && trackRecordSet.totalPasses > 0 && (
+                  <span className="text-xs text-slate-500 font-normal">
+                    ({trackRecordSet.totalPasses} pass{trackRecordSet.totalPasses !== 1 ? 'es' : ''})
+                  </span>
+                )}
+              </h4>
+              <p className="text-[11px] text-slate-500 mb-3">Personal bests at this track — pulled from Pass Log</p>
+
+              {!trackRecordSet || trackRecordSet.totalPasses === 0 ? (
+                <p className="text-slate-500 text-xs italic">
+                  No pass data yet for this track. Records will appear after your first pass.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {/* Best ET */}
+                  <div className="flex items-center justify-between p-2.5 bg-slate-900/60 rounded-lg border border-slate-700/50">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Timer className="w-4 h-4 text-green-400 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs text-slate-400">Best ET</div>
+                        {trackRecordSet.bestET ? (
+                          <div className="text-green-400 font-mono font-semibold text-sm">
+                            {trackRecordSet.bestET.value.toFixed(3)}
+                            <span className="ml-1.5 text-[10px] text-slate-500 font-sans font-normal">
+                              {trackRecordSet.bestET.passDate}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="text-slate-500 text-xs">—</div>
+                        )}
+                      </div>
+                    </div>
+                    {/* Beat-This indicator: did the latest pass set this record? */}
+                    {trackRecordSet.bestET && latestPassBeats && passSetRecord(latestPassAtTrack?.id, trackRecordSet.bestET.passId) && (
+                      <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded bg-green-500/20 text-green-400 border border-green-500/40 flex-shrink-0">
+                        <Sparkles className="w-3 h-3" />
+                        NEW PR!
+                      </span>
+                    )}
+                    {trackRecordSet.bestET && latestPassBeats?.matchedET && !passSetRecord(latestPassAtTrack?.id, trackRecordSet.bestET.passId) && (
+                      <span className="text-[10px] font-bold px-2 py-1 rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/40 flex-shrink-0">
+                        MATCHED
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Best MPH */}
+                  <div className="flex items-center justify-between p-2.5 bg-slate-900/60 rounded-lg border border-slate-700/50">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Gauge className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs text-slate-400">Best MPH</div>
+                        {trackRecordSet.bestMPH ? (
+                          <div className="text-blue-400 font-mono font-semibold text-sm">
+                            {trackRecordSet.bestMPH.value.toFixed(2)}
+                            <span className="ml-1.5 text-[10px] text-slate-500 font-sans font-normal">
+                              {trackRecordSet.bestMPH.passDate}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="text-slate-500 text-xs">—</div>
+                        )}
+                      </div>
+                    </div>
+                    {trackRecordSet.bestMPH && latestPassBeats && passSetRecord(latestPassAtTrack?.id, trackRecordSet.bestMPH.passId) && (
+                      <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded bg-green-500/20 text-green-400 border border-green-500/40 flex-shrink-0">
+                        <Sparkles className="w-3 h-3" />
+                        NEW PR!
+                      </span>
+                    )}
+                    {trackRecordSet.bestMPH && latestPassBeats?.matchedMPH && !passSetRecord(latestPassAtTrack?.id, trackRecordSet.bestMPH.passId) && (
+                      <span className="text-[10px] font-bold px-2 py-1 rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/40 flex-shrink-0">
+                        MATCHED
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Best Reaction */}
+                  <div className="flex items-center justify-between p-2.5 bg-slate-900/60 rounded-lg border border-slate-700/50">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Zap className="w-4 h-4 text-yellow-400 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs text-slate-400">Best Reaction</div>
+                        {trackRecordSet.bestReaction ? (
+                          <div className="text-yellow-400 font-mono font-semibold text-sm">
+                            {trackRecordSet.bestReaction.value.toFixed(3)}
+                            <span className="ml-1.5 text-[10px] text-slate-500 font-sans font-normal">
+                              {trackRecordSet.bestReaction.passDate}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="text-slate-500 text-xs">—</div>
+                        )}
+                      </div>
+                    </div>
+                    {trackRecordSet.bestReaction && latestPassBeats && passSetRecord(latestPassAtTrack?.id, trackRecordSet.bestReaction.passId) && (
+                      <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded bg-green-500/20 text-green-400 border border-green-500/40 flex-shrink-0">
+                        <Sparkles className="w-3 h-3" />
+                        NEW PR!
+                      </span>
+                    )}
+                    {trackRecordSet.bestReaction && latestPassBeats?.matchedReaction && !passSetRecord(latestPassAtTrack?.id, trackRecordSet.bestReaction.passId) && (
+                      <span className="text-[10px] font-bold px-2 py-1 rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/40 flex-shrink-0">
+                        MATCHED
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Best 60-Foot */}
+                  <div className="flex items-center justify-between p-2.5 bg-slate-900/60 rounded-lg border border-slate-700/50">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <TrendingUp className="w-4 h-4 text-orange-400 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs text-slate-400">Best 60-ft</div>
+                        {trackRecordSet.bestSixtyFoot ? (
+                          <div className="text-orange-400 font-mono font-semibold text-sm">
+                            {trackRecordSet.bestSixtyFoot.value.toFixed(3)}
+                            <span className="ml-1.5 text-[10px] text-slate-500 font-sans font-normal">
+                              {trackRecordSet.bestSixtyFoot.passDate}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="text-slate-500 text-xs">—</div>
+                        )}
+                      </div>
+                    </div>
+                    {trackRecordSet.bestSixtyFoot && latestPassBeats && passSetRecord(latestPassAtTrack?.id, trackRecordSet.bestSixtyFoot.passId) && (
+                      <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded bg-green-500/20 text-green-400 border border-green-500/40 flex-shrink-0">
+                        <Sparkles className="w-3 h-3" />
+                        NEW PR!
+                      </span>
+                    )}
+                    {trackRecordSet.bestSixtyFoot && latestPassBeats?.matchedSixtyFoot && !passSetRecord(latestPassAtTrack?.id, trackRecordSet.bestSixtyFoot.passId) && (
+                      <span className="text-[10px] font-bold px-2 py-1 rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/40 flex-shrink-0">
+                        MATCHED
+                      </span>
+                    )}
+                  </div>
+
+                  {/* "Beat This" / "Latest pass" footer banner */}
+                  {latestPassAtTrack && latestPassBeats?.anyImproved && (
+                    <div className="mt-2 p-2.5 bg-green-500/15 border border-green-500/40 rounded-lg">
+                      <div className="flex items-center gap-2 text-green-400 text-xs font-semibold">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Your latest pass set a new personal record!
+                      </div>
+                      <div className="text-[10px] text-green-300/80 mt-0.5">
+                        {latestPassAtTrack.date} · {latestPassAtTrack.sessionType || 'Pass'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </>
+
         )}
       </div>
     </div>
