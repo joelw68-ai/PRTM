@@ -597,10 +597,20 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                               <span className="text-white">{item.currentPasses}</span>
                             </td>
                             <td className="px-4 py-3 text-center">
-                              <span className={remaining <= 0 ? 'text-red-400' : remaining <= 5 ? 'text-yellow-400' : 'text-white'}>
+                              {/* Color the Remaining count based on the item's THRESHOLD-AWARE
+                                  status (computed via calculateMaintenanceStatus). A yellow
+                                  "Due Soon" number must never appear until the configured
+                                  threshold is reached — when an item is still "Good", the
+                                  number stays white regardless of how few passes remain. */}
+                              <span className={
+                                item.status === 'Overdue' || item.status === 'Due' ? 'text-red-400'
+                                : item.status === 'Due Soon' ? 'text-yellow-400'
+                                : 'text-white'
+                              }>
                                 {remaining}
                               </span>
                             </td>
+
                             <td className="px-4 py-3 text-center">
                               <span className={`px-2 py-1 rounded text-xs font-medium border ${getStatusColor(item.status)}`}>
                                 {item.status}

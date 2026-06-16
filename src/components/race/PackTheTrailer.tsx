@@ -28,6 +28,8 @@ import { getLocalDateString, parseLocalDate, formatLocalDate } from '@/lib/utils
 import { toast } from 'sonner';
 import { CrewRole } from '@/lib/permissions';
 import type { RaceEvent } from '@/components/race/RaceCalendar';
+import { calculateMaintenanceStatus } from '@/data/proModData';
+
 import {
   Package,
   PackageCheck,
@@ -295,11 +297,24 @@ const PackTheTrailer: React.FC<PackTheTrailerProps> = ({ currentRole = 'Crew', o
         const remaining = m.nextServicePasses - m.currentPasses;
         const used = interval - remaining;
         const pct = Math.max(0, Math.min(100, (used / interval) * 100));
-        return { item: m, percentUsed: pct, remaining };
+        // Always derive the THRESHOLD-AWARE status so per-item thresholds are
+        // the single source of truth (matches the Maintenance Tracker badges).
+        const status = calculateMaintenanceStatus(m);
+        return { item: { ...m, status }, percentUsed: pct, remaining, status };
       })
-      .filter(x => x.percentUsed >= 75 || x.item.status === 'Due' || x.item.status === 'Due Soon' || x.item.status === 'Overdue')
+      // An item is only flagged for a spare once it is actually alerting:
+      //   • Items WITH a per-item threshold: only when status leaves "Good"
+      //     (i.e. remaining passes have reached the configured threshold).
+      //   • Items WITHOUT a threshold: legacy rule (≥75% of interval used, or
+      //     already Due / Due Soon / Overdue).
+      .filter(x => {
+        const hasThreshold = x.item.threshold != null && x.item.threshold >= 0;
+        if (hasThreshold) return x.status !== 'Good';
+        return x.percentUsed >= 75 || x.status === 'Due' || x.status === 'Due Soon' || x.status === 'Overdue';
+      })
       .sort((a, b) => b.percentUsed - a.percentUsed);
   }, [maintenanceItems]);
+
 
   // SFI items expiring within 60 days OR already expired
   const expiringSfi = useMemo(() => {

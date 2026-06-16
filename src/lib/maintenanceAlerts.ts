@@ -12,8 +12,17 @@
  *   • If DB write fails (offline, table doesn't exist), localStorage is the fallback.
  */
 
-import { MaintenanceItem } from '@/data/proModData';
+import { MaintenanceItem, calculateMaintenanceStatus } from '@/data/proModData';
 import { supabase } from '@/lib/supabase';
+
+// A maintenance item "has a per-item threshold" when threshold is an explicit
+// number >= 0. Such items are governed SOLELY by that threshold (remaining
+// passes) — the global percentage thresholds never apply to them, so no alert
+// can ever appear anywhere in the app until the configured threshold is reached.
+function hasPerItemThreshold(item: MaintenanceItem): boolean {
+  return item.threshold != null && item.threshold >= 0;
+}
+
 
 export interface AlertThreshold {
   percentage: number;  // e.g., 80, 90, 100
@@ -198,6 +207,31 @@ export function checkMaintenanceAlerts(
     const percentUsed = (item.currentPasses / item.nextServicePasses) * 100;
     const remaining = item.nextServicePasses - item.currentPasses;
 
+    // ── Per-item threshold items: threshold is the SINGLE source of truth ──
+    // These items must NOT use the global percentage thresholds. They only
+    // alert once their computed status leaves "Good" (i.e. remaining passes
+    // have reached the configured threshold). Until then: no alert anywhere.
+    if (hasPerItemThreshold(item)) {
+      const status = calculateMaintenanceStatus(item);
+      if (status === 'Good') continue; // not yet at threshold → skip entirely
+      const severity: AlertThreshold['severity'] =
+        status === 'Due Soon' ? 'warning' : 'critical';
+      const label = status === 'Due Soon' ? 'Service Imminent' : 'Service Due';
+      alerts.push({
+        maintenanceItemId: item.id,
+        component: item.component,
+        category: item.category,
+        threshold: { percentage: severity === 'critical' ? 100 : 90, label, severity, enabled: true },
+        currentPasses: item.currentPasses,
+        nextServicePasses: item.nextServicePasses,
+        passInterval: item.passInterval,
+        percentUsed: Math.round(percentUsed),
+        remainingPasses: Math.max(0, remaining),
+      });
+      continue;
+    }
+
+    // ── Items WITHOUT a per-item threshold: legacy global percentage rule ──
     // Find the highest threshold that has been reached
     for (const threshold of enabledThresholds) {
       if (percentUsed >= threshold.percentage) {
@@ -216,6 +250,7 @@ export function checkMaintenanceAlerts(
       }
     }
   }
+
 
   // Sort: critical first, then warning, then info
   const severityOrder = { critical: 0, warning: 1, info: 2 };
@@ -256,6 +291,32 @@ export function checkNewlyTriggeredAlerts(
     const previousItem = previousItems.find(p => p.id === currentItem.id);
     if (!previousItem) continue;
 
+    // ── Per-item threshold items: threshold is the SINGLE source of truth ──
+    // Fire a toast ONLY when the item just crossed its configured threshold,
+    // i.e. its status went from "Good" to a non-Good status. No percentage
+    // crossings are considered for these items.
+    if (hasPerItemThreshold(currentItem)) {
+      const prevStatus = calculateMaintenanceStatus(previousItem);
+      const currStatus = calculateMaintenanceStatus(currentItem);
+      if (prevStatus === 'Good' && currStatus !== 'Good') {
+        const severity: AlertThreshold['severity'] =
+          currStatus === 'Due Soon' ? 'warning' : 'critical';
+        const label = currStatus === 'Due Soon' ? 'Service Imminent' : 'Service Due';
+        newAlerts.push({
+          maintenanceItemId: currentItem.id,
+          component: currentItem.component,
+          category: currentItem.category,
+          threshold: { percentage: severity === 'critical' ? 100 : 90, label, severity, enabled: true },
+          currentPasses: currentItem.currentPasses,
+          nextServicePasses: currentItem.nextServicePasses,
+          passInterval: currentItem.passInterval,
+          percentUsed: Math.round((currentItem.currentPasses / currentItem.nextServicePasses) * 100),
+          remainingPasses: Math.max(0, currentItem.nextServicePasses - currentItem.currentPasses),
+        });
+      }
+      continue;
+    }
+
     const prevPercent = previousItem.nextServicePasses > 0
       ? (previousItem.currentPasses / previousItem.nextServicePasses) * 100
       : 0;
@@ -280,6 +341,7 @@ export function checkNewlyTriggeredAlerts(
       }
     }
   }
+
 
   // Sort: critical first
   const severityOrder = { critical: 0, warning: 1, info: 2 };
