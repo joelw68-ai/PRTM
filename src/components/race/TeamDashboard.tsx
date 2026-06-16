@@ -76,6 +76,10 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
   const [todoItems, setTodoItems] = useState<ToDoItem[]>([]);
   const [showTodoModal, setShowTodoModal] = useState(false);
 
+  // Assignee per alert (keyed by stable alert key) for the printable punch list / accountability sheet
+  const [alertAssignees, setAlertAssignees] = useState<Record<string, string>>({});
+
+
 
   const channelRef = useRef<any>(null);
   const presenceChannelRef = useRef<any>(null);
@@ -299,6 +303,27 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
 
   }, [engines, superchargers, cylinderHeads, drivetrainComponents, maintenanceItems, sfiCertifications, partsInventory]);
 
+  // ── Build a crew roster (connected + active roster members) for alert assignment ──
+  const crewRoster = useMemo(() => {
+    const names = new Set<string>();
+    connectedMembers.forEach((m) => { if (m.name && m.name !== 'Unknown') names.add(m.name); });
+    teamMembers.filter((m) => m.isActive).forEach((m) => { if (m.name) names.add(m.name); });
+    // Always include the current user so they can self-assign
+    const me = profile?.driverName || user?.email?.split('@')[0];
+    if (me) names.add(me);
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [connectedMembers, teamMembers, profile, user]);
+
+  // Assign a crew member to a specific alert (keyed by stable alert key)
+  const setAssignee = useCallback((key: string, name: string) => {
+    setAlertAssignees((prev) => {
+      const next = { ...prev };
+      if (name) next[key] = name;
+      else delete next[key];
+      return next;
+    });
+  }, []);
+
 
   const displayedActivity = useMemo(() => {
     return showAllActivity ? activityFeed.slice(0, 30) : activityFeed.slice(0, 8);
@@ -442,7 +467,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
       return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     };
 
-    interface PrintRow { item: string; status: string; days: string; action: string; overdue: boolean; }
+    interface PrintRow { item: string; status: string; days: string; action: string; overdue: boolean; assignedTo: string; }
     const groups: { title: string; rows: PrintRow[] }[] = [];
 
     if (componentStatus.dueMaintenance.length > 0) {
@@ -456,6 +481,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             ? `Service ${m.component || 'item'} immediately before running`
             : `Perform scheduled service on ${m.component || 'item'}`,
           overdue: m.status === 'Overdue',
+          assignedTo: alertAssignees[`maint-${m.id}`] || '',
         })),
       });
     }
@@ -471,6 +497,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             days: days < 0 ? `${Math.abs(days)} days overdue` : days === 0 ? 'Expires today' : `${days} days remaining`,
             action: `Recertify or replace ${c.item} before tech inspection`,
             overdue: days <= 0,
+            assignedTo: alertAssignees[`cert-${c.id}`] || '',
           };
         }),
       });
@@ -487,12 +514,14 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             ? `Reorder ${p.name || p.description || 'part'} — out of stock`
             : `Restock ${p.name || p.description || 'part'} to minimum level`,
           overdue: p.status === 'Out of Stock',
+          assignedTo: alertAssignees[`part-${p.id}`] || '',
         })),
       });
     }
 
     const printedOn = new Date().toLocaleString();
     const total = componentStatus.totalAlerts;
+    const assignedCount = Object.values(alertAssignees).filter(Boolean).length;
 
     const groupsHtml = groups.length === 0
       ? `<p class="allclear">No active alerts. All maintenance, certifications, and parts stock are in good standing.</p>`
@@ -507,6 +536,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                 <th>Status</th>
                 <th>Days Remaining / Overdue</th>
                 <th>Recommended Action</th>
+                <th class="assigned">Assigned To</th>
+                <th class="signoff">Initials / Sign-off</th>
               </tr>
             </thead>
             <tbody>
@@ -517,6 +548,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                   <td><span class="status ${r.overdue ? 'crit' : 'warn'}">${esc(r.status)}</span></td>
                   <td>${esc(r.days)}</td>
                   <td class="action">${esc(r.action)}</td>
+                  <td class="assigned">${r.assignedTo ? esc(r.assignedTo) : '<span class="blankline">&nbsp;</span>'}</td>
+                  <td class="signoff"><span class="blankline">&nbsp;</span></td>
                 </tr>`).join('')}
             </tbody>
           </table>
@@ -534,6 +567,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
     h1 { font-size: 22px; margin: 0 0 4px; }
     .meta { font-size: 12px; color: #555; }
     .summary { font-size: 14px; font-weight: bold; margin-top: 8px; }
+    .submeta { font-size: 11px; color: #555; margin-top: 2px; }
     .group { margin-bottom: 24px; page-break-inside: avoid; }
     h2 { font-size: 16px; margin: 0 0 8px; border-left: 5px solid #111; padding-left: 8px; }
     .count { font-weight: normal; color: #666; font-size: 13px; }
@@ -544,6 +578,9 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
     .box { display: inline-block; width: 14px; height: 14px; border: 2px solid #333; }
     .item { font-weight: bold; }
     .action { color: #333; }
+    .assigned { width: 110px; }
+    .signoff { width: 110px; }
+    .blankline { display: inline-block; min-width: 90px; border-bottom: 1px solid #999; }
     .status { font-weight: bold; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
     .status.crit { color: #b00020; }
     .status.warn { color: #8a5b00; }
@@ -554,12 +591,13 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
 </head>
 <body>
   <header>
-    <h1>Pre-Race Alerts Punch List</h1>
+    <h1>Pre-Race Alerts Punch List &amp; Accountability Sheet</h1>
     <div class="meta">Printed: ${esc(printedOn)}</div>
     <div class="summary">${total} item${total === 1 ? '' : 's'} require attention before race day</div>
+    <div class="submeta">${assignedCount} of ${total} item${total === 1 ? '' : 's'} pre-assigned to a crew member</div>
   </header>
   ${groupsHtml}
-  <footer>Generated by the Team Dashboard — check each box as the item is resolved. Post at the trailer for crew reference.</footer>
+  <footer>Generated by the Team Dashboard — assign each item, check the box when complete, and have the responsible crew member initial / sign off. Post at the trailer for crew reference.</footer>
 </body>
 </html>`;
 
@@ -576,7 +614,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
     setTimeout(() => {
       try { printWindow.print(); } catch (e) { /* user can print manually */ }
     }, 300);
-  }, [componentStatus]);
+  }, [componentStatus, alertAssignees]);
+
 
   // ── Helper: format relative time ──
   const formatRelativeTime = (dateStr: string) => {
@@ -1330,7 +1369,14 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                   </div>
                 ) : (
                   <>
+                    <p className="text-[11px] text-slate-400 -mt-1 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-slate-500" />
+                      Assign each alert to a crew member, then print the punch list with{' '}
+                      <span className="text-slate-300 font-medium">Assigned&nbsp;To</span> and{' '}
+                      <span className="text-slate-300 font-medium">Initials&nbsp;/&nbsp;Sign-off</span> columns.
+                    </p>
                     {/* Maintenance Due */}
+
                     {componentStatus.dueMaintenance.length > 0 && (
                       <div>
                         <div className="flex items-center justify-between mb-2">
@@ -1349,24 +1395,39 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                           </button>
                         </div>
                         <div className="space-y-1.5">
-                          {componentStatus.dueMaintenance.map((m) => (
-                            <button
-                              key={m.id}
-                              onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
-                              className="w-full flex items-center justify-between p-3 rounded-lg bg-slate-800/60 border border-slate-700/40 hover:bg-slate-800 transition-colors text-left"
-                            >
-                              <div className="min-w-0">
-                                <p className="text-xs font-medium text-white truncate">{m.component || 'Maintenance Item'}</p>
-                                {m.category && <p className="text-[10px] text-slate-400 truncate">{m.category}</p>}
+                          {componentStatus.dueMaintenance.map((m) => {
+                            const key = `maint-${m.id}`;
+                            return (
+                              <div
+                                key={m.id}
+                                className="flex items-center gap-2 p-3 rounded-lg bg-slate-800/60 border border-slate-700/40"
+                              >
+                                <button
+                                  onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
+                                  className="min-w-0 flex-1 text-left hover:opacity-80 transition-opacity"
+                                >
+                                  <p className="text-xs font-medium text-white truncate">{m.component || 'Maintenance Item'}</p>
+                                  {m.category && <p className="text-[10px] text-slate-400 truncate">{m.category}</p>}
+                                </button>
+                                <select
+                                  value={alertAssignees[key] || ''}
+                                  onChange={(e) => setAssignee(key, e.target.value)}
+                                  className="text-[10px] bg-slate-900 border border-slate-600 rounded px-1.5 py-1 text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-[110px]"
+                                  title="Assign crew member"
+                                >
+                                  <option value="">Unassigned</option>
+                                  {crewRoster.map((n) => (<option key={n} value={n}>{n}</option>))}
+                                </select>
+                                <span className={`text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 ${
+                                  m.status === 'Overdue' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'
+                                }`}>{m.status}</span>
                               </div>
-                              <span className={`text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 ml-2 ${
-                                m.status === 'Overdue' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'
-                              }`}>{m.status}</span>
-                            </button>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}
+
 
                     {/* Expired Certifications */}
                     {componentStatus.expiredCerts.length > 0 && (
@@ -1387,26 +1448,41 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                           </button>
                         </div>
                         <div className="space-y-1.5">
-                          {componentStatus.expiredCerts.map((c) => (
-                            <button
-                              key={c.id}
-                              onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
-                              className="w-full flex items-center justify-between p-3 rounded-lg bg-slate-800/60 border border-slate-700/40 hover:bg-slate-800 transition-colors text-left"
-                            >
-                              <div className="min-w-0">
-                                <p className="text-xs font-medium text-white truncate">{c.item}</p>
-                                <p className="text-[10px] text-slate-400 truncate">
-                                  {c.sfiSpec ? `${c.sfiSpec} · ` : ''}Exp: {c.expirationDate || 'N/A'}
-                                </p>
+                          {componentStatus.expiredCerts.map((c) => {
+                            const key = `cert-${c.id}`;
+                            return (
+                              <div
+                                key={c.id}
+                                className="flex items-center gap-2 p-3 rounded-lg bg-slate-800/60 border border-slate-700/40"
+                              >
+                                <button
+                                  onClick={() => { setShowAlertsModal(false); onNavigate('maintenance'); }}
+                                  className="min-w-0 flex-1 text-left hover:opacity-80 transition-opacity"
+                                >
+                                  <p className="text-xs font-medium text-white truncate">{c.item}</p>
+                                  <p className="text-[10px] text-slate-400 truncate">
+                                    {c.sfiSpec ? `${c.sfiSpec} · ` : ''}Exp: {c.expirationDate || 'N/A'}
+                                  </p>
+                                </button>
+                                <select
+                                  value={alertAssignees[key] || ''}
+                                  onChange={(e) => setAssignee(key, e.target.value)}
+                                  className="text-[10px] bg-slate-900 border border-slate-600 rounded px-1.5 py-1 text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500 max-w-[110px]"
+                                  title="Assign crew member"
+                                >
+                                  <option value="">Unassigned</option>
+                                  {crewRoster.map((n) => (<option key={n} value={n}>{n}</option>))}
+                                </select>
+                                <span className="text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 bg-red-500/20 text-red-400">
+                                  {c.daysUntilExpiration < 0 ? `${Math.abs(c.daysUntilExpiration)}d expired` : 'Expired'}
+                                </span>
                               </div>
-                              <span className="text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 ml-2 bg-red-500/20 text-red-400">
-                                {c.daysUntilExpiration < 0 ? `${Math.abs(c.daysUntilExpiration)}d expired` : 'Expired'}
-                              </span>
-                            </button>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}
+
 
                     {/* Low / Out of Stock Parts */}
                     {componentStatus.lowStockParts.length > 0 && (
@@ -1427,24 +1503,39 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                           </button>
                         </div>
                         <div className="space-y-1.5">
-                          {componentStatus.lowStockParts.map((p) => (
-                            <button
-                              key={p.id}
-                              onClick={() => { setShowAlertsModal(false); onNavigate('parts'); }}
-                              className="w-full flex items-center justify-between p-3 rounded-lg bg-slate-800/60 border border-slate-700/40 hover:bg-slate-800 transition-colors text-left"
-                            >
-                              <div className="min-w-0">
-                                <p className="text-xs font-medium text-white truncate">{p.name || p.description}</p>
-                                <p className="text-[10px] text-slate-400 truncate">
-                                  On hand: {p.onHand ?? 0}{p.minQuantity != null ? ` / min ${p.minQuantity}` : ''}
-                                </p>
+                          {componentStatus.lowStockParts.map((p) => {
+                            const key = `part-${p.id}`;
+                            return (
+                              <div
+                                key={p.id}
+                                className="flex items-center gap-2 p-3 rounded-lg bg-slate-800/60 border border-slate-700/40"
+                              >
+                                <button
+                                  onClick={() => { setShowAlertsModal(false); onNavigate('parts'); }}
+                                  className="min-w-0 flex-1 text-left hover:opacity-80 transition-opacity"
+                                >
+                                  <p className="text-xs font-medium text-white truncate">{p.name || p.description}</p>
+                                  <p className="text-[10px] text-slate-400 truncate">
+                                    On hand: {p.onHand ?? 0}{p.minQuantity != null ? ` / min ${p.minQuantity}` : ''}
+                                  </p>
+                                </button>
+                                <select
+                                  value={alertAssignees[key] || ''}
+                                  onChange={(e) => setAssignee(key, e.target.value)}
+                                  className="text-[10px] bg-slate-900 border border-slate-600 rounded px-1.5 py-1 text-slate-200 focus:outline-none focus:ring-1 focus:ring-orange-500 max-w-[110px]"
+                                  title="Assign crew member"
+                                >
+                                  <option value="">Unassigned</option>
+                                  {crewRoster.map((n) => (<option key={n} value={n}>{n}</option>))}
+                                </select>
+                                <span className={`text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 ${
+                                  p.status === 'Out of Stock' ? 'bg-red-500/20 text-red-400' : 'bg-orange-500/20 text-orange-400'
+                                }`}>{p.status}</span>
                               </div>
-                              <span className={`text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 ml-2 ${
-                                p.status === 'Out of Stock' ? 'bg-red-500/20 text-red-400' : 'bg-orange-500/20 text-orange-400'
-                              }`}>{p.status}</span>
-                            </button>
-                          ))}
+                            );
+                          })}
                         </div>
+
                       </div>
                     )}
                   </>
