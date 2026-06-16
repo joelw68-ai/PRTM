@@ -380,13 +380,14 @@ export const calculateMaintenanceStatus = (item: MaintenanceItem): MaintenanceIt
     return 'Good';
   }
 
-  // ── Fallback: percentage-based status for items with no custom threshold ──
-  const interval = item.passInterval;
-  const percentage = interval > 0 ? (remaining / interval) * 100 : 0;
-
+  // ── No custom threshold configured ──
+  // Per product rule: an alert (yellow "Due Soon") must NEVER appear unless a
+  // threshold has been reached. Items without a configured `threshold` therefore
+  // do NOT use any percentage-based heuristic to become "Due Soon" / "Due".
+  // They simply stay "Good" until the service interval is actually reached, at
+  // which point they become "Overdue". This guarantees no alert shows anywhere
+  // in the app without an explicit threshold being hit.
   if (remaining <= 0) return 'Overdue';
-  if (percentage <= 10) return 'Due';
-  if (percentage <= 25) return 'Due Soon';
   return 'Good';
 };
 

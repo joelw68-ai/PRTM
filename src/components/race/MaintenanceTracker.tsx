@@ -190,6 +190,10 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   const [newMaintenance, setNewMaintenance] = useState<MaintenanceItem>(defaultMaintenance);
   const [newSFI, setNewSFI] = useState<SFICertification>(defaultSFI);
 
+  // Inline validation error for the required Threshold field. Alerts depend
+  // entirely on a configured threshold, so saving without one is blocked.
+  const [thresholdError, setThresholdError] = useState<string | null>(null);
+
   // Raw text for per-cert custom alert thresholds (comma-separated days).
   // Empty string = use the global SFI alert thresholds for this cert.
   const [sfiThresholdText, setSfiThresholdText] = useState<string>('');
@@ -222,6 +226,16 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
 
   const handleSaveMaintenance = async () => {
+    // ===== REQUIRED THRESHOLD VALIDATION =====
+    // Alerts depend entirely on a configured threshold, so an item cannot be
+    // saved without a valid one. Block the save and surface an inline error.
+    const thr = newMaintenance.threshold;
+    if (thr === undefined || thr === null || !Number.isFinite(thr) || thr < 1) {
+      setThresholdError('Threshold is required and must be at least 1 pass.');
+      return;
+    }
+    setThresholdError(null);
+
     try {
       // Use the canonical calculateMaintenanceStatus function for consistency
       const computedStatus = calculateMaintenanceStatus(newMaintenance);
@@ -248,6 +262,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
       setShowMaintenanceModal(false);
       setEditingMaintenance(null);
       setNewMaintenance(defaultMaintenance);
+      setThresholdError(null);
     }
   };
 
@@ -507,6 +522,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                 onClick={() => {
                   setEditingMaintenance(null);
                   setNewMaintenance(defaultMaintenance);
+                  setThresholdError(null);
                   setShowMaintenanceModal(true);
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
@@ -630,7 +646,10 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                                   onClick={(e) => { 
                                     e.stopPropagation(); 
                                     setEditingMaintenance(item);
-                                    setNewMaintenance(item);
+                                    // Ensure a sensible default threshold for legacy items that
+                                    // were saved before the threshold field was required.
+                                    setNewMaintenance({ ...item, threshold: item.threshold ?? 5 });
+                                    setThresholdError(null);
                                     setShowMaintenanceModal(true);
                                   }}
                                   className="p-1.5 bg-blue-500/20 text-blue-400 rounded hover:bg-blue-500/30"
@@ -1029,7 +1048,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
               <h3 className="text-xl font-bold text-white">
                 {editingMaintenance ? 'Edit Maintenance Item' : 'Add Maintenance Item'}
               </h3>
-              <button onClick={() => setShowMaintenanceModal(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => { setShowMaintenanceModal(false); setThresholdError(null); }} className="text-slate-400 hover:text-white">
 
                 <X className="w-6 h-6" />
               </button>
@@ -1080,16 +1099,38 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-slate-400 mb-1">Threshold (passes before alert)</label>
+                  <label className="block text-sm text-slate-400 mb-1">Threshold (passes before alert) *</label>
                   <input
                     type="number"
-                    value={newMaintenance.threshold || 5}
-                    onChange={(e) => setNewMaintenance({...newMaintenance, threshold: parseInt(e.target.value) || 0})}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                    min={1}
+                    value={newMaintenance.threshold ?? ''}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      // Empty input -> undefined so validation can flag it as missing.
+                      const parsed = raw === '' ? undefined : parseInt(raw, 10);
+                      setNewMaintenance({
+                        ...newMaintenance,
+                        threshold: parsed === undefined || Number.isNaN(parsed) ? undefined : parsed,
+                      });
+                      // Live-clear the error once a valid value is entered.
+                      if (parsed !== undefined && Number.isFinite(parsed) && parsed >= 1) {
+                        setThresholdError(null);
+                      }
+                    }}
+                    className={`w-full bg-slate-900 border rounded-lg px-3 py-2 text-white ${
+                      thresholdError ? 'border-red-500' : 'border-slate-600'
+                    }`}
                     placeholder="e.g., 5"
                   />
+                  {/* Inline required-field error */}
+                  {thresholdError && (
+                    <p className="mt-1.5 text-xs text-red-400 flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      {thresholdError}
+                    </p>
+                  )}
                   {/* Live helper: explains exactly when this item will switch to "Due Soon" */}
-                  {(() => {
+                  {!thresholdError && (() => {
                     const interval = newMaintenance.passInterval || 0;
                     const remaining = interval - (newMaintenance.currentPasses || 0);
                     const threshold = newMaintenance.threshold ?? 0;
@@ -1181,7 +1222,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
             
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => setShowMaintenanceModal(false)}
+                onClick={() => { setShowMaintenanceModal(false); setThresholdError(null); }}
                 className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
               >
                 Cancel
