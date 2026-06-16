@@ -594,8 +594,10 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                       <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">Interval</th>
                       <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">Current</th>
                       <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">Remaining</th>
+                      <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">Threshold</th>
                       <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">Status</th>
                       <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">Actions</th>
+
                     </tr>
                   </thead>
                   <tbody>
@@ -636,6 +638,33 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                                 {remaining}
                               </span>
                             </td>
+
+                            {/* Threshold column — shows the item's configured alert
+                                threshold (passes remaining at which it starts alerting)
+                                plus a small inline indicator so users can quickly confirm
+                                why an item is or isn't generating an alert. Renders a dash
+                                when no threshold is set. */}
+                            <td className="px-4 py-3 text-center">
+                              {item.threshold != null && Number.isFinite(item.threshold) ? (
+                                <div className="flex flex-col items-center gap-0.5">
+                                  <span className="px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 text-xs font-medium border border-cyan-500/30">
+                                    {item.threshold} pass{item.threshold === 1 ? '' : 'es'}
+                                  </span>
+                                  <span
+                                    className={`text-[10px] ${
+                                      remaining <= item.threshold ? 'text-yellow-400' : 'text-slate-500'
+                                    }`}
+                                  >
+                                    {remaining <= item.threshold
+                                      ? 'alert active'
+                                      : `${item.threshold} passes left to alert`}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-slate-600" title="No alert threshold set">—</span>
+                              )}
+                            </td>
+
 
                             <td className="px-4 py-3 text-center">
                               <span className={`px-2 py-1 rounded text-xs font-medium border ${getStatusColor(item.status)}`}>
@@ -698,7 +727,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                           
                           {expandedItem === item.id && (
                             <tr className="bg-slate-900/30">
-                              <td colSpan={7} className="px-4 py-4">
+                              <td colSpan={8} className="px-4 py-4">
+
                                 <div className="grid md:grid-cols-3 gap-4">
                                   <div>
                                     <p className="text-sm text-slate-400 mb-1">Last Service</p>
