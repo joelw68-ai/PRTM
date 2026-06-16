@@ -82,6 +82,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         { id: 'packtrailer', label: 'Pack the Trailer', icon: PackageCheck },
         { id: 'todo', label: 'To Do', icon: ListTodo },
         { id: 'maintenance', label: 'Maintenance', icon: Wrench },
+        { id: 'sfi-certs', label: 'SFI Certifications', icon: Shield },
       ],
     },
     {

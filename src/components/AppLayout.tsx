@@ -32,6 +32,7 @@ import PartsUsageHistory from './race/PartsUsageHistory';
 import BackupRestore from './race/BackupRestore';
 
 import MaintenanceTracker from './race/MaintenanceTracker';
+import SFICertifications from './race/SFICertifications';
 import TeamNotes from './race/TeamNotes';
 import HeroSection from './race/HeroSection';
 
@@ -326,6 +327,9 @@ const AppLayoutContent: React.FC = () => {
 
       case 'maintenance':
         return <MaintenanceTracker onNavigate={handleNavigate} currentRole={currentRole} />;
+
+      case 'sfi-certs':
+        return <SFICertifications onNavigate={handleNavigate} currentRole={currentRole} />;
 
       case 'checklists':
         return (
