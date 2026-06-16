@@ -977,7 +977,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
         </div>
 
         {/* ═══════════ Quick Stats Row ═══════════ */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
           <button onClick={() => onNavigate('passlog')} className="bg-slate-800/60 rounded-xl border border-slate-700/50 p-4 hover:bg-slate-800 transition-colors text-left group">
             <div className="flex items-center gap-2 mb-2">
               <Gauge className="w-4 h-4 text-green-400" />
@@ -1000,27 +1000,51 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             <p className="text-[10px] text-slate-500 mt-1">installed / active</p>
           </button>
 
-          {/* Maintenance — opens Maintenance modal (maintenance + SFI certs) */}
+          {/* Maintenance — opens Maintenance modal (maintenance only, no SFI certs) */}
           <button
             onClick={() => { setAlertFilter('all'); setAlertModalView('maintenance'); }}
             className={`bg-slate-800/60 rounded-xl border p-4 transition-colors text-left ${
-              activeAlerts.maintTotal > 0
+              activeAlerts.maintenance.length > 0
                 ? 'border-red-500/40 hover:bg-red-500/10'
                 : 'border-slate-700/50 hover:bg-slate-800'
             }`}
           >
             <div className="flex items-center gap-2 mb-2">
-              <Wrench className={`w-4 h-4 ${activeAlerts.maintTotal > 0 ? 'text-red-400' : 'text-blue-400'}`} />
+              <Wrench className={`w-4 h-4 ${activeAlerts.maintenance.length > 0 ? 'text-red-400' : 'text-blue-400'}`} />
               <span className="text-xs text-slate-400">Maintenance</span>
             </div>
-            <p className={`text-2xl font-bold ${activeAlerts.maintTotal > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-              {activeAlerts.maintTotal}
+            <p className={`text-2xl font-bold ${activeAlerts.maintenance.length > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+              {activeAlerts.maintenance.length}
             </p>
             <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
-              {activeAlerts.maintTotal === 0
+              {activeAlerts.maintenance.length === 0
                 ? 'all current'
-                : `${activeAlerts.maintenance.length} due · ${activeAlerts.certs.length} certs`}
-              {activeAlerts.maintTotal > 0 && <ChevronRight className="w-3 h-3" />}
+                : `${activeAlerts.maintenance.length} due`}
+              {activeAlerts.maintenance.length > 0 && <ChevronRight className="w-3 h-3" />}
+            </p>
+          </button>
+
+          {/* SFI Certifications — opens the dedicated SFI Certifications page */}
+          <button
+            onClick={() => onNavigate('sfi-certs')}
+            className={`bg-slate-800/60 rounded-xl border p-4 transition-colors text-left ${
+              activeAlerts.certs.length > 0
+                ? 'border-red-500/40 hover:bg-red-500/10'
+                : 'border-slate-700/50 hover:bg-slate-800'
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <ShieldCheck className={`w-4 h-4 ${activeAlerts.certs.length > 0 ? 'text-red-400' : 'text-amber-400'}`} />
+              <span className="text-xs text-slate-400">SFI Certifications</span>
+            </div>
+            <p className={`text-2xl font-bold ${activeAlerts.certs.length > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+              {activeAlerts.certs.length}
+            </p>
+            <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
+              {activeAlerts.certs.length === 0
+                ? 'all current'
+                : `${activeAlerts.certs.length} expired/expiring`}
+              <ChevronRight className="w-3 h-3" />
             </p>
           </button>
 
@@ -1555,13 +1579,13 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
         {/* ═══════════ Alerts Modal (Maintenance OR Parts) ═══════════ */}
         {alertModalView !== null && (() => {
           const isMaint = alertModalView === 'maintenance';
-          const viewTotal = isMaint ? activeAlerts.maintTotal : activeAlerts.partsTotal;
+          // Maintenance modal now shows maintenance items ONLY (SFI certs live on their own page)
+          const viewTotal = isMaint ? activeAlerts.maintenance.length : activeAlerts.partsTotal;
           // Snoozed count relevant to this view only
           const viewSnoozed = isMaint
-            ? (componentStatus.dueMaintenance.length - activeAlerts.maintenance.length) +
-              (componentStatus.certAlerts.length - activeAlerts.certs.length)
+            ? (componentStatus.dueMaintenance.length - activeAlerts.maintenance.length)
             : (componentStatus.lowStockParts.length - activeAlerts.parts.length);
-          const shownCount = isMaint ? filteredCount : activeAlerts.parts.length;
+          const shownCount = isMaint ? activeAlerts.maintenance.length : activeAlerts.parts.length;
           return (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
@@ -1583,7 +1607,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                   </div>
                   <div>
                     <h2 className="text-base font-bold text-white">
-                      {isMaint ? 'Maintenance & SFI Certs' : 'Parts Stock'}
+                      {isMaint ? 'Maintenance Due' : 'Parts Stock'}
                     </h2>
                     <p className="text-xs text-slate-400">
                       {viewTotal} item{viewTotal === 1 ? '' : 's'} need attention
@@ -1610,38 +1634,12 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                     <p className="text-sm font-medium text-white">All clear</p>
                     <p className="text-xs text-slate-400 mt-1">
                       {isMaint
-                        ? 'No maintenance or certification alerts right now.'
+                        ? 'No maintenance items are due right now.'
                         : 'No low or out of stock parts right now.'}
                     </p>
                   </div>
                 ) : (
                   <>
-                    {/* Filter toggle buttons — maintenance view only */}
-                    {isMaint && (
-                      <div className="flex flex-wrap items-center gap-1.5 -mt-1">
-                        {([
-                          { id: 'all', label: 'All', count: activeAlerts.maintTotal },
-                          { id: 'maintenance', label: 'Maintenance', count: activeAlerts.maintenance.length },
-                          { id: 'certs', label: 'SFI Certs', count: activeAlerts.certs.length },
-                        ] as const).map((f) => (
-                          <button
-                            key={f.id}
-                            onClick={() => setAlertFilter(f.id)}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                              alertFilter === f.id
-                                ? 'bg-blue-600 border-blue-500 text-white'
-                                : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white'
-                            }`}
-                          >
-                            {f.label}
-                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                              alertFilter === f.id ? 'bg-white/20 text-white' : 'bg-slate-900 text-slate-400'
-                            }`}>{f.count}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
                     <p className="text-[11px] text-slate-400 flex items-center gap-1.5 flex-wrap">
                       <Users className="w-3.5 h-3.5 text-slate-500" />
                       Showing <span className="text-slate-200 font-semibold">{shownCount}</span> alert{shownCount === 1 ? '' : 's'}.
@@ -1653,20 +1651,9 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                       )}
                     </p>
 
-                    {isMaint && shownCount === 0 && (
-                      <div className="text-center py-8">
-                        <div className="w-12 h-12 rounded-full bg-emerald-500/15 flex items-center justify-center mx-auto mb-2">
-                          <CheckSquare className="w-6 h-6 text-emerald-400" />
-                        </div>
-                        <p className="text-sm font-medium text-white">Nothing to show</p>
-                        <p className="text-xs text-slate-400 mt-1">
-                          {viewSnoozed > 0 ? 'All matching alerts are snoozed for now.' : 'No alerts match this filter.'}
-                        </p>
-                      </div>
-                    )}
 
                     {/* Maintenance Due — maintenance view */}
-                    {isMaint && (alertFilter === 'all' || alertFilter === 'maintenance') && activeAlerts.maintenance.length > 0 && (
+                    {isMaint && activeAlerts.maintenance.length > 0 && (
                       <div>
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
@@ -1718,62 +1705,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                       </div>
                     )}
 
-                    {/* SFI Certifications — maintenance view */}
-                    {isMaint && (alertFilter === 'all' || alertFilter === 'certs') && activeAlerts.certs.length > 0 && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <ShieldCheck className="w-4 h-4 text-amber-400" />
-                            <span className="text-sm font-semibold text-white">SFI Certs (Expired &amp; Expiring)</span>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 font-medium">
-                              {activeAlerts.certs.length}
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => { setAlertModalView(null); onNavigate('maintenance'); }}
-                            className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1"
-                          >
-                            View Certs <ChevronRight className="w-3 h-3" />
-                          </button>
-                        </div>
-                        <div className="space-y-1.5">
-                          {activeAlerts.certs.map((c) => {
-                            const key = `cert-${c.id}`;
-                            return (
-                              <div
-                                key={c.id}
-                                className="flex items-center gap-2 p-3 rounded-lg bg-slate-800/60 border border-slate-700/40"
-                              >
-                                <button
-                                  onClick={() => { setAlertModalView(null); onNavigate('maintenance'); }}
-                                  className="min-w-0 flex-1 text-left hover:opacity-80 transition-opacity"
-                                >
-                                  <p className="text-xs font-medium text-white truncate">{c.item}</p>
-                                  <p className="text-[10px] text-slate-400 truncate">
-                                    {c.sfiSpec ? `${c.sfiSpec} · ` : ''}Exp: {c.expirationDate || 'N/A'}
-                                  </p>
-                                </button>
-                                <SnoozeControl alertKey={key} />
-                                <select
-                                  value={alertAssignees[key] || ''}
-                                  onChange={(e) => setAssignee(key, e.target.value)}
-                                  className="text-[10px] bg-slate-900 border border-slate-600 rounded px-1.5 py-1 text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500 max-w-[100px]"
-                                  title="Assign crew member"
-                                >
-                                  <option value="">Unassigned</option>
-                                  {crewRoster.map((n) => (<option key={n} value={n}>{n}</option>))}
-                                </select>
-                                <span className={`text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 ${
-                                  c.daysUntilExpiration <= 0 ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'
-                                }`}>
-                                  {c.daysUntilExpiration < 0 ? `${Math.abs(c.daysUntilExpiration)}d expired` : c.daysUntilExpiration === 0 ? 'Expires today' : `${c.daysUntilExpiration}d left`}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
+
 
                     {/* Low / Out of Stock Parts — parts view */}
                     {!isMaint && activeAlerts.parts.length > 0 && (
