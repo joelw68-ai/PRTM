@@ -424,7 +424,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   {expiredCerts.map(cert => <p key={cert.id} data-mixed-content="true">• {cert.item} - SFI EXPIRED</p>)}
                 </div>
               </div>
-              <button onClick={() => onNavigate('maintenance')} className="px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-colors">
+              <button onClick={() => onNavigate('sfi-certs')} className="px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-colors">
                 View All
               </button>
             </div>
@@ -1178,12 +1178,12 @@ const Dashboard: React.FC<DashboardProps> = ({
             SECTION 11: SFI CERTIFICATIONS ALERTS
         ═══════════════════════════════════════════════════════════ */}
         <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6 mb-6">
-          <SectionHeader icon={Shield} title="SFI Certifications" iconColor="text-rose-400" navTarget="maintenance" count={expiredCerts.length + expiringSoonCerts.length} />
+          <SectionHeader icon={Shield} title="SFI Certifications" iconColor="text-rose-400" navTarget="sfi-certs" count={expiredCerts.length + expiringSoonCerts.length} />
           {carSfiCertifications.length === 0 ? (
             <div className="text-center py-4">
               <Shield className="w-8 h-8 text-slate-600 mx-auto mb-2" />
               <p className="text-slate-400 text-sm">No SFI certifications tracked</p>
-              <button onClick={() => onNavigate('maintenance')} className="mt-2 text-sm text-orange-400 hover:text-orange-300">
+              <button onClick={() => onNavigate('sfi-certs')} className="mt-2 text-sm text-orange-400 hover:text-orange-300">
                 Add certifications →
               </button>
             </div>

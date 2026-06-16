@@ -14,7 +14,7 @@ import {
   Car, Gauge, ClipboardList, Wrench, Package, Calendar, BarChart3,
   Camera, History, Cog, ArrowLeftRight, DollarSign, Receipt, Fuel,
   CheckSquare, ListTodo, FileText, User, SlidersHorizontal,
-  AlertTriangle, ChevronRight, Users
+  AlertTriangle, ChevronRight, Users, Shield
 } from 'lucide-react';
 
 interface DashboardGridProps {
@@ -126,6 +126,17 @@ const DashboardGrid: React.FC<DashboardGridProps> = ({ onNavigate }) => {
         ? `${dueMaintenance.length} item${dueMaintenance.length !== 1 ? 's' : ''} due`
         : 'All caught up',
       alert: dueMaintenance.length > 0 ? dueMaintenance.length : null,
+    },
+    {
+      id: 'sfi-certs',
+      label: 'SFI Certifications',
+      icon: Shield,
+      color: 'from-rose-500 to-red-600',
+      bgColor: 'bg-rose-500/10 border-rose-500/20',
+      preview: sfiCertifications.length > 0
+        ? `${sfiCertifications.length} cert${sfiCertifications.length !== 1 ? 's' : ''}${expiredCerts.length > 0 ? ` · ${expiredCerts.length} expired` : ''}`
+        : 'No certifications tracked',
+      alert: expiredCerts.length > 0 ? expiredCerts.length : null,
     },
     {
       id: 'engines',
@@ -260,7 +271,7 @@ const DashboardGrid: React.FC<DashboardGridProps> = ({ onNavigate }) => {
               </p>
             </div>
             <button
-              onClick={() => onNavigate('maintenance')}
+              onClick={() => onNavigate(overdueMaintenance.length > 0 ? 'maintenance' : 'sfi-certs')}
               className="px-3 py-1.5 bg-red-500/20 text-red-300 rounded-lg text-xs font-medium hover:bg-red-500/30 transition-colors flex items-center gap-1"
             >
               View <ChevronRight className="w-3 h-3" />

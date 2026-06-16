@@ -7,8 +7,7 @@ import DateInputDark from '@/components/ui/DateInputDark';
 
 import { useApp } from '@/contexts/AppContext';
 import { CrewRole } from '@/lib/permissions';
-import { MaintenanceItem, SFICertification, calculateMaintenanceStatus } from '@/data/proModData';
-import { loadSFIAlertSettings, getEffectiveThresholdsForCert } from '@/lib/sfiAlerts';
+import { MaintenanceItem, calculateMaintenanceStatus } from '@/data/proModData';
 import MaintenanceTemplates from './MaintenanceTemplates';
 
 import CompleteMaintenanceModal, {
@@ -51,13 +50,9 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
   const { 
     maintenanceItems, 
-    sfiCertifications, 
     updateMaintenanceItem, 
     addMaintenanceItem,
     deleteMaintenanceItem,
-    addSFICertification,
-    updateSFICertification,
-    deleteSFICertification,
     vendors: allVendors,
   } = useApp();
 
@@ -65,7 +60,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
 
   
-  const [activeTab, setActiveTab] = useState<'maintenance' | 'sfi' | 'templates'>('maintenance');
+  const [activeTab, setActiveTab] = useState<'maintenance' | 'templates'>('maintenance');
 
 
 
@@ -75,10 +70,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   
   // Modals
   const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
-  const [showSFIModal, setShowSFIModal] = useState(false);
   const [editingMaintenance, setEditingMaintenance] = useState<MaintenanceItem | null>(null);
-  const [editingSFI, setEditingSFI] = useState<SFICertification | null>(null);
-
   // Complete Maintenance Modal (uses separate CompleteMaintenanceModal component)
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [completingItem, setCompletingItem] = useState<MaintenanceItem | null>(null);
@@ -256,8 +248,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
-            <h2 className="text-2xl font-bold text-white">Maintenance & Safety</h2>
-            <p className="text-slate-400">Pass-count driven maintenance schedules and SFI certifications</p>
+            <h2 className="text-2xl font-bold text-white">Maintenance</h2>
+            <p className="text-slate-400">Pass-count driven maintenance schedules</p>
           </div>
         </div>
 
