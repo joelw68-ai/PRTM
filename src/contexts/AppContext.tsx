@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { checkNewlyTriggeredAlerts, loadAlertSettings } from '@/lib/maintenanceAlerts';
 import { checkSFIAlerts, checkNewlyTriggeredSFIAlerts, loadSFIAlertSettings } from '@/lib/sfiAlerts';
 import { loadAlertSnoozes, getTodayStr, isAlertSnoozed, alertKey } from '@/lib/alertSnooze';
+import { getAlertTotalCount } from '@/lib/alertDetails';
 
 
 import {
@@ -2102,46 +2103,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const getTotalPasses = useCallback(() => passLogs.length, [passLogs]);
   
   const getAlertCount = useCallback(() => {
-    // Load the snooze map once; alerts snoozed to today-or-later are EXCLUDED
-    // from the bell count so the nav badge matches the dashboard exactly.
-    const snoozes = loadAlertSnoozes();
-    const today = getTodayStr();
-    const notSnoozed = (key: string) => !isAlertSnoozed(key, snoozes, today);
-
-    // Hardcoded expired/expiring counts (always shown) — minus snoozed
-    const expiredCerts = sfiCertifications.filter(
-      c => c.daysUntilExpiration <= 0 && notSnoozed(alertKey.cert(c.id))
-    ).length;
-    // Maintenance: recompute status from current pass counts + per-item threshold
-    // so the bell matches the dashboard and respects configured thresholds.
-    //   • Items WITH a custom threshold alert only once they leave "Good"
-    //     (i.e. remaining passes have reached the configured threshold).
-    //   • Items WITHOUT a threshold use the legacy Due/Overdue rule.
-    const dueMaintenance = maintenanceItems.filter((m) => {
-      if (!notSnoozed(alertKey.maintenance(m.id))) return false;
-      const status = calculateMaintenanceStatus(m);
-      const hasThreshold = m.threshold != null && m.threshold >= 0;
-      return hasThreshold ? status !== 'Good' : (status === 'Due' || status === 'Overdue');
-    }).length;
-
-    const lowStockParts = partsInventory.filter(
-      p => (p.status === 'Low Stock' || p.status === 'Out of Stock') && notSnoozed(alertKey.part(p.id))
-    ).length;
-
-    // SFI threshold alerts (configurable, may include certs beyond the hardcoded 60-day window)
-    let sfiThresholdCount = 0;
-    try {
-      const sfiSettings = loadSFIAlertSettings();
-      if (sfiSettings.enabled && sfiSettings.showBellAlerts) {
-        const sfiAlerts = checkSFIAlerts(sfiCertifications, sfiSettings);
-        // Exclude already-counted expired certs (avoid double-count) AND snoozed certs
-        sfiThresholdCount = sfiAlerts.filter(
-          a => a.daysUntilExpiration > 0 && notSnoozed(alertKey.cert(a.certId))
-        ).length;
-      }
-    } catch {}
-
-    return expiredCerts + sfiThresholdCount + dueMaintenance + lowStockParts;
+    // SINGLE SOURCE OF TRUTH — derive the badge number from the exact same
+    // canonical alert engine (buildAlertDetails) used by the Alert Center modal,
+    // the login popup and the dashboard. This guarantees the bell badge count
+    // always equals the number of alerts shown everywhere else (snooze-aware,
+    // threshold-aware maintenance, SFI expired + threshold, low stock).
+    // snoozeVersion is referenced so the badge recomputes when snoozes change.
+    void snoozeVersion;
+    return getAlertTotalCount(sfiCertifications, maintenanceItems, partsInventory);
   }, [sfiCertifications, maintenanceItems, partsInventory, snoozeVersion]);
 
 

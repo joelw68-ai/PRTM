@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useApp } from '@/contexts/AppContext';
 import { useThemeColor, useAccentStyles } from '@/contexts/ThemeColorContext';
@@ -6,6 +6,8 @@ import { useRaceDay } from '@/contexts/RaceDayContext';
 import { CrewRole, isAdminRole, hasPermission, getRoleColor } from '@/lib/permissions';
 import SaveStatusIndicator from '@/components/race/SaveStatusIndicator';
 import GlobalSearch from '@/components/race/GlobalSearch';
+import AlertCenterModal from '@/components/race/AlertCenterModal';
+import { buildAlertDetails } from '@/lib/alertDetails';
 
 import {
   Gauge, ClipboardList, Wrench, Shield, Settings,
@@ -46,16 +48,21 @@ const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
 }) => {
   const { user, profile, isAuthenticated, isDemoMode, signOut, disableDemoMode, isLoading: authLoading, isTeamMember, activeTeamMembership } = useAuth();
-  const { getAlertCount, saveStatus, lastSaveTime, lastSaveError, retrySave, refreshData, isSyncing, syncError, lastSyncTime, isOnline, pendingOfflineCount, hasConnectivityIssue, isOfflineSyncing, offlineSyncProgress, syncOfflineQueue } = useApp();
+  const { getAlertCount, sfiCertifications, maintenanceItems, partsInventory, saveStatus, lastSaveTime, lastSaveError, retrySave, refreshData, isSyncing, syncError, lastSyncTime, isOnline, pendingOfflineCount, hasConnectivityIssue, isOfflineSyncing, offlineSyncProgress, syncOfflineQueue } = useApp();
   const { colors } = useThemeColor();
   const styles = useAccentStyles();
   const { isRaceDayMode, toggleRaceDayMode, raceDaySections } = useRaceDay();
   const alertCount = getAlertCount();
 
+  const alertDetails = useMemo(
+    () => buildAlertDetails(sfiCertifications, maintenanceItems, partsInventory),
+    [sfiCertifications, maintenanceItems, partsInventory]
+  );
 
   const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set());
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showAlertCenter, setShowAlertCenter] = useState(false);
 
   const canAccessAdmin = !isTeamMember
     ? (isAdminRole(currentRole) || hasPermission(currentRole, 'settings.admin'))
@@ -209,7 +216,8 @@ const Sidebar: React.FC<SidebarProps> = ({
           {/* Alert Badge */}
           {alertCount > 0 && (
             <button
-              onClick={() => handleNavigate('maintenance')}
+              onClick={() => setShowAlertCenter(true)}
+              title="View all alerts"
               className="relative p-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
             >
               <Bell className="w-3.5 h-3.5" />
@@ -220,6 +228,14 @@ const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
       )}
+
+      {/* Alert Center Modal */}
+      <AlertCenterModal
+        isOpen={showAlertCenter}
+        onClose={() => setShowAlertCenter(false)}
+        alerts={alertDetails}
+        onNavigate={handleNavigate}
+      />
 
       {/* Race Day Mode Toggle */}
       {!collapsed && (

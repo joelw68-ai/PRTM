@@ -24,7 +24,10 @@ import {
   Supercharger,
   MaintenanceItem,
   SFICertification,
+  calculateMaintenanceStatus,
 } from '@/data/proModData';
+import { checkSFIAlerts, loadSFIAlertSettings } from '@/lib/sfiAlerts';
+import { loadAlertSnoozes, getTodayStr, isAlertSnoozed, alertKey } from '@/lib/alertSnooze';
 
 import { PartInventoryItem } from '@/data/partsInventory';
 import { VendorRecord, DrivetrainComponent, ComponentPart } from '@/lib/database';
@@ -268,12 +271,51 @@ const Dashboard: React.FC<DashboardProps> = ({
   const activeSupercharger = getActiveSupercharger();
   const latestPass = carPassLogs[0];
 
-  // Calculate alerts
-  const expiredCerts = carSfiCertifications.filter(c => c.daysUntilExpiration <= 0);
-  const expiringSoonCerts = carSfiCertifications.filter(c => c.daysUntilExpiration > 0 && c.daysUntilExpiration <= 60);
-  const dueMaintenance = carMaintenanceItems.filter(m => m.status === 'Due' || m.status === 'Due Soon' || m.status === 'Overdue');
+  // ── Calculate alerts — uses the SAME canonical rules as the nav bell badge,
+  //    the Alert Center modal and the login popup so every surface agrees:
+  //      • snooze-aware (Team Dashboard snoozes are excluded everywhere)
+  //      • maintenance status recomputed + threshold-aware
+  //      • SFI "expiring soon" driven by the configured alert thresholds
+  //        (not a hardcoded 60-day window)
+  const alertSnoozes = loadAlertSnoozes();
+  const alertToday = getTodayStr();
+  const notSnoozed = (key: string) => !isAlertSnoozed(key, alertSnoozes, alertToday);
+
+  const expiredCerts = carSfiCertifications.filter(
+    c => c.daysUntilExpiration <= 0 && notSnoozed(alertKey.cert(c.id))
+  );
+
+  // Expiring soon = certs flagged by the configured SFI alert thresholds
+  // (days remaining > 0), excluding expired and snoozed.
+  const expiringSoonCerts = useMemo(() => {
+    try {
+      const sfiSettings = loadSFIAlertSettings();
+      if (!sfiSettings.enabled) return [] as SFICertification[];
+      const flagged = checkSFIAlerts(carSfiCertifications, sfiSettings);
+      const flaggedIds = new Set(
+        flagged
+          .filter(a => a.daysUntilExpiration > 0 && notSnoozed(alertKey.cert(a.certId)))
+          .map(a => a.certId)
+      );
+      return carSfiCertifications.filter(c => flaggedIds.has(c.id));
+    } catch {
+      return carSfiCertifications.filter(
+        c => c.daysUntilExpiration > 0 && c.daysUntilExpiration <= 60 && notSnoozed(alertKey.cert(c.id))
+      );
+    }
+  }, [carSfiCertifications, alertSnoozes, alertToday]);
+
+  const dueMaintenance = carMaintenanceItems.filter((m) => {
+    if (!notSnoozed(alertKey.maintenance(m.id))) return false;
+    const status = calculateMaintenanceStatus(m);
+    const hasThreshold = (m as any).threshold != null && (m as any).threshold >= 0;
+    return hasThreshold ? status !== 'Good' : status === 'Due' || status === 'Overdue';
+  });
+
   const availableEngines = carEngines.filter(e => !e.currentlyInstalled && e.status === 'Ready');
-  const lowStockParts = carPartsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
+  const lowStockParts = carPartsInventory.filter(
+    p => (p.status === 'Low Stock' || p.status === 'Out of Stock') && notSnoozed(alertKey.part(p.id))
+  );
 
 
   // Upcoming race events — use local date (not UTC) to match todayStr

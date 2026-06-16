@@ -7,6 +7,8 @@ import { getLocalDateString, parseLocalDate } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { parseRows } from '@/lib/validatedQuery';
 import { BorrowedLoanedPartRowSchema } from '@/lib/validators';
+import { calculateMaintenanceStatus } from '@/data/proModData';
+import { loadAlertSnoozes, getTodayStr, isAlertSnoozed, alertKey } from '@/lib/alertSnooze';
 
 import {
   Car, Gauge, ClipboardList, Wrench, Package, Calendar, BarChart3,
@@ -59,8 +61,24 @@ const DashboardGrid: React.FC<DashboardGridProps> = ({ onNavigate }) => {
     load();
   }, [effectiveUserId, user?.id, isDemoMode]);
 
-  const dueMaintenance = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Due Soon' || m.status === 'Overdue');
-  const lowStockParts = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
+  // Use the SAME canonical alert rules as the nav bell, login popup and Alert
+  // Center so every surface shows identical counts (snooze-aware + threshold-aware).
+  const _snoozes = loadAlertSnoozes();
+  const _today = getTodayStr();
+  const _notSnoozed = (key: string) => !isAlertSnoozed(key, _snoozes, _today);
+
+  const dueMaintenance = maintenanceItems.filter((m) => {
+    if (!_notSnoozed(alertKey.maintenance(m.id))) return false;
+    const status = calculateMaintenanceStatus(m);
+    const hasThreshold = (m as any).threshold != null && (m as any).threshold >= 0;
+    return hasThreshold ? status !== 'Good' : status === 'Due' || status === 'Overdue';
+  });
+  const overdueMaintenance = maintenanceItems.filter(
+    (m) => _notSnoozed(alertKey.maintenance(m.id)) && calculateMaintenanceStatus(m) === 'Overdue'
+  );
+  const lowStockParts = partsInventory.filter(
+    p => (p.status === 'Low Stock' || p.status === 'Out of Stock') && _notSnoozed(alertKey.part(p.id))
+  );
 
   const upcomingEvents = useMemo(() => {
     return (raceEvents || [])
@@ -68,7 +86,9 @@ const DashboardGrid: React.FC<DashboardGridProps> = ({ onNavigate }) => {
       .sort((a, b) => a.startDate.localeCompare(b.startDate))
       .slice(0, 3);
   }, [raceEvents, todayStr]);
-  const expiredCerts = sfiCertifications.filter(c => c.daysUntilExpiration <= 0);
+  const expiredCerts = sfiCertifications.filter(
+    c => c.daysUntilExpiration <= 0 && _notSnoozed(alertKey.cert(c.id))
+  );
   const bestET = passLogs.length > 0 ? Math.min(...passLogs.map(p => p.eighth)).toFixed(3) : null;
   const bestMPH = passLogs.length > 0 ? Math.max(...passLogs.map(p => p.mph)).toFixed(1) : null;
   const cards = [
@@ -228,15 +248,15 @@ const DashboardGrid: React.FC<DashboardGridProps> = ({ onNavigate }) => {
         </div>
 
         {/* Critical Alerts Banner */}
-        {(expiredCerts.length > 0 || dueMaintenance.filter(m => m.status === 'Overdue').length > 0) && (
+        {(expiredCerts.length > 0 || overdueMaintenance.length > 0) && (
           <div className="bg-red-500/15 border border-red-500/40 rounded-xl p-4 mb-6 flex items-center gap-3">
             <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0" />
             <div className="flex-1">
               <p className="text-red-300 font-semibold text-sm">Critical Alerts</p>
               <p className="text-red-400/80 text-xs mt-0.5">
                 {expiredCerts.length > 0 && `${expiredCerts.length} expired SFI cert${expiredCerts.length !== 1 ? 's' : ''}`}
-                {expiredCerts.length > 0 && dueMaintenance.filter(m => m.status === 'Overdue').length > 0 && ' · '}
-                {dueMaintenance.filter(m => m.status === 'Overdue').length > 0 && `${dueMaintenance.filter(m => m.status === 'Overdue').length} overdue maintenance`}
+                {expiredCerts.length > 0 && overdueMaintenance.length > 0 && ' · '}
+                {overdueMaintenance.length > 0 && `${overdueMaintenance.length} overdue maintenance`}
               </p>
             </div>
             <button

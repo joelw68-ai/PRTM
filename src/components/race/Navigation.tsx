@@ -4,8 +4,8 @@ import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { CrewRole, hasPermission, isAdminRole, getRoleColor } from '@/lib/permissions';
 import SaveStatusIndicator from '@/components/race/SaveStatusIndicator';
-import { checkMaintenanceAlerts, loadAlertSettings } from '@/lib/maintenanceAlerts';
-import { checkSFIAlerts, loadSFIAlertSettings } from '@/lib/sfiAlerts';
+import AlertCenterModal, { AlertDetail } from '@/components/race/AlertCenterModal';
+import { buildAlertDetails } from '@/lib/alertDetails';
 
 
 import {
@@ -69,139 +69,17 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
   const alertCount = getAlertCount();
   const [showOfflineTooltip, setShowOfflineTooltip] = useState(false);
   const [showAlertTooltip, setShowAlertTooltip] = useState(false);
+  const [showAlertCenter, setShowAlertCenter] = useState(false);
   const alertTooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Compute detailed alert breakdown for the tooltip
-  const alertDetails = useMemo(() => {
-    const details: { category: string; count: number; items: string[]; severity: 'critical' | 'warning'; navTarget: string }[] = [];
-
-    // ── SFI Certification Threshold Alerts ──
-    // Use configurable thresholds from sfiAlerts.ts instead of hardcoded 0/60 day checks
-    const expiredCerts = sfiCertifications.filter(c => c.daysUntilExpiration <= 0);
-    if (expiredCerts.length > 0) {
-      details.push({
-        category: 'Expired SFI Certifications',
-        count: expiredCerts.length,
-        items: expiredCerts.slice(0, 3).map(c => `${c.item} (${c.sfiSpec})`),
-        severity: 'critical',
-        navTarget: 'maintenance'
-      });
-    }
-
-    try {
-      const sfiSettings = loadSFIAlertSettings();
-      if (sfiSettings.enabled && sfiSettings.showBellAlerts) {
-        const sfiThresholdAlerts = checkSFIAlerts(sfiCertifications, sfiSettings);
-        // Exclude already-shown expired certs
-        const expiredIds = new Set(expiredCerts.map(c => c.id));
-        const additionalSFIAlerts = sfiThresholdAlerts.filter(a => !expiredIds.has(a.certId));
-
-        const criticalSFI = additionalSFIAlerts.filter(a => a.threshold.severity === 'critical');
-        const warningSFI = additionalSFIAlerts.filter(a => a.threshold.severity === 'warning');
-        const infoSFI = additionalSFIAlerts.filter(a => a.threshold.severity === 'info');
-
-        if (criticalSFI.length > 0) {
-          details.push({
-            category: 'SFI Certs — Critical',
-            count: criticalSFI.length,
-            items: criticalSFI.slice(0, 3).map(a => `${a.item} — ${a.daysUntilExpiration}d left`),
-            severity: 'critical',
-            navTarget: 'maintenance'
-          });
-        }
-        if (warningSFI.length > 0) {
-          details.push({
-            category: 'SFI Certs — Expiring Soon',
-            count: warningSFI.length,
-            items: warningSFI.slice(0, 3).map(a => `${a.item} — ${a.daysUntilExpiration}d left`),
-            severity: 'warning',
-            navTarget: 'maintenance'
-          });
-        }
-        if (infoSFI.length > 0) {
-          details.push({
-            category: 'SFI Certs — Approaching Expiration',
-            count: infoSFI.length,
-            items: infoSFI.slice(0, 3).map(a => `${a.item} — ${a.daysUntilExpiration}d left`),
-            severity: 'warning',
-            navTarget: 'maintenance'
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('[Navigation] Error loading SFI threshold alerts:', err);
-    }
-
-
-
-    const dueMaintenance = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Overdue');
-    if (dueMaintenance.length > 0) {
-      details.push({
-        category: 'Maintenance Due',
-        count: dueMaintenance.length,
-        items: dueMaintenance.slice(0, 3).map(m => `${m.component} (${m.status})`),
-        severity: dueMaintenance.some(m => m.status === 'Overdue') ? 'critical' : 'warning',
-        navTarget: 'maintenance'
-      });
-    }
-
-    try {
-      const alertSettings = loadAlertSettings();
-      if (alertSettings.enabled && alertSettings.showBellAlerts) {
-        const thresholdAlerts = checkMaintenanceAlerts(maintenanceItems, alertSettings);
-        const dueIds = new Set(dueMaintenance.map(m => m.id));
-        const additionalAlerts = thresholdAlerts.filter(a => !dueIds.has(a.maintenanceItemId));
-
-        const criticalThreshold = additionalAlerts.filter(a => a.threshold.severity === 'critical');
-        const warningThreshold = additionalAlerts.filter(a => a.threshold.severity === 'warning');
-        const infoThreshold = additionalAlerts.filter(a => a.threshold.severity === 'info');
-
-        if (criticalThreshold.length > 0) {
-          details.push({
-            category: 'Service Due (Threshold)',
-            count: criticalThreshold.length,
-            items: criticalThreshold.slice(0, 3).map(a => `${a.component} — ${a.percentUsed}% (${a.remainingPasses} left)`),
-            severity: 'critical',
-            navTarget: 'maintenance'
-          });
-        }
-        if (warningThreshold.length > 0) {
-          details.push({
-            category: 'Service Imminent',
-            count: warningThreshold.length,
-            items: warningThreshold.slice(0, 3).map(a => `${a.component} — ${a.percentUsed}% (${a.remainingPasses} passes left)`),
-            severity: 'warning',
-            navTarget: 'maintenance'
-          });
-        }
-        if (infoThreshold.length > 0) {
-          details.push({
-            category: 'Approaching Service',
-            count: infoThreshold.length,
-            items: infoThreshold.slice(0, 3).map(a => `${a.component} — ${a.percentUsed}% (${a.remainingPasses} passes left)`),
-            severity: 'warning',
-            navTarget: 'maintenance'
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('[Navigation] Error loading threshold alerts:', err);
-    }
-
-
-    const lowStockParts = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
-    if (lowStockParts.length > 0) {
-      details.push({
-        category: 'Low / Out of Stock Parts',
-        count: lowStockParts.length,
-        items: lowStockParts.slice(0, 3).map(p => `${p.name} (${p.onHand}/${p.minQuantity})`),
-        severity: lowStockParts.some(p => p.status === 'Out of Stock') ? 'critical' : 'warning',
-        navTarget: 'parts'
-      });
-    }
-
-    return details;
-  }, [sfiCertifications, maintenanceItems, partsInventory]);
+  // Detailed alert breakdown for the tooltip AND the Alert Center modal — derived
+  // from the SINGLE canonical alert engine so the breakdown always matches the
+  // bell badge count, the login popup and the dashboard (snooze-aware,
+  // threshold-aware maintenance, SFI expired + configured thresholds, low stock).
+  const alertDetails = useMemo<AlertDetail[]>(
+    () => buildAlertDetails(sfiCertifications, maintenanceItems, partsInventory),
+    [sfiCertifications, maintenanceItems, partsInventory]
+  );
 
 
 
@@ -476,8 +354,9 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
                 <button
                   onClick={() => {
                     setShowAlertTooltip(false);
-                    onNavigate('maintenance');
+                    setShowAlertCenter(true);
                   }}
+                  title="View all alerts"
                   className="relative p-1.5 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
                 >
                   <Bell className="w-4 h-4" />
@@ -559,11 +438,11 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
                       <button
                         onClick={() => {
                           setShowAlertTooltip(false);
-                          onNavigate('maintenance');
+                          setShowAlertCenter(true);
                         }}
                         className="w-full text-center text-[11px] text-orange-400 hover:text-orange-300 font-medium transition-colors"
                       >
-                        View All Alerts in Maintenance
+                        Open Alert Center
                       </button>
                     </div>
                   </div>
@@ -847,6 +726,14 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, activeSection, onOp
           </div>
         )}
       </div>
+
+      {/* ═══════════ Alert Center Modal ═══════════ */}
+      <AlertCenterModal
+        isOpen={showAlertCenter}
+        onClose={() => setShowAlertCenter(false)}
+        alerts={alertDetails}
+        onNavigate={onNavigate}
+      />
     </nav>
   );
 };

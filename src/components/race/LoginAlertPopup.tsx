@@ -5,10 +5,11 @@ import { getLocalDateString, parseLocalDate } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { parseRows } from '@/lib/validatedQuery';
 import { BorrowedLoanedPartRowSchema } from '@/lib/validators';
+import { buildAlertDetails } from '@/lib/alertDetails';
 
 import {
   AlertTriangle, Wrench, Package, ArrowLeftRight,
-  X, ChevronRight, Bell, Clock
+  X, ChevronRight, Bell, Clock, Shield
 } from 'lucide-react';
 
 
@@ -30,13 +31,24 @@ interface AlertItem {
   severity: 'critical' | 'warning' | 'info';
 }
 
+// Pick an icon for an alert category produced by the canonical alert engine.
+const iconForCategory = (category: string, navTarget: string): React.ElementType => {
+  const cat = category.toLowerCase();
+  if (cat.includes('sfi') || cat.includes('cert')) return Shield;
+  if (cat.includes('stock') || cat.includes('part') || navTarget === 'parts') return Package;
+  if (cat.includes('overdue')) return AlertTriangle;
+  return Wrench;
+};
+
 const LoginAlertPopup: React.FC<LoginAlertPopupProps> = ({ onNavigate, onDismiss }) => {
-  const { maintenanceItems, partsInventory } = useApp();
+  // Pull the SAME data the bell, dashboard and Alert Center use.
+  const { sfiCertifications, maintenanceItems, partsInventory } = useApp();
 
   const { user, isDemoMode, effectiveUserId } = useAuth();
   const todayStr = getLocalDateString();
 
-  // Borrowed/Loaned parts
+  // Borrowed/Loaned parts (shown as an extra reminder section — these are not
+  // part of the bell badge count, so they're listed separately below).
   interface BLPart {
     id: string;
     transaction_type: 'borrowed' | 'loaned';
@@ -63,64 +75,36 @@ const LoginAlertPopup: React.FC<LoginAlertPopupProps> = ({ onNavigate, onDismiss
     load();
   }, [effectiveUserId, user?.id, isDemoMode]);
 
-  const alerts = useMemo(() => {
+  // ── CORE ALERTS: derived from the canonical alert engine so this popup
+  //    always matches the nav bell badge, the Alert Center and the dashboard. ──
+  const coreAlerts = useMemo<AlertItem[]>(() => {
+    const details = buildAlertDetails(sfiCertifications, maintenanceItems, partsInventory);
+    return details.map((d, idx) => {
+      const isCritical = d.severity === 'critical';
+      return {
+        id: `core-${idx}`,
+        category: d.category,
+        icon: iconForCategory(d.category, d.navTarget),
+        iconColor: isCritical ? 'text-red-400' : 'text-yellow-400',
+        bgColor: isCritical ? 'bg-red-500/10' : 'bg-yellow-500/10',
+        borderColor: isCritical ? 'border-red-500/30' : 'border-yellow-500/30',
+        message: `${d.count} ${d.category.toLowerCase()}`,
+        detail: d.items.join(', '),
+        navTarget: d.navTarget,
+        severity: d.severity,
+      };
+    });
+  }, [sfiCertifications, maintenanceItems, partsInventory]);
+
+  // The header count reflects the canonical alert total (matches the bell badge).
+  const coreCount = useMemo(
+    () => buildAlertDetails(sfiCertifications, maintenanceItems, partsInventory).reduce((s, a) => s + a.count, 0),
+    [sfiCertifications, maintenanceItems, partsInventory]
+  );
+
+  // ── EXTRA: Borrowed/Loaned parts needing action (separate reminder) ──
+  const blAlerts = useMemo<AlertItem[]>(() => {
     const items: AlertItem[] = [];
-
-    // Overdue maintenance
-    const overdueMaint = maintenanceItems.filter(m => m.status === 'Overdue');
-    if (overdueMaint.length > 0) {
-      items.push({
-        id: 'maint-overdue',
-        category: 'Overdue Maintenance',
-        icon: AlertTriangle,
-        iconColor: 'text-red-400',
-        bgColor: 'bg-red-500/10',
-        borderColor: 'border-red-500/30',
-        message: `${overdueMaint.length} maintenance item${overdueMaint.length !== 1 ? 's' : ''} overdue`,
-        detail: overdueMaint.slice(0, 3).map(m => m.component).join(', '),
-        navTarget: 'maintenance',
-        severity: 'critical',
-      });
-    }
-
-    // Upcoming maintenance (Due or Due Soon)
-    const upcomingMaint = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Due Soon');
-    if (upcomingMaint.length > 0) {
-      items.push({
-        id: 'maint-upcoming',
-        category: 'Upcoming Maintenance',
-        icon: Wrench,
-        iconColor: 'text-yellow-400',
-        bgColor: 'bg-yellow-500/10',
-        borderColor: 'border-yellow-500/30',
-        message: `${upcomingMaint.length} maintenance item${upcomingMaint.length !== 1 ? 's' : ''} due soon`,
-        detail: upcomingMaint.slice(0, 3).map(m => m.component).join(', '),
-        navTarget: 'maintenance',
-        severity: 'warning',
-      });
-    }
-
-
-
-    // Low stock parts
-    const lowStock = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
-    if (lowStock.length > 0) {
-      const outOfStock = lowStock.filter(p => p.status === 'Out of Stock').length;
-      items.push({
-        id: 'parts-lowstock',
-        category: 'Low Parts Inventory',
-        icon: Package,
-        iconColor: outOfStock > 0 ? 'text-red-400' : 'text-yellow-400',
-        bgColor: outOfStock > 0 ? 'bg-red-500/10' : 'bg-yellow-500/10',
-        borderColor: outOfStock > 0 ? 'border-red-500/30' : 'border-yellow-500/30',
-        message: `${lowStock.length} part${lowStock.length !== 1 ? 's' : ''} low or out of stock`,
-        detail: lowStock.slice(0, 3).map(p => `${p.name || p.description} (${p.onHand}/${p.minQuantity})`).join(', '),
-        navTarget: 'parts',
-        severity: outOfStock > 0 ? 'critical' : 'warning',
-      });
-    }
-
-    // Borrowed/Loaned parts needing action
     const blOverdue = borrowedLoanedParts.filter(p => p.expected_return_date && p.expected_return_date < todayStr);
     const blDueSoon = borrowedLoanedParts.filter(p => {
       if (!p.expected_return_date) return false;
@@ -149,10 +133,10 @@ const LoginAlertPopup: React.FC<LoginAlertPopupProps> = ({ onNavigate, onDismiss
         severity: blOverdue.length > 0 ? 'critical' : 'warning',
       });
     }
-
     return items;
-  }, [maintenanceItems, partsInventory, borrowedLoanedParts, todayStr]);
+  }, [borrowedLoanedParts, todayStr]);
 
+  const alerts = useMemo(() => [...coreAlerts, ...blAlerts], [coreAlerts, blAlerts]);
 
   // Don't show if no alerts
   if (alerts.length === 0) return null;
@@ -172,7 +156,10 @@ const LoginAlertPopup: React.FC<LoginAlertPopupProps> = ({ onNavigate, onDismiss
             </div>
             <div>
               <h2 className="text-lg font-bold text-white">Attention Needed</h2>
-              <p className="text-xs text-slate-400">{alerts.length} alert{alerts.length !== 1 ? 's' : ''} require your attention</p>
+              <p className="text-xs text-slate-400">
+                {coreCount} active alert{coreCount !== 1 ? 's' : ''}
+                {blAlerts.length > 0 && ' · plus borrowed/loaned reminders'}
+              </p>
             </div>
           </div>
           <button
@@ -207,7 +194,7 @@ const LoginAlertPopup: React.FC<LoginAlertPopupProps> = ({ onNavigate, onDismiss
                         <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded text-[10px] font-bold">URGENT</span>
                       )}
                     </div>
-                    <p className="text-sm font-medium text-white">{alert.message}</p>
+                    <p className="text-sm font-medium text-white capitalize">{alert.message}</p>
                     {alert.detail && (
                       <p className="text-xs text-slate-500 mt-0.5 truncate">{alert.detail}</p>
                     )}
