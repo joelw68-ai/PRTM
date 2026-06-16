@@ -182,6 +182,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     status: 'Valid',
     daysUntilExpiration: 730,
     notes: '',
+    threshold: 30, // days before expiration — sensible default, required
   };
 
 
@@ -194,19 +195,10 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   // entirely on a configured threshold, so saving without one is blocked.
   const [thresholdError, setThresholdError] = useState<string | null>(null);
 
-  // Raw text for per-cert custom alert thresholds (comma-separated days).
-  // Empty string = use the global SFI alert thresholds for this cert.
-  const [sfiThresholdText, setSfiThresholdText] = useState<string>('');
+  // Inline validation error for the required SFI alert threshold (days before
+  // expiration). Mirrors the maintenance threshold — alerts depend on it.
+  const [sfiThresholdError, setSfiThresholdError] = useState<string | null>(null);
 
-  // Parse a comma/space separated day string into a sorted unique number[] (descending).
-  const parseThresholdDays = (text: string): number[] => {
-    return Array.from(new Set(
-      text
-        .split(/[,\s]+/)
-        .map(s => parseInt(s.trim(), 10))
-        .filter(n => Number.isFinite(n) && n >= 0)
-    )).sort((a, b) => b - a);
-  };
 
   // Active vendors derived from centralized AppContext (no more independent fetching)
   const vendorsList = useMemo(() => allVendors.filter(v => v.isActive), [allVendors]);
@@ -277,33 +269,51 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
 
 
-  const calculateSFIStatus = (expirationDate: string): { status: SFICertification['status'], daysUntilExpiration: number } => {
+  // Compute status + days remaining for a cert, honoring its single alert
+  // `threshold` (days before expiration) — mirrors the maintenance threshold.
+  const calculateSFIStatus = (
+    expirationDate: string,
+    threshold?: number
+  ): { status: SFICertification['status'], daysUntilExpiration: number } => {
     const expDate = parseLocalDate(expirationDate);
 
     const today = new Date();
     const diffTime = expDate.getTime() - today.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
+
+    // Days-before-expiration at which this cert begins alerting. Falls back to
+    // 60 only when no threshold has been configured (legacy data).
+    const alertDays = threshold != null && threshold >= 0 ? threshold : 60;
+
     let status: SFICertification['status'] = 'Valid';
     if (diffDays <= 0) status = 'Expired';
-    else if (diffDays <= 60) status = 'Expiring Soon';
-    
+    else if (diffDays <= alertDays) status = 'Expiring Soon';
+
     return { status, daysUntilExpiration: diffDays };
   };
 
   const handleSaveSFI = async () => {
+    // ===== REQUIRED THRESHOLD VALIDATION =====
+    // Alerts depend entirely on a configured threshold (days before expiration),
+    // so a cert cannot be saved without a valid one. Block + surface inline error.
+    const thr = newSFI.threshold;
+    if (thr === undefined || thr === null || !Number.isFinite(thr) || thr < 1) {
+      setSfiThresholdError('Threshold is required and must be at least 1 day.');
+      return;
+    }
+    setSfiThresholdError(null);
+
     try {
-      const { status, daysUntilExpiration } = calculateSFIStatus(newSFI.expirationDate);
-      const customDays = parseThresholdDays(sfiThresholdText);
+      const { status, daysUntilExpiration } = calculateSFIStatus(newSFI.expirationDate, thr);
       const sfiToSave: SFICertification = {
         ...newSFI,
         status,
         daysUntilExpiration,
-        // Persist per-cert custom alert thresholds (undefined when none entered,
-        // so the cert falls back to the global SFI alert thresholds).
-        alertThresholdDays: customDays.length > 0 ? customDays : undefined,
+        threshold: thr,
+        // Single threshold supersedes the legacy multi-value list.
+        alertThresholdDays: undefined,
       };
-      
+
       if (editingSFI) {
         await updateSFICertification(editingSFI.id, sfiToSave);
       } else {
@@ -322,7 +332,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
       setShowSFIModal(false);
       setEditingSFI(null);
       setNewSFI(defaultSFI);
-      setSfiThresholdText('');
+      setSfiThresholdError(null);
     }
   };
 
@@ -774,7 +784,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                 onClick={() => {
                   setEditingSFI(null);
                   setNewSFI(defaultSFI);
-                  setSfiThresholdText('');
+                  setSfiThresholdError(null);
                   setShowSFIModal(true);
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
@@ -823,8 +833,10 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                       <button
                         onClick={() => {
                           setEditingSFI(cert);
-                          setNewSFI(cert);
-                          setSfiThresholdText((cert.alertThresholdDays || []).join(', '));
+                          // Backfill a sensible threshold for legacy certs saved
+                          // before the single threshold field was required.
+                          setNewSFI({ ...cert, threshold: cert.threshold ?? 30 });
+                          setSfiThresholdError(null);
                           setShowSFIModal(true);
                         }}
                         className="p-1 text-slate-400 hover:text-blue-400"
@@ -871,42 +883,20 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                       </span>
                     </div>
 
-                    {/* Alert Threshold — shown on EVERY cert (custom override or global fallback) */}
-                    {(() => {
-                      const effective = getEffectiveThresholdsForCert(cert, globalEnabledThresholds);
-                      const isCustom = !!(cert.alertThresholdDays && cert.alertThresholdDays.length > 0);
-                      return (
-                        <div className="pt-2 border-t border-slate-700">
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-slate-400 flex items-center gap-1.5">
-                              <AlertTriangle className="w-3.5 h-3.5 text-cyan-400" />
-                              Alert Threshold
-                            </span>
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${isCustom ? 'bg-cyan-500/15 text-cyan-300' : 'bg-slate-700/60 text-slate-400'}`}>
-                              {isCustom ? 'Custom' : 'Global'}
-                            </span>
-                          </div>
-                          {effective.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {effective.map((t, i) => {
-                                const cls = t.severity === 'critical'
-                                  ? 'bg-red-500/15 text-red-300 border-red-500/40'
-                                  : t.severity === 'warning'
-                                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
-                                    : 'bg-blue-500/15 text-blue-300 border-blue-500/40';
-                                return (
-                                  <span key={`${t.days}-${i}`} className={`px-2 py-0.5 rounded text-[11px] border ${cls}`}>
-                                    {t.days <= 0 ? 'Expired' : `${t.days}d`}
-                                  </span>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <p className="text-[11px] text-slate-500 italic">No alert thresholds configured</p>
-                          )}
-                        </div>
-                      );
-                    })()}
+                    {/* Alert Threshold — single days-before-expiration value */}
+                    <div className="flex justify-between pt-2 border-t border-slate-700">
+                      <span className="text-slate-400 flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 text-cyan-400" />
+                        Alert Threshold
+                      </span>
+                      {cert.threshold != null ? (
+                        <span className="text-cyan-300 font-medium">
+                          {cert.threshold} day{cert.threshold === 1 ? '' : 's'} before
+                        </span>
+                      ) : (
+                        <span className="text-slate-500 italic text-xs">Not set</span>
+                      )}
+                    </div>
                   </div>
                   
                   {cert.notes && (
@@ -1247,7 +1237,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
               <h3 className="text-xl font-bold text-white">
                 {editingSFI ? 'Edit SFI Certification' : 'Add SFI Certification'}
               </h3>
-              <button onClick={() => setShowSFIModal(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => { setShowSFIModal(false); setSfiThresholdError(null); }} className="text-slate-400 hover:text-white">
                 <X className="w-6 h-6" />
               </button>
             </div>
@@ -1335,66 +1325,63 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                 />
               </div>
 
-              {/* Per-Certification Custom Alert Thresholds */}
+              {/* Alert Threshold — single required days-before-expiration value
+                  (mirrors the maintenance Threshold field). */}
               <div className="bg-cyan-500/5 border border-cyan-500/30 rounded-lg p-4">
                 <label className="text-sm font-medium text-cyan-300 mb-1 flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-cyan-400" />
-                  Custom Alert Thresholds (days)
+                  Threshold (days before alert) *
                 </label>
                 <p className="text-xs text-slate-400 mb-2">
-                  Optional. Enter comma-separated days before expiration to fire reminders for
-                  <span className="text-slate-300"> this certification only</span>. Leave blank to use the
-                  global SFI alert thresholds. Severity is auto-assigned (≤30d critical, ≤60d warning, else info).
+                  Required. The number of days before the expiration date at which this
+                  certification begins alerting (becomes "Expiring Soon" and fires bell/toast
+                  reminders). Alerts depend entirely on this value.
                 </p>
                 <input
-                  type="text"
-                  inputMode="numeric"
-                  value={sfiThresholdText}
-                  onChange={(e) => setSfiThresholdText(e.target.value)}
-                  placeholder="e.g., 120, 60, 14"
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  type="number"
+                  min={1}
+                  value={newSFI.threshold ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    // Empty input -> undefined so validation can flag it as missing.
+                    const parsed = raw === '' ? undefined : parseInt(raw, 10);
+                    setNewSFI({
+                      ...newSFI,
+                      threshold: parsed === undefined || Number.isNaN(parsed) ? undefined : parsed,
+                    });
+                    // Live-clear the error once a valid value is entered.
+                    if (parsed !== undefined && Number.isFinite(parsed) && parsed >= 1) {
+                      setSfiThresholdError(null);
+                    }
+                  }}
+                  placeholder="e.g., 30"
+                  className={`w-full bg-slate-900 border rounded-lg px-3 py-2 text-white ${
+                    sfiThresholdError ? 'border-red-500' : 'border-slate-600'
+                  }`}
                 />
-                <div className="flex flex-wrap items-center gap-2 mt-2">
-                  <span className="text-[11px] text-slate-500">Quick set:</span>
-                  {[
-                    { label: '90 / 30 / 7', value: '90, 30, 7' },
-                    { label: '120 / 60 / 14', value: '120, 60, 14' },
-                    { label: '60 / 14', value: '60, 14' },
-                  ].map(preset => (
-                    <button
-                      key={preset.value}
-                      type="button"
-                      onClick={() => setSfiThresholdText(preset.value)}
-                      className="px-2 py-1 text-[11px] rounded bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 transition-colors"
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                  {sfiThresholdText.trim() && (
-                    <button
-                      type="button"
-                      onClick={() => setSfiThresholdText('')}
-                      className="px-2 py-1 text-[11px] rounded bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
-                    >
-                      Clear (use global)
-                    </button>
-                  )}
-                </div>
-                {parseThresholdDays(sfiThresholdText).length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-3">
-                    {parseThresholdDays(sfiThresholdText).map(d => {
-                      const sev = d <= 30 ? 'critical' : d <= 60 ? 'warning' : 'info';
-                      const cls = sev === 'critical'
-                        ? 'bg-red-500/15 text-red-300 border-red-500/40'
-                        : sev === 'warning'
-                          ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
-                          : 'bg-blue-500/15 text-blue-300 border-blue-500/40';
-                      return (
-                        <span key={d} className={`px-2 py-0.5 rounded text-[11px] border ${cls}`}>
-                          {d}d · {sev}
-                        </span>
-                      );
-                    })}
+                {/* Inline required-field error */}
+                {sfiThresholdError ? (
+                  <p className="mt-1.5 text-xs text-red-400 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    {sfiThresholdError}
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <span className="text-[11px] text-slate-500">Quick set:</span>
+                    {[90, 60, 30, 14].map(days => (
+                      <button
+                        key={days}
+                        type="button"
+                        onClick={() => { setNewSFI({ ...newSFI, threshold: days }); setSfiThresholdError(null); }}
+                        className={`px-2 py-1 text-[11px] rounded transition-colors ${
+                          newSFI.threshold === days
+                            ? 'bg-cyan-500/40 text-cyan-200'
+                            : 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30'
+                        }`}
+                      >
+                        {days}d
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1402,7 +1389,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
             
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => setShowSFIModal(false)}
+                onClick={() => { setShowSFIModal(false); setSfiThresholdError(null); }}
                 className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
               >
                 Cancel

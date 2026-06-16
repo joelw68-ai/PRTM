@@ -204,10 +204,14 @@ export interface SFICertification {
   status: 'Valid' | 'Expiring Soon' | 'Expired';
   daysUntilExpiration: number;
   notes: string;
-  // Optional per-certification alert threshold overrides (in days before expiration).
-  // When set, these custom day thresholds REPLACE the global SFI alert thresholds
-  // for this specific certification. Backward compatible — undefined = use global.
-  // Example: [120, 60, 14] fires alerts at 120, 60, and 14 days out.
+  // Per-certification alert threshold, expressed as the number of DAYS before the
+  // expiration date at which this cert begins alerting (becomes "Expiring Soon"
+  // and fires bell/toast alerts). This mirrors the single `threshold` field used
+  // by MaintenanceItem (passes remaining) — here it is days remaining. Required
+  // on new certs; alerts depend entirely on this configured value.
+  threshold?: number;
+  // DEPRECATED (kept for backward compatibility with older saved data): a list of
+  // custom day thresholds. New code uses the single `threshold` field above.
   alertThresholdDays?: number[];
 }
 
@@ -394,6 +398,10 @@ export const calculateMaintenanceStatus = (item: MaintenanceItem): MaintenanceIt
 
 export const calculateSFIStatus = (cert: SFICertification): SFICertification['status'] => {
   if (cert.daysUntilExpiration <= 0) return 'Expired';
-  if (cert.daysUntilExpiration <= 60) return 'Expiring Soon';
+  // The per-cert `threshold` (days before expiration) is the single source of
+  // truth for when a cert begins alerting — mirroring the maintenance threshold.
+  // Fall back to 60 days only for legacy certs saved without a threshold.
+  const days = cert.threshold != null && cert.threshold >= 0 ? cert.threshold : 60;
+  if (cert.daysUntilExpiration <= days) return 'Expiring Soon';
   return 'Valid';
 };

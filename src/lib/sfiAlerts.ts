@@ -181,9 +181,11 @@ function deriveSeverityForDays(days: number): SFIAlertThreshold['severity'] {
 /**
  * Resolve the EFFECTIVE alert thresholds for a single certification.
  *
- * If the cert defines its own `alertThresholdDays` overrides, those custom day
- * values take precedence and REPLACE the global thresholds for that cert.
- * Otherwise the global enabled thresholds are used.
+ * Precedence (mirrors how MaintenanceItem uses its single `threshold` field):
+ *   1. The cert's single `threshold` field (DAYS before expiration). This is the
+ *      primary, required field on new certs and takes precedence over everything.
+ *   2. Legacy `alertThresholdDays[]` overrides (older saved data).
+ *   3. The global enabled thresholds.
  *
  * Returned thresholds are sorted lowest-days-first (most critical first) to
  * match the matching logic in checkSFIAlerts.
@@ -192,6 +194,18 @@ export function getEffectiveThresholdsForCert(
   cert: SFICertification,
   globalEnabledThresholds: SFIAlertThreshold[]
 ): SFIAlertThreshold[] {
+  // 1. Single per-cert threshold (days before expiration) — the canonical field.
+  if (cert.threshold != null && Number.isFinite(cert.threshold) && cert.threshold >= 0) {
+    const d = cert.threshold;
+    return [{
+      days: d,
+      label: d <= 0 ? 'Expired' : `${d} days before expiration`,
+      severity: deriveSeverityForDays(d),
+      enabled: true,
+    }];
+  }
+
+  // 2. Legacy multi-value overrides (backward compatibility).
   const overrides = cert.alertThresholdDays;
   if (overrides && overrides.length > 0) {
     const custom = overrides
@@ -206,6 +220,8 @@ export function getEffectiveThresholdsForCert(
       } as SFIAlertThreshold));
     return custom.sort((a, b) => a.days - b.days);
   }
+
+  // 3. Global fallback.
   return globalEnabledThresholds;
 }
 
