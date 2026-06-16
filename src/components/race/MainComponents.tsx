@@ -20,7 +20,7 @@ import {
   Zap, Wind, Plus, Edit2, Trash2, X, ChevronDown, ChevronUp,
   Wrench, Save, Package, Play, CheckCircle2, RefreshCw,
   ListChecks, FileText, RotateCcw, Cog, Settings,
-  Check, ClipboardList, AlertCircle, Loader2, Upload, AlertTriangle, Sliders
+  Check, ClipboardList, AlertCircle, Loader2, Upload, AlertTriangle, Sliders, Circle
 } from 'lucide-react';
 
 
@@ -52,7 +52,7 @@ interface ComponentExtraFields {
   currentStator?: string; // Torque Converters only
 }
 
-type TabId = 'engines' | 'powerAdders' | 'transmissions' | 'transmissionDrives' | 'torqueConverters' | 'thirdMemberGears';
+type TabId = 'engines' | 'powerAdders' | 'transmissions' | 'transmissionDrives' | 'torqueConverters' | 'thirdMemberGears' | 'rearTiresWheels';
 
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -134,6 +134,7 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
   const transmissionDrives = useMemo(() => allDrivetrainComponents.filter(c => c.category === 'transmission_drive'), [allDrivetrainComponents]);
   const torqueConverters = useMemo(() => allDrivetrainComponents.filter(c => c.category === 'torque_converter'), [allDrivetrainComponents]);
   const thirdMemberGears = useMemo(() => allDrivetrainComponents.filter(c => c.category === 'third_member' || c.category === 'ring_and_pinion'), [allDrivetrainComponents]);
+  const rearTiresWheels = useMemo(() => allDrivetrainComponents.filter(c => c.category === 'rear_tire_wheel'), [allDrivetrainComponents]);
 
   // State
   const [activeTab, setActiveTab] = useState<TabId>('engines');
@@ -1039,6 +1040,7 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
         engines: 'transmission', powerAdders: 'transmission',
         transmissions: 'transmission', transmissionDrives: 'transmission_drive',
         torqueConverters: 'torque_converter', thirdMemberGears: 'third_member',
+        rearTiresWheels: 'rear_tire_wheel',
       };
       const category = catMap[modalTab];
 
@@ -1100,6 +1102,7 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
     { id: 'transmissionDrives', label: 'Trans Drives', icon: Settings, items: transmissionDrives },
     { id: 'torqueConverters', label: 'Torque Conv.', icon: RefreshCw, items: torqueConverters },
     { id: 'thirdMemberGears', label: '3rd Member & Gears', icon: Wrench, items: thirdMemberGears },
+    { id: 'rearTiresWheels', label: 'Rear Tires & Wheels', icon: Circle, items: rearTiresWheels },
   ];
 
   // ═══════════════════════════════════════════════════════════════════

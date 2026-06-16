@@ -392,11 +392,13 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
   // Drivetrain category helpers
   const dtCategoryLabels: Record<DrivetrainCategory, string> = {
     transmission: 'Transmissions', transmission_drive: 'Transmission Drive',
-    torque_converter: 'Torque Converter', third_member: '3rd Member', ring_and_pinion: 'Ring and Pinion'
+    torque_converter: 'Torque Converter', third_member: '3rd Member', ring_and_pinion: 'Ring and Pinion',
+    rear_tire_wheel: 'Rear Tires & Wheels'
   };
   const dtCategorySingular: Record<DrivetrainCategory, string> = {
     transmission: 'Transmission', transmission_drive: 'Transmission Drive',
-    torque_converter: 'Torque Converter', third_member: '3rd Member', ring_and_pinion: 'Ring and Pinion'
+    torque_converter: 'Torque Converter', third_member: '3rd Member', ring_and_pinion: 'Ring and Pinion',
+    rear_tire_wheel: 'Rear Tire & Wheel'
   };
   const getDTByCategory = (cat: DrivetrainCategory) => drivetrainComponents.filter(c => c.category === cat);
   // Tab categories for individual drivetrain tabs (excludes third_member and ring_and_pinion which are combined)
@@ -515,6 +517,13 @@ const SetupLibrary: React.FC<SetupLibraryProps> = ({ currentRole = 'Crew' }) => 
       pinionGear: { ...defaultComponent, name: 'Pinion Gear', serviceInterval: 200, inspectionInterval: 75, replaceInterval: 400 },
       pinionBearings: { ...defaultComponent, name: 'Pinion Bearings', serviceInterval: 100, inspectionInterval: 50, replaceInterval: 200 },
       crushSleeve: { ...defaultComponent, name: 'Crush Sleeve', serviceInterval: 75, inspectionInterval: 35, replaceInterval: 150 },
+    },
+    rear_tire_wheel: {
+      leftTire: { ...defaultComponent, name: 'Left Rear Tire', serviceInterval: 40, inspectionInterval: 10, replaceInterval: 80 },
+      rightTire: { ...defaultComponent, name: 'Right Rear Tire', serviceInterval: 40, inspectionInterval: 10, replaceInterval: 80 },
+      leftWheel: { ...defaultComponent, name: 'Left Rear Wheel', serviceInterval: 150, inspectionInterval: 50, replaceInterval: 400 },
+      rightWheel: { ...defaultComponent, name: 'Right Rear Wheel', serviceInterval: 150, inspectionInterval: 50, replaceInterval: 400 },
+      beadlocks: { ...defaultComponent, name: 'Beadlocks', serviceInterval: 75, inspectionInterval: 25, replaceInterval: 200 },
     },
   };
 

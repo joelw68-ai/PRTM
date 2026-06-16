@@ -2101,7 +2101,7 @@ export const deleteVendor = async (id: string): Promise<void> => {
 // ============ DRIVETRAIN COMPONENTS OPERATIONS ============
 // Used for: Transmissions, Transmission Drive, Torque Converter, 3rd Member, Ring and Pinion
 
-export type DrivetrainCategory = 'transmission' | 'transmission_drive' | 'torque_converter' | 'third_member' | 'ring_and_pinion';
+export type DrivetrainCategory = 'transmission' | 'transmission_drive' | 'torque_converter' | 'third_member' | 'ring_and_pinion' | 'rear_tire_wheel';
 
 export interface DrivetrainComponent {
   id: string;
