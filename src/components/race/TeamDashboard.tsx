@@ -16,6 +16,8 @@ import {
 
 import { fetchToDoItems, ToDoItem } from '@/lib/database';
 import { parseLocalDate } from '@/lib/utils';
+import { checkSFIAlerts, loadSFIAlertSettings } from '@/lib/sfiAlerts';
+import { checkMaintenanceAlerts, loadAlertSettings } from '@/lib/maintenanceAlerts';
 
 
 
@@ -299,9 +301,78 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
     const activeCylHeads = cylinderHeads.filter(h => h.status === 'Active');
     const installedDT = drivetrainComponents.filter(d => d.currentlyInstalled);
 
-    const dueMaintenance = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Overdue');
-    const expiredCerts = sfiCertifications.filter(c => c.daysUntilExpiration <= 0);
     const lowStockParts = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock');
+
+    // ── Maintenance: items already flagged Due/Overdue, PLUS configurable
+    //    threshold alerts (approaching service) that drive the nav bell count. ──
+    const dueMaintenanceBase = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Overdue');
+    let dueMaintenance = dueMaintenanceBase;
+    try {
+      const alertSettings = loadAlertSettings();
+      if (alertSettings.enabled && alertSettings.showBellAlerts) {
+        const thresholdAlerts = checkMaintenanceAlerts(maintenanceItems, alertSettings);
+        const dueIds = new Set(dueMaintenanceBase.map(m => m.id));
+        const extraMaint = thresholdAlerts
+          .filter(a => !dueIds.has(a.maintenanceItemId))
+          .map(a => {
+            const item = maintenanceItems.find(m => m.id === a.maintenanceItemId);
+            return item
+              ? { ...item, status: (item.status === 'Overdue' ? 'Overdue' : 'Due') as any }
+              : null;
+          })
+          .filter(Boolean) as typeof dueMaintenanceBase;
+        // De-dupe by id
+        const seen = new Set(dueMaintenanceBase.map(m => m.id));
+        dueMaintenance = [...dueMaintenanceBase];
+        extraMaint.forEach(m => { if (!seen.has(m.id)) { seen.add(m.id); dueMaintenance.push(m); } });
+      }
+    } catch (err) {
+      console.warn('[TeamDashboard] maintenance threshold check failed:', err);
+    }
+
+    // ── SFI certs: expired (days <= 0) PLUS configurable "expiring soon"
+    //    threshold alerts. This makes the dashboard match the nav bell count,
+    //    which counts both expired and expiring-soon certs. ──
+    const expiredCertsRaw = sfiCertifications.filter(c => c.daysUntilExpiration <= 0);
+    const certAlerts: Array<{
+      id: string;
+      item: string;
+      sfiSpec: string;
+      expirationDate: string;
+      daysUntilExpiration: number;
+      isExpired: boolean;
+    }> = expiredCertsRaw.map(c => ({
+      id: c.id,
+      item: c.item,
+      sfiSpec: c.sfiSpec,
+      expirationDate: c.expirationDate,
+      daysUntilExpiration: c.daysUntilExpiration,
+      isExpired: true,
+    }));
+    try {
+      const sfiSettings = loadSFIAlertSettings();
+      if (sfiSettings.enabled && sfiSettings.showBellAlerts) {
+        const sfiAlerts = checkSFIAlerts(sfiCertifications, sfiSettings);
+        const expiredIds = new Set(expiredCertsRaw.map(c => c.id));
+        sfiAlerts
+          .filter(a => a.daysUntilExpiration > 0 && !expiredIds.has(a.certId))
+          .forEach(a => {
+            const cert = sfiCertifications.find(c => c.id === a.certId);
+            certAlerts.push({
+              id: a.certId,
+              item: a.item,
+              sfiSpec: a.sfiSpec,
+              expirationDate: a.expirationDate || cert?.expirationDate || 'N/A',
+              daysUntilExpiration: a.daysUntilExpiration,
+              isExpired: false,
+            });
+          });
+      }
+    } catch (err) {
+      console.warn('[TeamDashboard] SFI threshold check failed:', err);
+    }
+    // Sort: expired first (most overdue), then soonest-expiring
+    certAlerts.sort((a, b) => a.daysUntilExpiration - b.daysUntilExpiration);
 
     return {
       installedEngines,
@@ -309,9 +380,12 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
       activeCylHeads,
       installedDT,
       dueMaintenance,
-      expiredCerts,
+      // Kept for backward compat (the raw expired list)
+      expiredCerts: expiredCertsRaw,
+      // Combined expired + expiring-soon SFI certs
+      certAlerts,
       lowStockParts,
-      totalAlerts: dueMaintenance.length + expiredCerts.length + lowStockParts.length
+      totalAlerts: dueMaintenance.length + certAlerts.length + lowStockParts.length
     };
 
   }, [engines, superchargers, cylinderHeads, drivetrainComponents, maintenanceItems, sfiCertifications, partsInventory]);
@@ -340,6 +414,9 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
   // ── Snooze persistence + helpers ──
   useEffect(() => {
     try { localStorage.setItem('teamAlertSnoozes', JSON.stringify(alertSnoozes)); } catch { /* ignore */ }
+    // Notify the global nav bell (AppContext.getAlertCount) so snoozed alerts
+    // immediately drop out of the badge count, same-tab.
+    try { window.dispatchEvent(new CustomEvent('alert-snoozes-changed')); } catch { /* ignore */ }
   }, [alertSnoozes]);
 
   const todayStr = useMemo(() => {
@@ -374,12 +451,12 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
   // ── Active (non-snoozed) alerts + filter-aware counts for the Parts & Alerts modal ──
   const activeAlerts = useMemo(() => {
     const maintenance = componentStatus.dueMaintenance.filter((m) => !isSnoozed(`maint-${m.id}`));
-    const certs = componentStatus.expiredCerts.filter((c) => !isSnoozed(`cert-${c.id}`));
+    const certs = componentStatus.certAlerts.filter((c) => !isSnoozed(`cert-${c.id}`));
     const parts = componentStatus.lowStockParts.filter((p) => !isSnoozed(`part-${p.id}`));
     const total = maintenance.length + certs.length + parts.length;
     const snoozedCount =
       (componentStatus.dueMaintenance.length - maintenance.length) +
-      (componentStatus.expiredCerts.length - certs.length) +
+      (componentStatus.certAlerts.length - certs.length) +
       (componentStatus.lowStockParts.length - parts.length);
     return { maintenance, certs, parts, total, snoozedCount };
   }, [componentStatus, isSnoozed]);
@@ -487,16 +564,18 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
       ]);
     });
 
-    // Expired SFI Certifications
-    componentStatus.expiredCerts.forEach((c) => {
+    // SFI Certifications (expired + expiring soon)
+    componentStatus.certAlerts.forEach((c) => {
       const days = c.daysUntilExpiration ?? 0;
       const daysLabel = days < 0 ? `${Math.abs(days)} days overdue` : days === 0 ? 'Expires today' : `${days} days remaining`;
       rows.push([
         'SFI Certification',
         `${c.item}${c.sfiSpec ? ` (${c.sfiSpec})` : ''}`,
-        days <= 0 ? 'Expired' : 'Expiring',
+        days <= 0 ? 'Expired' : 'Expiring Soon',
         daysLabel,
-        `Recertify or replace ${c.item} before tech inspection`,
+        days <= 0
+          ? `Recertify or replace ${c.item} before tech inspection`
+          : `${c.item} expiring soon — schedule recertification`,
       ]);
     });
 
@@ -560,21 +639,24 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
 
     if (activeAlerts.certs.length > 0) {
       groups.push({
-        title: 'Expired SFI Certifications',
+        title: 'SFI Certifications (Expired & Expiring)',
         rows: activeAlerts.certs.map((c) => {
 
           const days = c.daysUntilExpiration ?? 0;
           return {
             item: `${c.item}${c.sfiSpec ? ` (${c.sfiSpec})` : ''}`,
-            status: days <= 0 ? 'Expired' : 'Expiring',
+            status: days <= 0 ? 'Expired' : 'Expiring Soon',
             days: days < 0 ? `${Math.abs(days)} days overdue` : days === 0 ? 'Expires today' : `${days} days remaining`,
-            action: `Recertify or replace ${c.item} before tech inspection`,
+            action: days <= 0
+              ? `Recertify or replace ${c.item} before tech inspection`
+              : `${c.item} expiring soon — schedule recertification`,
             overdue: days <= 0,
             assignedTo: alertAssignees[`cert-${c.id}`] || '',
           };
         }),
       });
     }
+
 
     if (activeAlerts.parts.length > 0) {
       groups.push({
@@ -932,27 +1014,27 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
             <p className="text-[10px] text-slate-500 mt-1">items due</p>
           </button>
 
-          {/* Parts — combined Low Stock + Total Alerts card */}
+          {/* Parts — combined Low Stock + Total Alerts card (snooze-aware) */}
           <button
             onClick={() => setShowAlertsModal(true)}
             className={`bg-slate-800/60 rounded-xl border p-4 transition-colors text-left ${
-              componentStatus.totalAlerts > 0
+              activeAlerts.total > 0
                 ? 'border-red-500/40 hover:bg-red-500/10'
                 : 'border-slate-700/50 hover:bg-slate-800'
             }`}
           >
             <div className="flex items-center gap-2 mb-2">
-              <Package className={`w-4 h-4 ${componentStatus.totalAlerts > 0 ? 'text-red-400' : 'text-purple-400'}`} />
+              <Package className={`w-4 h-4 ${activeAlerts.total > 0 ? 'text-red-400' : 'text-purple-400'}`} />
               <span className="text-xs text-slate-400">Parts</span>
             </div>
-            <p className={`text-2xl font-bold ${componentStatus.totalAlerts > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-              {componentStatus.totalAlerts}
+            <p className={`text-2xl font-bold ${activeAlerts.total > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+              {activeAlerts.total}
             </p>
             <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
-              {componentStatus.totalAlerts === 0
-                ? 'All clear'
-                : `${componentStatus.lowStockParts.length} low/out · view details`}
-              {componentStatus.totalAlerts > 0 && <ChevronRight className="w-3 h-3" />}
+              {activeAlerts.total === 0
+                ? (activeAlerts.snoozedCount > 0 ? `All clear · ${activeAlerts.snoozedCount} snoozed` : 'All clear')
+                : `${activeAlerts.parts.length} low/out · view details`}
+              {activeAlerts.total > 0 && <ChevronRight className="w-3 h-3" />}
             </p>
           </button>
 
@@ -1474,14 +1556,15 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
               <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/70">
                 <div className="flex items-center gap-3">
                   <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
-                    componentStatus.totalAlerts > 0 ? 'bg-red-500/15' : 'bg-emerald-500/15'
+                    activeAlerts.total > 0 ? 'bg-red-500/15' : 'bg-emerald-500/15'
                   }`}>
-                    <AlertTriangle className={`w-5 h-5 ${componentStatus.totalAlerts > 0 ? 'text-red-400' : 'text-emerald-400'}`} />
+                    <AlertTriangle className={`w-5 h-5 ${activeAlerts.total > 0 ? 'text-red-400' : 'text-emerald-400'}`} />
                   </div>
                   <div>
                     <h2 className="text-base font-bold text-white">Parts &amp; Alerts</h2>
                     <p className="text-xs text-slate-400">
-                      {componentStatus.totalAlerts} item{componentStatus.totalAlerts === 1 ? '' : 's'} need attention
+                      {activeAlerts.total} item{activeAlerts.total === 1 ? '' : 's'} need attention
+                      {activeAlerts.snoozedCount > 0 && ` · ${activeAlerts.snoozedCount} snoozed`}
                     </p>
                   </div>
                 </div>
@@ -1616,7 +1699,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
                             <ShieldCheck className="w-4 h-4 text-amber-400" />
-                            <span className="text-sm font-semibold text-white">Expired SFI Certifications</span>
+                            <span className="text-sm font-semibold text-white">SFI Certs (Expired &amp; Expiring)</span>
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 font-medium">
                               {activeAlerts.certs.length}
                             </span>
@@ -1655,8 +1738,10 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                                   <option value="">Unassigned</option>
                                   {crewRoster.map((n) => (<option key={n} value={n}>{n}</option>))}
                                 </select>
-                                <span className="text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 bg-red-500/20 text-red-400">
-                                  {c.daysUntilExpiration < 0 ? `${Math.abs(c.daysUntilExpiration)}d expired` : 'Expired'}
+                                <span className={`text-[10px] px-2 py-0.5 rounded font-medium flex-shrink-0 ${
+                                  c.daysUntilExpiration <= 0 ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'
+                                }`}>
+                                  {c.daysUntilExpiration < 0 ? `${Math.abs(c.daysUntilExpiration)}d expired` : c.daysUntilExpiration === 0 ? 'Expires today' : `${c.daysUntilExpiration}d left`}
                                 </span>
                               </div>
                             );

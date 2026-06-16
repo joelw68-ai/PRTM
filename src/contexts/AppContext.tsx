@@ -8,6 +8,7 @@ import * as dbLogger from '@/lib/dbLogger';
 import { toast } from 'sonner';
 import { checkNewlyTriggeredAlerts, loadAlertSettings } from '@/lib/maintenanceAlerts';
 import { checkSFIAlerts, checkNewlyTriggeredSFIAlerts, loadSFIAlertSettings } from '@/lib/sfiAlerts';
+import { loadAlertSnoozes, getTodayStr, isAlertSnoozed, alertKey } from '@/lib/alertSnooze';
 
 
 import {
@@ -315,6 +316,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeSavesRef = useRef(0);
   const vendorSyncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ============ ALERT SNOOZE VERSION ============
+  // Bumped whenever the snooze map in localStorage changes (via the
+  // 'alert-snoozes-changed' window event dispatched by the Team Dashboard, or
+  // a cross-tab 'storage' event). Including this in getAlertCount's dependency
+  // array forces the nav bell badge to recompute so snoozed alerts immediately
+  // drop out of the count.
+  const [snoozeVersion, setSnoozeVersion] = useState(0);
+
+  useEffect(() => {
+    const bump = () => setSnoozeVersion(v => v + 1);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'teamAlertSnoozes') bump();
+    };
+    window.addEventListener('alert-snoozes-changed', bump);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('alert-snoozes-changed', bump);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
 
 
@@ -2080,10 +2102,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const getTotalPasses = useCallback(() => passLogs.length, [passLogs]);
   
   const getAlertCount = useCallback(() => {
-    // Hardcoded expired/expiring counts (always shown)
-    const expiredCerts = sfiCertifications.filter(c => c.daysUntilExpiration <= 0).length;
-    const dueMaintenance = maintenanceItems.filter(m => m.status === 'Due' || m.status === 'Overdue').length;
-    const lowStockParts = partsInventory.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock').length;
+    // Load the snooze map once; alerts snoozed to today-or-later are EXCLUDED
+    // from the bell count so the nav badge matches the dashboard exactly.
+    const snoozes = loadAlertSnoozes();
+    const today = getTodayStr();
+    const notSnoozed = (key: string) => !isAlertSnoozed(key, snoozes, today);
+
+    // Hardcoded expired/expiring counts (always shown) — minus snoozed
+    const expiredCerts = sfiCertifications.filter(
+      c => c.daysUntilExpiration <= 0 && notSnoozed(alertKey.cert(c.id))
+    ).length;
+    const dueMaintenance = maintenanceItems.filter(
+      m => (m.status === 'Due' || m.status === 'Overdue') && notSnoozed(alertKey.maintenance(m.id))
+    ).length;
+    const lowStockParts = partsInventory.filter(
+      p => (p.status === 'Low Stock' || p.status === 'Out of Stock') && notSnoozed(alertKey.part(p.id))
+    ).length;
 
     // SFI threshold alerts (configurable, may include certs beyond the hardcoded 60-day window)
     let sfiThresholdCount = 0;
@@ -2091,13 +2125,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const sfiSettings = loadSFIAlertSettings();
       if (sfiSettings.enabled && sfiSettings.showBellAlerts) {
         const sfiAlerts = checkSFIAlerts(sfiCertifications, sfiSettings);
-        // Exclude already-counted expired certs to avoid double-counting
-        sfiThresholdCount = sfiAlerts.filter(a => a.daysUntilExpiration > 0).length;
+        // Exclude already-counted expired certs (avoid double-count) AND snoozed certs
+        sfiThresholdCount = sfiAlerts.filter(
+          a => a.daysUntilExpiration > 0 && notSnoozed(alertKey.cert(a.certId))
+        ).length;
       }
     } catch {}
 
     return expiredCerts + sfiThresholdCount + dueMaintenance + lowStockParts;
-  }, [sfiCertifications, maintenanceItems, partsInventory]);
+  }, [sfiCertifications, maintenanceItems, partsInventory, snoozeVersion]);
 
 
 
