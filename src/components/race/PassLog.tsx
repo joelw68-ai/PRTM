@@ -1541,14 +1541,17 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
   // Shared CSV export function — used by both the header Export button and the Advanced Search Export button
   const exportPassesToCSV = (passes: PassLogEntry[]) => {
-    const headers = ['Date', 'Time', 'Track', 'Session', 'Lane', 'Result', 'RT', '60ft', '330ft', '1/8 ET', 'MPH', 'Temp', 'Humidity', 'Pressure', 'SAE', 'DA', 'Aborted', 'Notes'];
+    const headers = ['Date', 'Time', 'Track', 'Session', 'Lane', 'Result', 'RT', '60ft', '330ft', '1/8 ET', 'MPH', 'Temp', 'Humidity', 'Barometer (inHg)', 'SAE', 'STD Correction', 'DA', 'Aborted', 'Notes'];
     const rows = passes.map(p => [
       p.date, p.time, p.track, p.sessionType, p.lane, p.result,
       p.reactionTime.toFixed(3), p.sixtyFoot.toFixed(3), p.threeThirty.toFixed(3),
       p.eighth.toFixed(3), p.mph.toFixed(1),
       p.weather.temperature, p.weather.humidity, p.weather.pressure.toFixed(2),
-      p.saeCorrection.toFixed(3), p.densityAltitude, p.aborted ? 'Yes' : 'No', `"${(p.notes || '').replace(/"/g, '""')}"`
+      p.saeCorrection.toFixed(3),
+      calculateSTDCorrection(p.weather.temperature, p.weather.pressure, p.weather.humidity).toFixed(4),
+      p.densityAltitude, p.aborted ? 'Yes' : 'No', `"${(p.notes || '').replace(/"/g, '""')}"`
     ]);
+
     
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -1968,24 +1971,12 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                                     <span className="text-cyan-300 font-mono">{calculateDewPoint(pass.weather.temperature, pass.weather.humidity).toFixed(1)}°F</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span className="text-slate-400">Vapor Pressure</span>
-                                    <span className="text-cyan-300 font-mono">{calculateVaporPressure(pass.weather.temperature, pass.weather.humidity).toFixed(3)}" Hg</span>
-                                  </div>
-                                  <div className="flex justify-between">
                                     <span className="text-slate-400">Water Grains</span>
                                     <span className="text-cyan-300 font-mono">{calculateWaterGrains(pass.weather.temperature, pass.weather.humidity, pass.weather.pressure).toFixed(1)} gr/lb</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-slate-400">Wet Bulb</span>
-                                    <span className="text-cyan-300 font-mono">{calculateWetBulb(pass.weather.temperature, pass.weather.humidity).toFixed(1)}°F</span>
                                   </div>
                                   <div className="flex justify-between border-t border-slate-700 pt-2 mt-2">
                                     <span className="text-slate-400">Density Alt</span>
                                     <span className="text-white font-mono">{pass.densityAltitude} ft</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-slate-400">SAE Correction</span>
-                                    <span className="text-yellow-400 font-mono">{pass.saeCorrection.toFixed(3)}</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-slate-400">STD Correction</span>
@@ -3166,28 +3157,24 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                   {/* SAE Calculation Display */}
                   <div className="bg-slate-900/50 rounded-lg p-3 space-y-2 text-sm">
                     <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-2">
-                      <span className="text-yellow-400 font-medium">SAE Correction</span>
+                      <span className="text-orange-300 font-medium">STD Correction</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-yellow-400 font-bold font-mono">{formData.saeCorrection?.toFixed(3)}</span>
+                        <span className="text-orange-300 font-bold font-mono">
+                          {calculateSTDCorrection(
+                            formData.weather?.temperature || 70,
+                            formData.weather?.pressure || 29.92,
+                            formData.weather?.humidity || 50
+                          ).toFixed(4)}
+                        </span>
                         <button
                           type="button"
                           onClick={calculateSAE}
-                          className="p-1 bg-yellow-500/20 text-yellow-400 rounded hover:bg-yellow-500/30 transition-colors"
-                          title="Recalculate SAE"
+                          className="p-1 bg-orange-500/20 text-orange-400 rounded hover:bg-orange-500/30 transition-colors"
+                          title="Recalculate Density Altitude"
                         >
                           <RefreshCw className="w-4 h-4" />
                         </button>
                       </div>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">STD Correction</span>
-                      <span className="text-orange-300 font-mono font-bold">
-                        {calculateSTDCorrection(
-                          formData.weather?.temperature || 70,
-                          formData.weather?.pressure || 29.92,
-                          formData.weather?.humidity || 50
-                        ).toFixed(4)}
-                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-400">Density Altitude</span>
@@ -3236,12 +3223,9 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Vapor Pressure</span>
+                      <span className="text-slate-400">Barometer</span>
                       <span className="text-white font-mono">
-                        {calculateVaporPressure(
-                          formData.weather?.temperature || 70,
-                          formData.weather?.humidity || 50
-                        ).toFixed(3)}" Hg
+                        {(formData.weather?.pressure || 29.92).toFixed(2)}" Hg
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -3252,15 +3236,6 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                           formData.weather?.humidity || 50,
                           formData.weather?.pressure || 29.92
                         ).toFixed(1)} gr/lb
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Wet Bulb</span>
-                      <span className="text-white font-mono">
-                        {calculateWetBulb(
-                          formData.weather?.temperature || 70,
-                          formData.weather?.humidity || 50
-                        ).toFixed(1)}°F
                       </span>
                     </div>
                   </div>
