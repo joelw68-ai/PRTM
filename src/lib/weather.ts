@@ -232,6 +232,7 @@ interface WeatherResult {
     location: string;
     region: string;
     dewPoint?: number;      // °F
+    uvIndex?: number;       // UV Index (0-11+)
   };
   saeCorrection: number;
   densityAltitude: number;
@@ -597,6 +598,7 @@ async function fetchCurrentWeather(location: string): Promise<WeatherResult> {
       location: (loc.name as string) || '',
       region: (loc.region as string) || '',
       dewPoint,
+      uvIndex: (current.uv as number) || 0,
     },
     ...saeData,
     isHistorical: false,
@@ -681,6 +683,7 @@ async function fetchTodayWeather(location: string, date: string, time?: string):
         location: (loc.name as string) || '',
         region: (loc.region as string) || '',
         dewPoint,
+        uvIndex: (hourEntry.uv as number) || 0,
       },
       ...saeData,
       isHistorical: false,
@@ -787,6 +790,7 @@ async function fetchHistoricalWeather(location: string, date: string, time?: str
       location: (loc?.name as string) || '',
       region: (loc?.region as string) || '',
       dewPoint,
+      uvIndex: (hourData.uv as number) || 0,
     },
     ...saeData,
     isHistorical: true,
@@ -1367,6 +1371,7 @@ function observationToWeatherResult(obs: ProviderObservation, isHistorical: bool
       location: obs.location,
       region: obs.region,
       dewPoint: obs.dewPoint,
+      uvIndex: obs.uvIndex ?? 0,
     },
     ...sae,
     isHistorical,
