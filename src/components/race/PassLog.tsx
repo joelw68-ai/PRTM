@@ -345,7 +345,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
         windSpeed: 0,
         windDirection: 'N',
         trackTemp: mostRecent ? (mostRecent.weather?.trackTemp ?? 0) : 0,
-        conditions: 'Clear'
+        conditions: 'Clear',
+        uvIndex: 0
       },
       saeCorrection: 1.000,
       densityAltitude: 0,
@@ -513,7 +514,8 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                     windSpeed: data.weather.windSpeed,
                     windDirection: data.weather.windDirection,
                     conditions: data.weather.conditions,
-                    dewPoint: dewPt
+                    dewPoint: dewPt,
+                    uvIndex: data.weather.uvIndex ?? prev.weather?.uvIndex ?? 0
                   },
                   saeCorrection: sae,
                   densityAltitude: da,
@@ -1007,6 +1009,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                 windSpeed: data.weather.windSpeed,
                 windDirection: data.weather.windDirection,
                 conditions: data.weather.conditions,
+                uvIndex: data.weather.uvIndex ?? prev.weather?.uvIndex ?? 0,
               },
               saeCorrection: sae,
               densityAltitude: da,
@@ -1966,6 +1969,12 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                                     <span className="text-slate-400">Wind</span>
                                     <span className="text-white">{pass.weather.windSpeed} mph {pass.weather.windDirection}</span>
                                   </div>
+                                  {pass.weather.uvIndex != null && (
+                                    <div className="flex justify-between">
+                                      <span className="text-slate-400">UV Index</span>
+                                      <span className="text-amber-300 font-mono">{pass.weather.uvIndex}</span>
+                                    </div>
+                                  )}
                                   <div className="flex justify-between">
                                     <span className="text-slate-400">Dew Point</span>
                                     <span className="text-cyan-300 font-mono">{calculateDewPoint(pass.weather.temperature, pass.weather.humidity).toFixed(1)}°F</span>
