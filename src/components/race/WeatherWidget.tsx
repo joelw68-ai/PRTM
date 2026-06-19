@@ -166,6 +166,16 @@ const getAirDensityQuality = (rho: number): { label: string; color: string } => 
   return { label: 'Poor', color: 'text-red-400' };
 };
 
+// Get UV Index quality indicator (WHO standard scale)
+const getUVQuality = (uv: number): { label: string; color: string } => {
+  if (uv < 3) return { label: 'Low', color: 'text-green-400' };
+  if (uv < 6) return { label: 'Moderate', color: 'text-yellow-400' };
+  if (uv < 8) return { label: 'High', color: 'text-orange-400' };
+  if (uv < 11) return { label: 'Very High', color: 'text-red-400' };
+  return { label: 'Extreme', color: 'text-fuchsia-400' };
+};
+
+
 
 // ── Location method badge ─────────────────────────────────────────────────────
 const LocationMethodBadge: React.FC<{ method: LocationMethod }> = ({ method }) => {
@@ -1079,7 +1089,22 @@ const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onNavigate, trackElevatio
             </p>
             <p className="text-[10px] text-slate-500">of standard</p>
           </div>
+
+          {/* UV Index — WHO standard scale with low/moderate/high label */}
+          <div className="p-2.5 bg-slate-900/40 rounded-lg">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Sun className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-xs text-slate-500">UV Index</span>
+            </div>
+            <p className={`font-medium ${getUVQuality(weatherData.uvIndex).color}`}>
+              {Math.round(weatherData.uvIndex)}
+            </p>
+            <p className={`text-[10px] ${getUVQuality(weatherData.uvIndex).color}`}>
+              {getUVQuality(weatherData.uvIndex).label}
+            </p>
+          </div>
         </div>
+
 
 
         {/* Hourly Forecast Toggle */}

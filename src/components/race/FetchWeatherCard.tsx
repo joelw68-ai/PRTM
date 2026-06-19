@@ -40,10 +40,21 @@ interface LocalWeatherData {
   location: string;
   region: string;
   dewPoint: number;
+  uvIndex: number;
   saeCorrection: number;
   densityAltitude: number;
   correctedHP: number;
 }
+
+// Get UV Index quality indicator (WHO standard scale)
+const getUVQuality = (uv: number): { label: string; color: string } => {
+  if (uv < 3) return { label: 'Low', color: 'text-green-400' };
+  if (uv < 6) return { label: 'Moderate', color: 'text-yellow-400' };
+  if (uv < 8) return { label: 'High', color: 'text-orange-400' };
+  if (uv < 11) return { label: 'Very High', color: 'text-red-400' };
+  return { label: 'Extreme', color: 'text-fuchsia-400' };
+};
+
 
 const FETCH_WEATHER_CACHE_KEY = 'promod_fetch_weather_cache';
 const FETCH_WEATHER_CACHE_VERSION_KEY = 'promod_fetch_weather_cache_version';
@@ -409,9 +420,11 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = ({ trackElevation = 0 
       location: result.weather.location,
       region: result.weather.region,
       dewPoint: result.weather.dewPoint ?? calculateDewPoint(result.weather.temperature, result.weather.humidity),
+      uvIndex: result.weather.uvIndex ?? 0,
       saeCorrection: sae,
       densityAltitude: da,
       correctedHP: hp,
+
     };
 
     setWeatherData(data);
@@ -802,7 +815,8 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = ({ trackElevation = 0 
         </div>
 
         {/* Weather details grid - compact 2x3 */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+
           {/* Humidity */}
           <div className="flex items-center gap-2 p-2.5 bg-slate-900/40 rounded-lg">
             <Droplets className="w-4 h-4 text-blue-400 flex-shrink-0" />
@@ -847,9 +861,24 @@ const FetchWeatherCard: React.FC<FetchWeatherCardProps> = ({ trackElevation = 0 
               <p className="text-white font-semibold text-sm">{weatherData.correctedHP.toLocaleString()}</p>
             </div>
           </div>
+
+          {/* UV Index — sun icon with WHO low/moderate/high label */}
+          <div className="flex items-center gap-2 p-2.5 bg-slate-900/40 rounded-lg">
+            <Sun className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <div>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">UV Index</p>
+              <p className="text-white font-semibold text-sm">
+                {Math.round(weatherData.uvIndex)}
+                <span className={`ml-1 text-[11px] font-medium ${getUVQuality(weatherData.uvIndex).color}`}>
+                  {getUVQuality(weatherData.uvIndex).label}
+                </span>
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
+
   );
 };
 
