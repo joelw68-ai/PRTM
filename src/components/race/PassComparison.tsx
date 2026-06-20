@@ -279,6 +279,8 @@ const PassComparison: React.FC<PassComparisonProps> = ({
     const pressureValues = sortedPasses.map(p => p.weather.pressure);
     const windValues = sortedPasses.map(p => p.weather.windSpeed);
     const trackTempValues = sortedPasses.map(p => p.weather.trackTemp);
+    const uvIndexValues = sortedPasses.map(p => p.weather.uvIndex || 0);
+
 
     return [
       {
@@ -308,6 +310,16 @@ const PassComparison: React.FC<PassComparisonProps> = ({
         isNumeric: true,
         precision: 0
       },
+      {
+        label: 'UV Index',
+        values: uvIndexValues,
+        deltas: uvIndexValues.map((v, i) => i === 0 ? 0 : v - uvIndexValues[0]),
+        unit: '',
+        isNumeric: true,
+        precision: 0,
+        hideIfZero: true
+      },
+
       {
         label: 'Barometric Pressure',
         values: pressureValues,

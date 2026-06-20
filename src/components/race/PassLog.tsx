@@ -116,7 +116,9 @@ import {
   Undo2,
   Mountain,
   Scan,
-  LocateFixed
+  LocateFixed,
+  Sun
+
 
 } from 'lucide-react';
 
@@ -1139,12 +1141,16 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
             pressure: data.weather.pressure,
             windSpeed: data.weather.windSpeed,
             windDirection: data.weather.windDirection,
-            conditions: data.weather.conditions
+            conditions: data.weather.conditions,
+            // Capture the UV Index returned by the weather API so it persists
+            // on the pass record and shows in the Weather area + expanded panel.
+            uvIndex: data.weather.uvIndex ?? prev.weather?.uvIndex ?? 0
           },
           saeCorrection: sae,
           densityAltitude: da,
           correctedHP: hp
         }));
+
 
 
         const locationName = data.weather.location 
@@ -1544,12 +1550,13 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
 
   // Shared CSV export function — used by both the header Export button and the Advanced Search Export button
   const exportPassesToCSV = (passes: PassLogEntry[]) => {
-    const headers = ['Date', 'Time', 'Track', 'Session', 'Lane', 'Result', 'RT', '60ft', '330ft', '1/8 ET', 'MPH', 'Temp', 'Humidity', 'Barometer (inHg)', 'SAE', 'STD Correction', 'DA', 'Aborted', 'Notes'];
+    const headers = ['Date', 'Time', 'Track', 'Session', 'Lane', 'Result', 'RT', '60ft', '330ft', '1/8 ET', 'MPH', 'Temp', 'Humidity', 'Barometer (inHg)', 'UV Index', 'SAE', 'STD Correction', 'DA', 'Aborted', 'Notes'];
     const rows = passes.map(p => [
       p.date, p.time, p.track, p.sessionType, p.lane, p.result,
       p.reactionTime.toFixed(3), p.sixtyFoot.toFixed(3), p.threeThirty.toFixed(3),
       p.eighth.toFixed(3), p.mph.toFixed(1),
       p.weather.temperature, p.weather.humidity, p.weather.pressure.toFixed(2),
+      p.weather.uvIndex ?? 0,
       p.saeCorrection.toFixed(3),
       calculateSTDCorrection(p.weather.temperature, p.weather.pressure, p.weather.humidity).toFixed(4),
       p.densityAltitude, p.aborted ? 'Yes' : 'No', `"${(p.notes || '').replace(/"/g, '""')}"`
@@ -3162,7 +3169,44 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                       <option value="Fog">Fog</option>
                     </select>
                   </div>
+
+                  {/* UV Index — auto-populated by Fetch Weather, editable here.
+                      Shows a sun-style icon and a low/moderate/high severity label
+                      using the WHO UV Index scale. */}
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">
+                      <Sun className="w-3 h-3 inline mr-1 text-amber-400" />
+                      UV Index
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        max="20"
+                        step="1"
+                        value={formData.weather?.uvIndex ?? 0}
+                        onChange={(e) => setFormData({...formData, weather: {...formData.weather!, uvIndex: parseInt(e.target.value) || 0}})}
+                        className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono"
+                      />
+                      {(() => {
+                        // WHO UV Index severity bands → label + color
+                        const uv = Math.round(formData.weather?.uvIndex ?? 0);
+                        let label = 'Low';
+                        let cls = 'bg-green-500/20 text-green-400 border-green-500/40';
+                        if (uv >= 11) { label = 'Extreme'; cls = 'bg-purple-500/20 text-purple-300 border-purple-500/40'; }
+                        else if (uv >= 8) { label = 'Very High'; cls = 'bg-red-500/20 text-red-400 border-red-500/40'; }
+                        else if (uv >= 6) { label = 'High'; cls = 'bg-orange-500/20 text-orange-400 border-orange-500/40'; }
+                        else if (uv >= 3) { label = 'Moderate'; cls = 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40'; }
+                        return (
+                          <span className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-semibold border ${cls}`}>
+                            {label}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </div>
                   
+
                   {/* SAE Calculation Display */}
                   <div className="bg-slate-900/50 rounded-lg p-3 space-y-2 text-sm">
                     <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-2">
@@ -3189,10 +3233,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                       <span className="text-slate-400">Density Altitude</span>
                       <span className="text-white font-mono">{formData.densityAltitude} ft</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Corrected HP</span>
-                      <span className="text-white font-mono">{formData.correctedHP}</span>
-                    </div>
+
                     {trackElevation > 0 && (
                       <div className="flex justify-between items-center pt-1 border-t border-slate-700/30 mt-1">
                         <Tooltip>
