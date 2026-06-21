@@ -35,6 +35,7 @@ export interface PassLogEntry {
     trackTemp: number;
     conditions: string;
     dewPoint?: number;       // °F - calculated from temp & humidity
+    uvIndex?: number;        // UV Index (0-11+) at the time of the pass
   };
 
   saeCorrection: number;

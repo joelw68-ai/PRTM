@@ -232,6 +232,7 @@ interface WeatherResult {
     location: string;
     region: string;
     dewPoint?: number;      // °F
+    uvIndex?: number;       // UV Index (0-11+)
   };
   saeCorrection: number;
   densityAltitude: number;
@@ -597,6 +598,7 @@ async function fetchCurrentWeather(location: string): Promise<WeatherResult> {
       location: (loc.name as string) || '',
       region: (loc.region as string) || '',
       dewPoint,
+      uvIndex: (current.uv as number) || 0,
     },
     ...saeData,
     isHistorical: false,
@@ -681,6 +683,7 @@ async function fetchTodayWeather(location: string, date: string, time?: string):
         location: (loc.name as string) || '',
         region: (loc.region as string) || '',
         dewPoint,
+        uvIndex: (hourEntry.uv as number) || 0,
       },
       ...saeData,
       isHistorical: false,
@@ -787,6 +790,7 @@ async function fetchHistoricalWeather(location: string, date: string, time?: str
       location: (loc?.name as string) || '',
       region: (loc?.region as string) || '',
       dewPoint,
+      uvIndex: (hourData.uv as number) || 0,
     },
     ...saeData,
     isHistorical: true,
@@ -1229,10 +1233,44 @@ export function calculateWetBulb(tempF: number, humidityPct: number): number {
   return Math.round(wetBulbF * 10) / 10;
 }
 
+// ─── STD / STP Correction Factor ─────────────────────────────────────────────
+//
+// The "STD" (Standard / STP) correction factor reported by drag-racing weather
+// stations (Computech, RaceAir, Altus, DRWS) normalizes power to STANDARD
+// atmosphere conditions:
+//
+//   • Reference pressure    = 29.92 inHg   (STD / STP dry-air pressure)
+//   • Reference temperature = 59 °F = 519 °R
+//   • Reference humidity    = 0%   (dry air)
+//
+//   STD CF = (29.92 / Pd) × sqrt((T + 460) / 519)
+//
+//   where:
+//     Pd = dry pressure = station/barometric pressure − actual vapor pressure (inHg)
+//     T  = air temperature (°F)
+//
+// ── What was wrong with the old formula ──
+// The previous code used:
+//     STD CF = (29.235 / Pd) × ((T + 460) / 520)
+// which had THREE errors that made it disagree with proven weather stations:
+//   1. Used 29.235 inHg (the SAE J1349 reference pressure) instead of the
+//      STD/STP reference of 29.92 inHg.
+//   2. Applied the temperature ratio LINEARLY instead of as a SQUARE ROOT.
+//      All SAE/STD correction factors use sqrt(Tactual / Tref).
+//   3. Used 520 °R (60 °F) instead of the STD reference of 519 °R (59 °F).
+// Together these produced a number several percent off from Computech /
+// RaceAir / DRWS readings — exactly the discrepancy reported.
+//
 export function calculateSTDCorrection(tempF: number, pressureInHg: number, humidityPct: number): number {
-  const vaporPressure = calculateVaporPressure(tempF, humidityPct);
-  const dryPressure = pressureInHg - vaporPressure;
-  const stdCorrection = (29.235 / dryPressure) * ((tempF + 460) / 520);
+  const satVaporPressure = accurateSatVaporPressureInHg(tempF);
+  const actualVaporPressure = (humidityPct / 100) * satVaporPressure;
+  const dryPressure = pressureInHg - actualVaporPressure;
+  if (dryPressure <= 0) return 1;
+
+  const pressureFactor = 29.92 / dryPressure;
+  const tempFactor = Math.sqrt((tempF + 460) / 519);
+  const stdCorrection = pressureFactor * tempFactor;
+
   return Math.round(stdCorrection * 10000) / 10000;
 }
 
@@ -1333,6 +1371,7 @@ function observationToWeatherResult(obs: ProviderObservation, isHistorical: bool
       location: obs.location,
       region: obs.region,
       dewPoint: obs.dewPoint,
+      uvIndex: obs.uvIndex ?? 0,
     },
     ...sae,
     isHistorical,

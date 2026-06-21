@@ -49,7 +49,7 @@ import ToDoList from './race/ToDoList';
 import VendorManagement from './race/VendorManagement';
 import InitialSetup from './race/InitialSetup';
 import OnboardingWizard from './race/OnboardingWizard';
-import BetaFeedback from './race/BetaFeedback';
+
 import { InviteAcceptBanner } from './race/TeamInviteFlow';
 import BorrowedLoanedParts from './race/BorrowedLoanedParts';
 import RaceDayTimeline from './race/RaceDayTimeline';
@@ -497,8 +497,6 @@ const AppLayoutContent: React.FC = () => {
       {/* Onboarding Wizard */}
       <OnboardingWizard onNavigate={handleNavigate} />
 
-      {/* Beta Feedback */}
-      <BetaFeedback />
 
       {/* Auth Modal */}
       <AuthModal

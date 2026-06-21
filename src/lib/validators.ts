@@ -140,13 +140,19 @@ export const MaintenanceItemRowSchema = z.object({
   pass_interval: nullableNumeric,
   current_passes: nullableNumeric,
   last_service: ns,
+  last_service_time: ns,
   next_service_passes: nullableNumeric,
   status: ns,
   priority: ns,
   notes: ns,
   estimated_cost: nullableNumeric,
+  // Per-item alert threshold (passes remaining at which the item starts alerting).
+  // Added June 2026 — column was missing from the live table, causing the
+  // threshold to silently drop on save and disappear after restart.
+  threshold: nullableNumeric,
 
 }).passthrough();
+
 
 // ─── SFI Certifications ──────────────────────────────────────
 
