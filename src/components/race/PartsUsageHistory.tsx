@@ -44,9 +44,31 @@ import {
   getUsageByPart,
   getRecentUsage
 } from '@/data/partsUsageData';
+import { useCustomCategories, CategoryDot } from './CategoryBadge';
+import { getCategoryColor } from '@/data/maintenanceCategories';
 
 const PartsUsageHistory: React.FC = () => {
   const { partsInventory, raceEvents } = useApp();
+
+  // Shared maintenance category colors — color-code usage records by the
+  // category of the part involved so scanning matches the rest of the app.
+  const customCategories = useCustomCategories();
+
+  // Resolve a part's category from the inventory by its part number. Usage
+  // records don't store a category directly, so we look it up live.
+  const categoryByPartNumber = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of partsInventory) {
+      if (p.partNumber) map.set(p.partNumber, p.category);
+    }
+    return map;
+  }, [partsInventory]);
+
+  const getRecordCategory = useCallback(
+    (partNumber: string): string => categoryByPartNumber.get(partNumber) || 'Uncategorized',
+    [categoryByPartNumber]
+  );
+
 
   
   // ============ LIVE DATA FROM LOCALSTORAGE ============
@@ -85,6 +107,8 @@ const PartsUsageHistory: React.FC = () => {
   const [actionFilter, setActionFilter] = useState<string>('all');
   const [dateFilter, setDateFilter] = useState<string>('all');
   const [componentFilter, setComponentFilter] = useState<string>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+
   const [expandedRecord, setExpandedRecord] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedPartForAnalytics, setSelectedPartForAnalytics] = useState<string | null>(null);
@@ -639,7 +663,11 @@ const PartsUsageHistory: React.FC = () => {
                         
                         <div>
                           <div className="flex items-center gap-3 mb-1">
+                            {/* Shared maintenance-category color dot for the part */}
+                            <CategoryDot category={getRecordCategory(record.partNumber)} customCategories={customCategories} />
                             <span className="text-orange-400 font-mono text-sm">{record.partNumber}</span>
+                            <span className="text-xs text-slate-500">{getRecordCategory(record.partNumber)}</span>
+
                             <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize border ${getActionColor(record.action)}`}>
                               {record.action}
                             </span>

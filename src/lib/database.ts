@@ -160,7 +160,10 @@ const toMaintenanceItem = (row: any): MaintenanceItem => ({
   notes: row.notes || '',
   estimatedCost: row.estimated_cost,
   threshold: row.threshold != null ? Number(row.threshold) : undefined,
+  // Spreadsheet-style service log (array of { id, date, time, notes }).
+  serviceLog: Array.isArray(row.service_log) ? row.service_log : [],
 });
+
 
 
 
@@ -784,12 +787,15 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
   
   if (userId) basePayload.user_id = userId;
 
-  // Build the full payload including new columns (threshold, last_service_time)
+  // Build the full payload including new columns (threshold, last_service_time, service_log)
   const fullPayload: any = {
     ...basePayload,
     threshold: item.threshold != null ? item.threshold : null,
     last_service_time: emptyToNull(item.lastServiceTime),
+    // Spreadsheet-style service log (array of { id, date, time, notes }) stored as JSONB.
+    service_log: Array.isArray(item.serviceLog) ? item.serviceLog : [],
   };
+
 
   // Attempt 1: Try with all columns (including threshold, last_service_time)
   const { error: fullError } = await supabase.from('maintenance_items').upsert(fullPayload);

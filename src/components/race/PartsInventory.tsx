@@ -43,6 +43,11 @@ import {
 } from 'lucide-react';
 import { PartInventoryItem } from '@/data/partsInventory';
 import {
+  DEFAULT_GENERAL_CATEGORIES,
+  DEFAULT_DRIVETRAIN_CATEGORIES,
+} from '@/data/maintenanceCategories';
+import { useCustomCategories, CategoryDot } from './CategoryBadge';
+import {
   PurchaseOrder,
   PurchaseOrderItem
 } from '@/data/vendorData';
@@ -53,9 +58,6 @@ import {
   calculatePartLifecycle
 } from '@/data/partsUsageData';
 
-import LowStockAlertPanel from './LowStockAlertPanel';
-import ReorderListGenerator from './ReorderListGenerator';
-import CSVImportModal from './CSVImportModal';
 
 
 
@@ -297,6 +299,11 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
 
 
   const categories = useMemo(() => [...new Set(partsInventory.map(p => p.category))], [partsInventory]);
+
+  // Shared maintenance category colors — parts are color-coded with the SAME
+  // user-defined category colors so scanning is consistent across the app.
+  const customCategories = useCustomCategories();
+
 
   // ============ DEFAULT PART & FORM STATE ============
   const defaultPart: PartInventoryItem = {
@@ -919,16 +926,23 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
             />
           </div>
           
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white"
-          >
-            <option value="all">All Categories</option>
-            {categories.map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-lg px-3">
+            {/* Color swatch reflecting the selected category for fast scanning */}
+            {categoryFilter !== 'all' && (
+              <CategoryDot category={categoryFilter} customCategories={customCategories} />
+            )}
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="py-2 bg-transparent text-white focus:outline-none"
+            >
+              <option value="all">All Categories</option>
+              {categories.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+
           
           <select
             value={statusFilter}
@@ -1002,9 +1016,14 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                       </td>
 
                       <td className="px-4 py-3">
-                        <span className="text-slate-300 text-sm">{part.category}</span>
-                        <span className="text-slate-500 text-xs block">{part.subcategory}</span>
+                        <span className="flex items-center gap-2">
+                          {/* Shared maintenance-category color dot for fast scanning */}
+                          <CategoryDot category={part.category} customCategories={customCategories} />
+                          <span className="text-slate-300 text-sm">{part.category}</span>
+                        </span>
+                        <span className="text-slate-500 text-xs block ml-4">{part.subcategory}</span>
                       </td>
+
                       <td className="px-4 py-3 text-center">
                         <span className={`font-bold ${
                           part.onHand === 0 ? 'text-red-400' :
@@ -1202,7 +1221,11 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
             return (
               <div key={category} className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
                 <div className="flex items-center justify-between mb-2">
-                  <h4 className="font-medium text-white">{category}</h4>
+                  <h4 className="font-medium text-white flex items-center gap-2">
+                    <CategoryDot category={category} customCategories={customCategories} />
+                    {category}
+                  </h4>
+
                   {lowStockCount > 0 && (
                     <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs">
                       {lowStockCount} low
@@ -1265,21 +1288,34 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                     onChange={(e) => setNewPart({...newPart, category: e.target.value})}
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   >
-                    <option value="Engine">Engine</option>
-                    <option value="Power Adder">Power Adder</option>
-                    <option value="Drivetrain">Drivetrain</option>
-                    <option value="Trans Drive">Trans Drive</option>
-                    <option value="Transmission">Transmission</option>
-                    <option value="Fuel System">Fuel System</option>
-                    <option value="Oil System">Oil System</option>
-                    <option value="Electrical">Electrical</option>
-                    <option value="Suspension">Suspension</option>
-                    <option value="Brakes">Brakes</option>
-                    <option value="Fluids">Fluids</option>
-                    <option value="Safety">Safety</option>
-                    <option value="Body">Body</option>
-                    <option value="Wheels/Tires">Wheels/Tires</option>
+                    {/* Categories pull from the shared maintenanceCategories module
+                        so Parts and Maintenance stay aligned (and share colors). */}
+                    <optgroup label="General">
+                      {DEFAULT_GENERAL_CATEGORIES.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Drivetrain Components">
+                      {DEFAULT_DRIVETRAIN_CATEGORIES.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </optgroup>
+                    {customCategories.length > 0 && (
+                      <optgroup label="Custom">
+                        {customCategories.map((c) => (
+                          <option key={c.name} value={c.name}>{c.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {/* Preserve any existing/legacy value not in the shared lists. */}
+                    {newPart.category &&
+                      !DEFAULT_GENERAL_CATEGORIES.includes(newPart.category) &&
+                      !DEFAULT_DRIVETRAIN_CATEGORIES.includes(newPart.category) &&
+                      !customCategories.some((c) => c.name === newPart.category) && (
+                        <option value={newPart.category}>{newPart.category}</option>
+                      )}
                   </select>
+
                 </div>
 
                 <div>

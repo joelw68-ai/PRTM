@@ -150,6 +150,10 @@ export const MaintenanceItemRowSchema = z.object({
   // Added June 2026 — column was missing from the live table, causing the
   // threshold to silently drop on save and disappear after restart.
   threshold: nullableNumeric,
+  // Spreadsheet-style service log (array of { id, date, time, notes }).
+  // JSONB column added June 2026.
+  service_log: nj,
+
 
 }).passthrough();
 
