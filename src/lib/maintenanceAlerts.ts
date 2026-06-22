@@ -98,6 +98,22 @@ export function saveAlertSettings(settings: MaintenanceAlertSettings): void {
 // ============ DATABASE PERSISTENCE ============
 
 /**
+ * Resolve the current user's id. Prefer an explicitly passed id, otherwise
+ * fall back to the active Supabase auth session. Returns undefined if there is
+ * no authenticated user (e.g. demo mode) — in that case only localStorage is
+ * used for persistence.
+ */
+async function resolveUserId(userId?: string): Promise<string | undefined> {
+  if (userId) return userId;
+  try {
+    const { data } = await supabase.auth.getUser();
+    return data?.user?.id ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Load alert settings from the database (async).
  * Returns null if the table doesn't exist or no settings are found.
  * The caller should fall back to localStorage/defaults if null.
@@ -107,8 +123,9 @@ export function saveAlertSettings(settings: MaintenanceAlertSettings): void {
  */
 export async function loadAlertSettingsFromDB(userId?: string): Promise<MaintenanceAlertSettings | null> {
   try {
+    const uid = await resolveUserId(userId);
     let query = supabase.from('maintenance_alert_settings').select('*');
-    query = userId ? query.eq('user_id', userId) : query;
+    query = uid ? query.eq('user_id', uid) : query;
 
     const { data, error } = await query.maybeSingle();
 
@@ -165,15 +182,22 @@ export async function saveAlertSettingsToDB(
   saveAlertSettings(settings);
 
   try {
+    const uid = await resolveUserId(userId);
+    if (!uid) {
+      // No authenticated user — RLS requires a user_id, so a DB write is not
+      // possible. localStorage (above) is the persistence in this case.
+      console.warn('[maintenanceAlerts] No authenticated user; saved to localStorage only.');
+      return false;
+    }
+
     const payload: Record<string, any> = {
+      user_id: uid,
       is_enabled: settings.enabled,
       notify_toast: settings.showToastNotifications,
       notify_bell: settings.showBellAlerts,
       thresholds_json: settings.thresholds,
       updated_at: new Date().toISOString(),
     };
-
-    if (userId) payload.user_id = userId;
 
     const { error } = await supabase
       .from('maintenance_alert_settings')
@@ -189,6 +213,7 @@ export async function saveAlertSettingsToDB(
     return false;
   }
 }
+
 
 
 

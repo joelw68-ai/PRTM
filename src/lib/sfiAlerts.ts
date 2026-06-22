@@ -87,14 +87,30 @@ export function saveSFIAlertSettings(settings: SFIAlertSettings): void {
 // ============ DATABASE PERSISTENCE ============
 
 /**
+ * Resolve the current user's id. Prefer an explicitly passed id, otherwise
+ * fall back to the active Supabase auth session. Returns undefined if there is
+ * no authenticated user.
+ */
+async function resolveUserId(userId?: string): Promise<string | undefined> {
+  if (userId) return userId;
+  try {
+    const { data } = await supabase.auth.getUser();
+    return data?.user?.id ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Load SFI alert settings from the database (async).
  * Returns null if the table doesn't exist or no settings are found.
  * Settings are stored PER USER (one row per user_id), full thresholds as JSON.
  */
 export async function loadSFIAlertSettingsFromDB(userId?: string): Promise<SFIAlertSettings | null> {
   try {
+    const uid = await resolveUserId(userId);
     let query = supabase.from('sfi_alert_settings').select('*');
-    query = userId ? query.eq('user_id', userId) : query;
+    query = uid ? query.eq('user_id', uid) : query;
 
     const { data, error } = await query.maybeSingle();
 
@@ -147,15 +163,20 @@ export async function saveSFIAlertSettingsToDB(
   saveSFIAlertSettings(settings);
 
   try {
+    const uid = await resolveUserId(userId);
+    if (!uid) {
+      console.warn('[sfiAlerts] No authenticated user; saved to localStorage only.');
+      return false;
+    }
+
     const payload: Record<string, any> = {
+      user_id: uid,
       is_enabled: settings.enabled,
       notify_toast: settings.showToastNotifications,
       notify_bell: settings.showBellAlerts,
       thresholds_json: settings.thresholds,
       updated_at: new Date().toISOString(),
     };
-
-    if (userId) payload.user_id = userId;
 
     const { error } = await supabase
       .from('sfi_alert_settings')
@@ -171,6 +192,7 @@ export async function saveSFIAlertSettingsToDB(
     return false;
   }
 }
+
 
 
 /**
