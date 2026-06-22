@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import {
   loadEffectiveCategoryList,
+  loadCustomCategories,
+  loadDefaultOverrides,
+  getEffectiveDefaults,
   getCategoryColor,
   CustomCategory,
 } from '@/data/maintenanceCategories';
@@ -34,6 +37,46 @@ export const useCustomCategories = (): CustomCategory[] => {
   }, []);
   return cats;
 };
+
+/**
+ * The user's category lists split into the same groups the picker uses,
+ * each already in the user's preferred order (with renames/colors applied
+ * and hidden built-ins removed):
+ *   - general    -> built-in General categories (ordered)
+ *   - drivetrain -> built-in Drivetrain categories (ordered)
+ *   - customs    -> custom categories (ordered by sort_order)
+ *
+ * Use this anywhere category <select> dropdowns are rendered so the option
+ * ordering is consistent app-wide (Maintenance, Parts Inventory, etc.).
+ */
+export interface CategoryGroups {
+  general: CustomCategory[];
+  drivetrain: CustomCategory[];
+  customs: CustomCategory[];
+}
+
+export const useCategoryGroups = (): CategoryGroups => {
+  const [groups, setGroups] = useState<CategoryGroups>({
+    general: [],
+    drivetrain: [],
+    customs: [],
+  });
+  useEffect(() => {
+    let mounted = true;
+    Promise.all([loadCustomCategories(), loadDefaultOverrides()]).then(
+      ([customs, overrides]) => {
+        if (!mounted) return;
+        const eff = getEffectiveDefaults(overrides);
+        setGroups({ general: eff.general, drivetrain: eff.drivetrain, customs });
+      }
+    );
+    return () => {
+      mounted = false;
+    };
+  }, []);
+  return groups;
+};
+
 
 
 interface CategoryDotProps {

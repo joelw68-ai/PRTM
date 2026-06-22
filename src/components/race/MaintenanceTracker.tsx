@@ -221,6 +221,10 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   const [pendingDeleteCategory, setPendingDeleteCategory] = useState<
     { display: string; key: string; kind: 'custom' | 'default'; count: number } | null
   >(null);
+  // When the deleted category still has items, the user can optionally pick a
+  // target category here to reassign those items to (instead of leaving them on
+  // the removed value). Empty string = "keep their saved value".
+  const [reassignTo, setReassignTo] = useState<string>('');
 
   // ===== BULK THRESHOLD EDITING =====
   // Users can select multiple rows via checkboxes and apply a single alert
@@ -588,6 +592,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   // Open the confirmation panel for a CUSTOM category, computing how many items
   // currently use it.
   const requestDeleteCustom = (name: string) => {
+    setReassignTo('');
     setPendingDeleteCategory({
       display: name,
       key: name,
@@ -599,6 +604,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   // shipped key; `display` is the current (possibly renamed) display name used
   // by items.
   const requestDeleteDefault = (orig: string, display: string) => {
+    setReassignTo('');
     setPendingDeleteCategory({
       display,
       key: orig,
@@ -606,14 +612,37 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
       count: countItemsUsingCategory(display, maintenanceItems),
     });
   };
-  // Execute the confirmed deletion (routes to the right remove handler).
+
+  // NOTE: `reassignOptions` (which depends on `combinedDefaults`) is declared
+  // further down, AFTER `combinedDefaults`, to avoid a temporal-dead-zone ref.
+
+
+  // Execute the confirmed deletion. If the user chose a reassignment target,
+  // first migrate every item currently using the deleted category to that
+  // target; otherwise items keep their saved value.
   const confirmDeleteCategory = async () => {
     if (!pendingDeleteCategory) return;
-    if (pendingDeleteCategory.kind === 'custom') {
-      await handleRemoveCategory(pendingDeleteCategory.key);
-    } else {
-      await handleRemoveDefault(pendingDeleteCategory.key);
+    const { display, key, kind } = pendingDeleteCategory;
+
+    // Reassign affected items to the chosen target category first.
+    if (reassignTo && reassignTo !== display) {
+      const affected = maintenanceItems.filter((m) => m.category === display);
+      await Promise.all(
+        affected.map((m) => updateMaintenanceItem(m.id, { category: reassignTo }))
+      );
+      // Keep the in-progress edit form & active filter in sync.
+      setNewMaintenance((prev) =>
+        prev.category === display ? { ...prev, category: reassignTo } : prev
+      );
+      setFilterCategory((prev) => (prev === display ? reassignTo : prev));
     }
+
+    if (kind === 'custom') {
+      await handleRemoveCategory(key);
+    } else {
+      await handleRemoveDefault(key);
+    }
+    setReassignTo('');
     setPendingDeleteCategory(null);
   };
 
@@ -668,6 +697,18 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     () => [...effectiveDefaults.general, ...effectiveDefaults.drivetrain],
     [effectiveDefaults]
   );
+
+  // Candidate target categories for reassigning items off a category being
+  // deleted — all currently-visible built-ins + customs, minus the one being
+  // removed. Built-in order first (user's preferred order), then customs.
+  const reassignOptions = useMemo(() => {
+    if (!pendingDeleteCategory) return [] as string[];
+    const all = [
+      ...combinedDefaults.map((c) => c.name),
+      ...customCategories.map((c) => c.name),
+    ];
+    return [...new Set(all)].filter((n) => n !== pendingDeleteCategory.display);
+  }, [pendingDeleteCategory, combinedDefaults, customCategories]);
   const handleDefaultDragStart = (index: number) => setDefaultDragIndex(index);
   const handleDefaultDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault();
@@ -1533,12 +1574,24 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                                   /* ===== DISPLAY MODE ===== */
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="flex items-center gap-2 min-w-0">
+                                      {/* Drag handle — only this grip starts a drag so
+                                          the color swatches/buttons stay clickable. */}
+                                      <span
+                                        draggable
+                                        onDragStart={() => handleDefaultDragStart(index)}
+                                        onDragEnd={() => { setDefaultDragIndex(null); setDefaultDragOverIndex(null); }}
+                                        className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300 flex-shrink-0"
+                                        title="Drag to reorder"
+                                      >
+                                        <GripVertical className="w-4 h-4" />
+                                      </span>
                                       <span
                                         className="w-3 h-3 rounded-full flex-shrink-0"
                                         style={{ backgroundColor: c.color }}
                                       />
                                       <span className="text-sm text-white truncate">{c.name}</span>
                                     </div>
+
                                     <div className="flex items-center gap-1">
                                       <button
                                         type="button"
@@ -1550,12 +1603,13 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() => handleRemoveDefault(orig)}
+                                        onClick={() => requestDeleteDefault(orig, c.name)}
                                         className="p-1 text-slate-400 hover:text-red-400"
                                         title="Delete category"
                                       >
                                         <Trash2 className="w-3.5 h-3.5" />
                                       </button>
+
                                     </div>
                                   </div>
                                 )}
@@ -1756,13 +1810,41 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                   <span className="font-semibold text-orange-200">
                     {pendingDeleteCategory.count} maintenance item{pendingDeleteCategory.count === 1 ? '' : 's'}
                   </span>{' '}
-                  currently use{pendingDeleteCategory.count === 1 ? 's' : ''} this category. Those items will
-                  keep their saved value — only the picker option is removed.
+                  currently use{pendingDeleteCategory.count === 1 ? 's' : ''} this category. Choose a
+                  category below to move {pendingDeleteCategory.count === 1 ? 'it' : 'them'} to, or leave
+                  it on "Keep current value" to leave {pendingDeleteCategory.count === 1 ? 'it' : 'them'} on
+                  the removed value.
                 </>
               ) : (
                 'No maintenance items currently use this category.'
               )}
             </div>
+
+            {/* ===== OPTIONAL REASSIGNMENT ===== */}
+            {pendingDeleteCategory.count > 0 && (
+              <div className="mb-5">
+                <label className="block text-sm text-slate-300 mb-1.5">
+                  Reassign {pendingDeleteCategory.count} item{pendingDeleteCategory.count === 1 ? '' : 's'} to
+                </label>
+                <select
+                  value={reassignTo}
+                  onChange={(e) => setReassignTo(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Keep current value (don't reassign)</option>
+                  {reassignOptions.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+                {reassignTo && (
+                  <p className="mt-1.5 text-[11px] text-cyan-300 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" />
+                    {pendingDeleteCategory.count} item{pendingDeleteCategory.count === 1 ? '' : 's'} will move to "{reassignTo}".
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-3">
               <button
                 onClick={() => setPendingDeleteCategory(null)}
@@ -1775,8 +1857,9 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                 className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 flex items-center justify-center gap-2"
               >
                 <Trash2 className="w-4 h-4" />
-                Delete
+                {reassignTo ? 'Reassign & Delete' : 'Delete'}
               </button>
+
             </div>
           </div>
         </div>

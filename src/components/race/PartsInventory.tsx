@@ -42,11 +42,8 @@ import {
   Calendar
 } from 'lucide-react';
 import { PartInventoryItem } from '@/data/partsInventory';
-import {
-  DEFAULT_GENERAL_CATEGORIES,
-  DEFAULT_DRIVETRAIN_CATEGORIES,
-} from '@/data/maintenanceCategories';
-import { useCustomCategories, CategoryDot } from './CategoryBadge';
+import { useCustomCategories, useCategoryGroups, CategoryDot } from './CategoryBadge';
+
 import {
   PurchaseOrder,
   PurchaseOrderItem
@@ -303,6 +300,36 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
   // Shared maintenance category colors — parts are color-coded with the SAME
   // user-defined category colors so scanning is consistent across the app.
   const customCategories = useCustomCategories();
+
+  // The user's category groups in their preferred order (built-in defaults with
+  // rename/recolor/hide + 'order' overrides applied, plus custom categories).
+  // Drives the Category <select> so its ordering matches the Maintenance picker
+  // and filter chips app-wide.
+  const categoryGroups = useCategoryGroups();
+
+  // Categories actually present in the inventory, sorted by the user's preferred
+  // app-wide ordering (built-in defaults order, then customs order). Categories
+  // not found in the user's lists fall to the end alphabetically. Used by the
+  // Category filter dropdown and the "Summary by Category" cards so ordering is
+  // consistent with the Maintenance picker.
+  const orderedCategories = useMemo(() => {
+    const orderList = [
+      ...categoryGroups.general,
+      ...categoryGroups.drivetrain,
+      ...categoryGroups.customs,
+    ].map((c) => c.name);
+    const indexOf = (name: string) => {
+      const i = orderList.indexOf(name);
+      return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+    };
+    return [...categories].sort((a, b) => {
+      const ia = indexOf(a);
+      const ib = indexOf(b);
+      if (ia !== ib) return ia - ib;
+      return a.localeCompare(b);
+    });
+  }, [categories, categoryGroups]);
+
 
 
   // ============ DEFAULT PART & FORM STATE ============
@@ -937,9 +964,10 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
               className="py-2 bg-transparent text-white focus:outline-none"
             >
               <option value="all">All Categories</option>
-              {categories.map(cat => (
+              {orderedCategories.map(cat => (
                 <option key={cat} value={cat}>{cat}</option>
               ))}
+
             </select>
           </div>
 
@@ -1213,7 +1241,8 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
 
         {/* Summary by Category */}
         <div className="mt-6 grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {categories.map(category => {
+          {orderedCategories.map(category => {
+
             const categoryParts = partsInventory.filter(p => p.category === category);
             const categoryValue = categoryParts.reduce((sum, p) => sum + p.totalValue, 0);
             const lowStockCount = categoryParts.filter(p => p.status === 'Low Stock' || p.status === 'Out of Stock').length;
@@ -1289,31 +1318,34 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   >
                     {/* Categories pull from the shared maintenanceCategories module
-                        so Parts and Maintenance stay aligned (and share colors). */}
+                        so Parts and Maintenance stay aligned (and share colors).
+                        Options follow the user's preferred order (rename / recolor /
+                        hide / reorder overrides applied) via useCategoryGroups(). */}
                     <optgroup label="General">
-                      {DEFAULT_GENERAL_CATEGORIES.map((c) => (
-                        <option key={c} value={c}>{c}</option>
+                      {categoryGroups.general.map((c) => (
+                        <option key={c.name} value={c.name}>{c.name}</option>
                       ))}
                     </optgroup>
                     <optgroup label="Drivetrain Components">
-                      {DEFAULT_DRIVETRAIN_CATEGORIES.map((c) => (
-                        <option key={c} value={c}>{c}</option>
+                      {categoryGroups.drivetrain.map((c) => (
+                        <option key={c.name} value={c.name}>{c.name}</option>
                       ))}
                     </optgroup>
-                    {customCategories.length > 0 && (
+                    {categoryGroups.customs.length > 0 && (
                       <optgroup label="Custom">
-                        {customCategories.map((c) => (
+                        {categoryGroups.customs.map((c) => (
                           <option key={c.name} value={c.name}>{c.name}</option>
                         ))}
                       </optgroup>
                     )}
                     {/* Preserve any existing/legacy value not in the shared lists. */}
                     {newPart.category &&
-                      !DEFAULT_GENERAL_CATEGORIES.includes(newPart.category) &&
-                      !DEFAULT_DRIVETRAIN_CATEGORIES.includes(newPart.category) &&
-                      !customCategories.some((c) => c.name === newPart.category) && (
+                      !categoryGroups.general.some((c) => c.name === newPart.category) &&
+                      !categoryGroups.drivetrain.some((c) => c.name === newPart.category) &&
+                      !categoryGroups.customs.some((c) => c.name === newPart.category) && (
                         <option value={newPart.category}>{newPart.category}</option>
                       )}
+
                   </select>
 
                 </div>
