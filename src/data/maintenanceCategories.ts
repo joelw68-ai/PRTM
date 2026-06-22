@@ -364,4 +364,231 @@ export const renameCustomCategory = async (
     }
   }
   return next;
+  return next;
+};
+
+// ============================================================
+// EDITABLE BUILT-IN (DEFAULT) CATEGORIES
+// ============================================================
+// The two default lists (General + Drivetrain) used to be immutable. Users
+// can now rename, recolor, hide, and reorder them too. Rather than mutate the
+// shipped constants, we persist a small per-user "override" object keyed by
+// the ORIGINAL default name:
+//   - renames[orig]  -> new display name
+//   - colors[orig]   -> chosen color
+//   - hidden[]       -> original names the user removed from the pickers
+//   - order[]        -> preferred order of original names (across both groups)
+// Overrides live in a per-user Supabase table (`maintenance_category_overrides`,
+// a single jsonb row) with a localStorage cache / offline fallback — mirroring
+// how custom categories are stored.
+
+export interface DefaultOverride {
+  renames: Record<string, string>;
+  colors: Record<string, string>;
+  hidden: string[];
+  order: string[];
+}
+
+const emptyOverride = (): DefaultOverride => ({ renames: {}, colors: {}, hidden: [], order: [] });
+
+const OVERRIDE_STORAGE_KEY = 'maintenance_default_overrides_v1';
+
+const normalizeOverride = (raw: unknown): DefaultOverride => {
+  const o = emptyOverride();
+  if (raw && typeof raw === 'object') {
+    const r = raw as Record<string, unknown>;
+    if (r.renames && typeof r.renames === 'object') o.renames = { ...(r.renames as Record<string, string>) };
+    if (r.colors && typeof r.colors === 'object') o.colors = { ...(r.colors as Record<string, string>) };
+    if (Array.isArray(r.hidden)) o.hidden = (r.hidden as unknown[]).filter((x) => typeof x === 'string') as string[];
+    if (Array.isArray(r.order)) o.order = (r.order as unknown[]).filter((x) => typeof x === 'string') as string[];
+  }
+  return o;
+};
+
+const readOverrideLocal = (): DefaultOverride => {
+  try {
+    const raw = localStorage.getItem(OVERRIDE_STORAGE_KEY);
+    if (raw) return normalizeOverride(JSON.parse(raw));
+  } catch {
+    /* ignore */
+  }
+  return emptyOverride();
+};
+
+const writeOverrideLocal = (o: DefaultOverride): void => {
+  try {
+    localStorage.setItem(OVERRIDE_STORAGE_KEY, JSON.stringify(o));
+  } catch {
+    /* ignore */
+  }
+};
+
+// Load the user's default-category overrides (DB first, local fallback).
+export const loadDefaultOverrides = async (): Promise<DefaultOverride> => {
+  const userId = await getUserId();
+  if (!userId) return readOverrideLocal();
+  try {
+    const { data, error } = await supabase
+      .from('maintenance_category_overrides')
+      .select('data')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error) throw error;
+    if (data?.data) {
+      const o = normalizeOverride(data.data);
+      writeOverrideLocal(o);
+      return o;
+    }
+    // Seed DB from any local overrides created before sign-in.
+    const local = readOverrideLocal();
+    const hasLocal =
+      Object.keys(local.renames).length ||
+      Object.keys(local.colors).length ||
+      local.hidden.length ||
+      local.order.length;
+    if (hasLocal) {
+      await supabase
+        .from('maintenance_category_overrides')
+        .upsert({ user_id: userId, data: local, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+      return local;
+    }
+    return emptyOverride();
+  } catch (err) {
+    console.warn('Falling back to local default overrides:', err);
+    return readOverrideLocal();
+  }
+};
+
+// Persist the whole override object (DB + local).
+export const saveDefaultOverrides = async (o: DefaultOverride): Promise<DefaultOverride> => {
+  writeOverrideLocal(o);
+  const userId = await getUserId();
+  if (userId) {
+    try {
+      await supabase
+        .from('maintenance_category_overrides')
+        .upsert({ user_id: userId, data: o, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    } catch (err) {
+      console.warn('Failed to persist default overrides to DB:', err);
+    }
+  }
+  return o;
+};
+
+// Resolve the EFFECTIVE (post-override) display name + color for a single
+// original default category name.
+const effectiveForOriginal = (orig: string, o: DefaultOverride): CustomCategory => ({
+  name: o.renames[orig]?.trim() || orig,
+  color: o.colors[orig] || defaultColorForCategory(orig),
+});
+
+// Build the effective General + Drivetrain lists with overrides applied:
+// hidden ones removed, renamed/recolored, and reordered per `order`.
+export interface EffectiveDefaults {
+  general: CustomCategory[];
+  drivetrain: CustomCategory[];
+  /** Map of effective display name -> original default name (for migrations). */
+  originalByDisplay: Record<string, string>;
+}
+
+export const getEffectiveDefaults = (o: DefaultOverride): EffectiveDefaults => {
+  const orderIndex = (name: string) => {
+    const i = o.order.indexOf(name);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  const buildGroup = (originals: string[]): CustomCategory[] =>
+    originals
+      .filter((orig) => !o.hidden.includes(orig))
+      .slice()
+      .sort((a, b) => orderIndex(a) - orderIndex(b))
+      .map((orig) => effectiveForOriginal(orig, o));
+
+  const originalByDisplay: Record<string, string> = {};
+  [...DEFAULT_GENERAL_CATEGORIES, ...DEFAULT_DRIVETRAIN_CATEGORIES].forEach((orig) => {
+    if (o.hidden.includes(orig)) return;
+    originalByDisplay[(o.renames[orig]?.trim() || orig)] = orig;
+  });
+
+  return {
+    general: buildGroup(DEFAULT_GENERAL_CATEGORIES),
+    drivetrain: buildGroup(DEFAULT_DRIVETRAIN_CATEGORIES),
+    originalByDisplay,
+  };
+};
+
+// Merge effective defaults + custom categories into ONE list used for color /
+// dot resolution across the whole app (getCategoryColor matches by name).
+export const buildColorResolutionList = (
+  customs: CustomCategory[],
+  o: DefaultOverride
+): CustomCategory[] => {
+  const eff = getEffectiveDefaults(o);
+  return [...eff.general, ...eff.drivetrain, ...customs];
+};
+
+// Convenience loader: returns the merged color-resolution list (effective
+// defaults + customs). Used by the shared useCustomCategories() hook so Parts
+// screens reflect default-category edits automatically.
+export const loadEffectiveCategoryList = async (): Promise<CustomCategory[]> => {
+  const [customs, overrides] = await Promise.all([loadCustomCategories(), loadDefaultOverrides()]);
+  return buildColorResolutionList(customs, overrides);
+};
+
+// ---- default-category mutators (return updated overrides) -------
+
+// Rename a built-in category. `orig` is the ORIGINAL shipped name; `newName`
+// is the new display name. Blocks collisions with other effective categories.
+export const renameDefaultCategory = async (
+  orig: string,
+  newName: string,
+  o: DefaultOverride,
+  customs: CustomCategory[]
+): Promise<DefaultOverride> => {
+  const trimmed = (newName || '').trim();
+  if (!trimmed) return o;
+  const eff = getEffectiveDefaults(o);
+  const currentDisplay = o.renames[orig]?.trim() || orig;
+  const collides =
+    trimmed.toLowerCase() !== currentDisplay.toLowerCase() &&
+    ([...eff.general, ...eff.drivetrain].some((c) => c.name.toLowerCase() === trimmed.toLowerCase()) ||
+      customs.some((c) => c.name.toLowerCase() === trimmed.toLowerCase()));
+  if (collides) return o;
+  const next: DefaultOverride = { ...o, renames: { ...o.renames } };
+  if (trimmed === orig) {
+    delete next.renames[orig]; // back to shipped name
+  } else {
+    next.renames[orig] = trimmed;
+  }
+  return saveDefaultOverrides(next);
+};
+
+// Recolor a built-in category (keyed by its ORIGINAL name).
+export const setDefaultCategoryColor = async (
+  orig: string,
+  color: string,
+  o: DefaultOverride
+): Promise<DefaultOverride> => {
+  const next: DefaultOverride = { ...o, colors: { ...o.colors, [orig]: color } };
+  return saveDefaultOverrides(next);
+};
+
+// Hide (remove from the pickers) a built-in category. Items already saved with
+// it keep their stored value — same semantics as deleting a custom category.
+export const removeDefaultCategory = async (
+  orig: string,
+  o: DefaultOverride
+): Promise<DefaultOverride> => {
+  if (o.hidden.includes(orig)) return o;
+  const next: DefaultOverride = { ...o, hidden: [...o.hidden, orig] };
+  return saveDefaultOverrides(next);
+};
+
+// Restore a previously hidden built-in category.
+export const restoreDefaultCategory = async (
+  orig: string,
+  o: DefaultOverride
+): Promise<DefaultOverride> => {
+  if (!o.hidden.includes(orig)) return o;
+  const next: DefaultOverride = { ...o, hidden: o.hidden.filter((h) => h !== orig) };
+  return saveDefaultOverrides(next);
 };

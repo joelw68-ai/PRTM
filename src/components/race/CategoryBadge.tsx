@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  loadCustomCategories,
+  loadEffectiveCategoryList,
   getCategoryColor,
   CustomCategory,
 } from '@/data/maintenanceCategories';
@@ -10,16 +10,22 @@ import {
 // ============================================================
 // Both the Maintenance page and the Parts screens color-code their
 // Category columns/filters using the SAME user-defined maintenance
-// category colors. This hook loads the user's custom categories (from
-// the DB / local cache) once, and <CategoryDot> / <CategoryBadge>
-// render the matching color so the whole app stays visually consistent.
+// category colors. This hook loads the user's effective categories
+// (built-in defaults WITH any rename/recolor overrides applied, PLUS
+// custom categories) once, and <CategoryDot> / <CategoryBadge> render
+// the matching color so the whole app stays visually consistent.
 
-/** Load the user's custom maintenance categories (with colors). */
+/**
+ * Load the user's effective maintenance categories (with colors).
+ * Includes built-in default categories (with overrides applied) and any
+ * custom categories, so edits to default category colors/names are
+ * reflected everywhere they're used.
+ */
 export const useCustomCategories = (): CustomCategory[] => {
   const [cats, setCats] = useState<CustomCategory[]>([]);
   useEffect(() => {
     let mounted = true;
-    loadCustomCategories().then((c) => {
+    loadEffectiveCategoryList().then((c) => {
       if (mounted) setCats(c);
     });
     return () => {
@@ -28,6 +34,7 @@ export const useCustomCategories = (): CustomCategory[] => {
   }, []);
   return cats;
 };
+
 
 interface CategoryDotProps {
   category: string;
