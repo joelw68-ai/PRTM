@@ -796,35 +796,58 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
     service_log: Array.isArray(item.serviceLog) ? item.serviceLog : [],
   };
 
-
   // Attempt 1: Try with all columns (including threshold, last_service_time)
   const { error: fullError } = await supabase.from('maintenance_items').upsert(fullPayload);
-  
+
   if (!fullError) {
     // Success — columns exist, all good
     return;
   }
 
-  // Check if the error is specifically about unknown columns
-  if (isUnknownColumnError(fullError)) {
+  // Check if the error is specifically about unknown columns OR a stale
+  // PostgREST schema cache. The `threshold` / `last_service_time` / `service_log`
+  // columns DO exist in the live table, but if PostgREST's in-memory schema
+  // cache is stale (PGRST204), it will reject the payload. Previously we silently
+  // dropped the threshold here — which is exactly why thresholds "weren't saving".
+  // Now we trigger a schema-cache reload and RETRY the full payload (with threshold)
+  // a couple of times before giving up, so the threshold is preserved.
+  if (isUnknownColumnError(fullError) || isTableNotInSchemaCache(fullError)) {
     console.warn(
-      '[upsertMaintenanceItem] threshold/last_service_time columns not found in DB — retrying without them.',
+      '[upsertMaintenanceItem] threshold/last_service_time/service_log rejected (likely stale schema cache) — reloading cache and retrying with full payload.',
       { code: fullError.code, message: fullError.message }
     );
 
-    // Attempt 2: Retry with base payload only (no threshold, last_service_time)
+    // Fire a schema-cache reload, then retry the FULL payload a few times.
+    await triggerSchemaReload();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // Small backoff to let PostgREST pick up the reloaded schema.
+      await new Promise((r) => setTimeout(r, 700));
+      const { error: retryFullError } = await supabase.from('maintenance_items').upsert(fullPayload);
+      if (!retryFullError) {
+        console.log('[upsertMaintenanceItem] Full payload (with threshold) saved after schema reload.');
+        return;
+      }
+      if (!isUnknownColumnError(retryFullError) && !isTableNotInSchemaCache(retryFullError)) {
+        // A different (real) error — stop retrying and surface it.
+        throw retryFullError;
+      }
+    }
+
+    // Last resort: save the base payload so the rest of the item isn't lost.
+    // (Threshold may be missing only in this degraded edge case.)
+    console.warn('[upsertMaintenanceItem] Full payload still rejected after reload — saving base payload as a fallback.');
     const { error: baseError } = await supabase.from('maintenance_items').upsert(basePayload);
     if (baseError) {
-      console.error('[upsertMaintenanceItem] Retry also failed:', baseError);
+      console.error('[upsertMaintenanceItem] Base payload save also failed:', baseError);
       throw baseError;
     }
-    // Success on retry — item saved without threshold/last_service_time columns
     return;
   }
 
   // Not a column error — throw the original error
   throw fullError;
-};
+}
+
 
 
 

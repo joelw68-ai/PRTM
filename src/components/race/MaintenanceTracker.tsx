@@ -24,6 +24,17 @@ import {
   CustomCategory,
   CATEGORY_COLOR_PALETTE,
   DEFAULT_CATEGORY_COLOR,
+  // Editable built-in (default) category overrides
+  DefaultOverride,
+  loadDefaultOverrides,
+  getEffectiveDefaults,
+  buildColorResolutionList,
+  renameDefaultCategory,
+  removeDefaultCategory,
+  restoreDefaultCategory,
+  setDefaultCategoryColor,
+  reorderDefaultCategories,
+  countItemsUsingCategory,
 } from '@/data/maintenanceCategories';
 import CategoryBreakdownCard from './CategoryBreakdownCard';
 
@@ -188,6 +199,116 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   const [renamingCategory, setRenamingCategory] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
+
+  // ============ EDITABLE BUILT-IN (DEFAULT) CATEGORIES ============
+  // The shipped General + Drivetrain categories can now be renamed, recolored,
+  // and deleted (hidden) per user. Edits are stored as a small "override" object
+  // (renames / colors / hidden / order) in the maintenance_category_overrides
+  // table, with a localStorage cache fallback. We keep the ORIGINAL shipped name
+  // as the stable key and migrate items on rename.
+  const [defaultOverrides, setDefaultOverrides] = useState<DefaultOverride>({
+    renames: {}, colors: {}, hidden: [], order: [],
+  });
+  // Rename state for built-in categories (keyed by ORIGINAL name).
+  const [renamingDefault, setRenamingDefault] = useState<string | null>(null);
+  const [renameDefaultValue, setRenameDefaultValue] = useState('');
+  const [renameDefaultError, setRenameDefaultError] = useState<string | null>(null);
+
+  // ===== DELETE-CATEGORY CONFIRMATION =====
+  // Deleting (hiding) a category — built-in or custom — first asks the user to
+  // confirm, surfacing how many maintenance items currently use it so the
+  // impact is clear before anything changes.
+  const [pendingDeleteCategory, setPendingDeleteCategory] = useState<
+    { display: string; key: string; kind: 'custom' | 'default'; count: number } | null
+  >(null);
+
+  // ===== BULK THRESHOLD EDITING =====
+  // Users can select multiple rows via checkboxes and apply a single alert
+  // threshold to all of them at once (instead of editing each item).
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [bulkThreshold, setBulkThreshold] = useState<string>('');
+  const [bulkApplying, setBulkApplying] = useState(false);
+
+  // ===== DRAG-TO-REORDER built-in (default) categories =====
+  // Mirrors the custom-category reordering. We track the index within the
+  // combined [general, drivetrain] effective list and persist the new order of
+  // ORIGINAL names to the overrides 'order' field.
+  const [defaultDragIndex, setDefaultDragIndex] = useState<number | null>(null);
+  const [defaultDragOverIndex, setDefaultDragOverIndex] = useState<number | null>(null);
+
+
+  useEffect(() => {
+    let mounted = true;
+    loadDefaultOverrides().then((o) => {
+      if (mounted) setDefaultOverrides(o);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  // Effective (post-override) built-in category lists used by the dropdown.
+  const effectiveDefaults = useMemo(
+    () => getEffectiveDefaults(defaultOverrides),
+    [defaultOverrides]
+  );
+
+  // Combined color-resolution list (effective defaults + customs) so the dots /
+  // badges across the table & filter chips reflect built-in edits too.
+  const colorResolutionList = useMemo(
+    () => buildColorResolutionList(customCategories, defaultOverrides),
+    [customCategories, defaultOverrides]
+  );
+
+  // Rename a built-in category. `orig` = original shipped name. Persists the
+  // override AND migrates every maintenance item from the current display name
+  // to the new name so data stays consistent.
+  const handleRenameDefault = async (orig: string) => {
+    const newName = renameDefaultValue.trim();
+    if (!newName) {
+      setRenameDefaultError('Enter a new name.');
+      return;
+    }
+    const currentDisplay = defaultOverrides.renames[orig]?.trim() || orig;
+    const next = await renameDefaultCategory(orig, newName, defaultOverrides, customCategories);
+    // If nothing changed (collision blocked), surface an error.
+    if ((next.renames[orig]?.trim() || orig) === currentDisplay && newName.toLowerCase() !== currentDisplay.toLowerCase()) {
+      setRenameDefaultError('That name collides with another category.');
+      return;
+    }
+    setDefaultOverrides(next);
+
+    // Migrate items currently saved under the old display name.
+    if (newName !== currentDisplay) {
+      const affected = maintenanceItems.filter((m) => m.category === currentDisplay);
+      await Promise.all(affected.map((m) => updateMaintenanceItem(m.id, { category: newName })));
+      setNewMaintenance((prev) => prev.category === currentDisplay ? { ...prev, category: newName } : prev);
+      setFilterCategory((prev) => (prev === currentDisplay ? newName : prev));
+    }
+
+    setRenamingDefault(null);
+    setRenameDefaultValue('');
+    setRenameDefaultError(null);
+  };
+
+  // Delete (hide) a built-in category from the pickers. Items already saved
+  // with it keep their stored value.
+  const handleRemoveDefault = async (orig: string) => {
+    const next = await removeDefaultCategory(orig, defaultOverrides);
+    setDefaultOverrides(next);
+    if (renamingDefault === orig) setRenamingDefault(null);
+  };
+
+  // Restore a previously hidden built-in category.
+  const handleRestoreDefault = async (orig: string) => {
+    const next = await restoreDefaultCategory(orig, defaultOverrides);
+    setDefaultOverrides(next);
+  };
+
+  // Recolor a built-in category.
+  const handleChangeDefaultColor = async (orig: string, color: string) => {
+    const next = await setDefaultCategoryColor(orig, color, defaultOverrides);
+    setDefaultOverrides(next);
+  };
+
 
   // Load custom categories from the DB (falls back to local cache) on mount.
   useEffect(() => {
@@ -463,6 +584,114 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     return maintenanceHistory.filter(h => h.maintenanceItemId === itemId);
   };
 
+  // ===== DELETE-CATEGORY CONFIRMATION HELPERS =====
+  // Open the confirmation panel for a CUSTOM category, computing how many items
+  // currently use it.
+  const requestDeleteCustom = (name: string) => {
+    setPendingDeleteCategory({
+      display: name,
+      key: name,
+      kind: 'custom',
+      count: countItemsUsingCategory(name, maintenanceItems),
+    });
+  };
+  // Open the confirmation panel for a BUILT-IN category. `orig` is the original
+  // shipped key; `display` is the current (possibly renamed) display name used
+  // by items.
+  const requestDeleteDefault = (orig: string, display: string) => {
+    setPendingDeleteCategory({
+      display,
+      key: orig,
+      kind: 'default',
+      count: countItemsUsingCategory(display, maintenanceItems),
+    });
+  };
+  // Execute the confirmed deletion (routes to the right remove handler).
+  const confirmDeleteCategory = async () => {
+    if (!pendingDeleteCategory) return;
+    if (pendingDeleteCategory.kind === 'custom') {
+      await handleRemoveCategory(pendingDeleteCategory.key);
+    } else {
+      await handleRemoveDefault(pendingDeleteCategory.key);
+    }
+    setPendingDeleteCategory(null);
+  };
+
+  // ===== BULK THRESHOLD HELPERS =====
+  const toggleSelectItem = (id: string) => {
+    setSelectedItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const allVisibleSelected =
+    sortedMaintenance.length > 0 && sortedMaintenance.every((m) => selectedItemIds.has(m.id));
+  const toggleSelectAll = () => {
+    setSelectedItemIds((prev) => {
+      if (sortedMaintenance.every((m) => prev.has(m.id))) {
+        // Deselect all currently-visible rows.
+        const next = new Set(prev);
+        sortedMaintenance.forEach((m) => next.delete(m.id));
+        return next;
+      }
+      const next = new Set(prev);
+      sortedMaintenance.forEach((m) => next.add(m.id));
+      return next;
+    });
+  };
+  const clearSelection = () => {
+    setSelectedItemIds(new Set());
+    setBulkThreshold('');
+  };
+  const applyBulkThreshold = async () => {
+    const parsed = parseInt(bulkThreshold, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) return;
+    if (selectedItemIds.size === 0) return;
+    setBulkApplying(true);
+    try {
+      const ids = Array.from(selectedItemIds);
+      await Promise.all(ids.map((id) => updateMaintenanceItem(id, { threshold: parsed })));
+      clearSelection();
+    } catch (err) {
+      console.error('Failed to bulk-apply threshold:', err);
+    } finally {
+      setBulkApplying(false);
+    }
+  };
+
+  // ===== DRAG-TO-REORDER built-in categories =====
+  // The combined list order (general first, then drivetrain) maps each visible
+  // built-in to its ORIGINAL name; we reorder within that combined list and
+  // persist the full ordered list of originals.
+  const combinedDefaults = useMemo(
+    () => [...effectiveDefaults.general, ...effectiveDefaults.drivetrain],
+    [effectiveDefaults]
+  );
+  const handleDefaultDragStart = (index: number) => setDefaultDragIndex(index);
+  const handleDefaultDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (index !== defaultDragOverIndex) setDefaultDragOverIndex(index);
+  };
+  const handleDefaultDrop = async (dropIndex: number) => {
+    if (defaultDragIndex === null || defaultDragIndex === dropIndex) {
+      setDefaultDragIndex(null);
+      setDefaultDragOverIndex(null);
+      return;
+    }
+    // Build the current ordered list of ORIGINAL names from the combined list.
+    const originals = combinedDefaults.map(
+      (c) => effectiveDefaults.originalByDisplay[c.name] || c.name
+    );
+    const [moved] = originals.splice(defaultDragIndex, 1);
+    originals.splice(dropIndex, 0, moved);
+    setDefaultDragIndex(null);
+    setDefaultDragOverIndex(null);
+    const next = await reorderDefaultCategories(originals, defaultOverrides);
+    setDefaultOverrides(next);
+  };
+
+
   return (
     <section className="py-8 px-4">
       <div className="max-w-[1920px] mx-auto">
@@ -536,7 +765,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                     {/* Color dot for faster visual scanning */}
                     <span
                       className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: getCategoryColor(cat, customCategories) }}
+                      style={{ backgroundColor: getCategoryColor(cat, colorResolutionList) }}
                     />
                     {cat}
                   </button>
@@ -606,12 +835,54 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
 
 
+            {/* ===== BULK THRESHOLD ACTION BAR ===== */}
+            {selectedItemIds.size > 0 && (
+              <div className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-xl">
+                <span className="text-sm font-medium text-cyan-200">
+                  {selectedItemIds.size} item{selectedItemIds.size === 1 ? '' : 's'} selected
+                </span>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-slate-300">Set threshold (passes):</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={bulkThreshold}
+                    onChange={(e) => setBulkThreshold(e.target.value)}
+                    placeholder="e.g., 5"
+                    className="w-24 bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-sm text-white"
+                  />
+                </div>
+                <button
+                  onClick={applyBulkThreshold}
+                  disabled={bulkApplying || !(parseInt(bulkThreshold, 10) >= 1)}
+                  className="px-3 py-1.5 bg-cyan-500 text-white rounded-lg text-sm font-medium hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {bulkApplying ? 'Applying…' : 'Apply to selected'}
+                </button>
+                <button
+                  onClick={clearSelection}
+                  className="px-3 py-1.5 bg-slate-700 text-slate-300 rounded-lg text-sm hover:bg-slate-600"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+
             {/* Maintenance Table */}
             <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="bg-slate-900/50 border-b border-slate-700/50">
+                      <th className="px-4 py-3 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={allVisibleSelected}
+                          onChange={toggleSelectAll}
+                          className="w-4 h-4 accent-cyan-500 cursor-pointer"
+                          title="Select all"
+                        />
+                      </th>
                       <th className="text-left px-4 py-3 text-sm font-medium text-slate-400">Component</th>
                       <th className="text-left px-4 py-3 text-sm font-medium text-slate-400">Category</th>
                       <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">Interval</th>
@@ -624,6 +895,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                     </tr>
                   </thead>
                   <tbody>
+
                     {sortedMaintenance.map((item) => {
                       const remaining = item.nextServicePasses - item.currentPasses;
                       const progress = (item.currentPasses / item.nextServicePasses) * 100;
@@ -635,6 +907,16 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                             className="border-b border-slate-700/30 hover:bg-slate-700/20 cursor-pointer"
                             onClick={() => setExpandedItem(expandedItem === item.id ? null : item.id)}
                           >
+                            <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={selectedItemIds.has(item.id)}
+                                onChange={() => toggleSelectItem(item.id)}
+                                className="w-4 h-4 accent-cyan-500 cursor-pointer"
+                                title="Select item"
+                              />
+                            </td>
+
                             <td className="px-4 py-3">
                               <p className="text-white font-medium">{item.component}</p>
                             </td>
@@ -643,7 +925,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                                 {/* Category color dot/badge for fast visual scanning */}
                                 <span
                                   className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                  style={{ backgroundColor: getCategoryColor(item.category, customCategories) }}
+                                  style={{ backgroundColor: getCategoryColor(item.category, colorResolutionList) }}
                                 />
                                 <span className="text-slate-300">{item.category}</span>
                               </span>
@@ -765,7 +1047,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                           
                           {expandedItem === item.id && (
                             <tr className="bg-slate-900/30">
-                              <td colSpan={8} className="px-4 py-4">
+                              <td colSpan={9} className="px-4 py-4">
+
 
                                 <div className="grid md:grid-cols-3 gap-4">
                                   <div>
@@ -1001,13 +1284,13 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   >
                     <optgroup label="General">
-                      {DEFAULT_GENERAL_CATEGORIES.map((c) => (
-                        <option key={c} value={c}>{c}</option>
+                      {effectiveDefaults.general.map((c) => (
+                        <option key={c.name} value={c.name}>{c.name}</option>
                       ))}
                     </optgroup>
                     <optgroup label="Drivetrain Components">
-                      {DEFAULT_DRIVETRAIN_CATEGORIES.map((c) => (
-                        <option key={c} value={c}>{c}</option>
+                      {effectiveDefaults.drivetrain.map((c) => (
+                        <option key={c.name} value={c.name}>{c.name}</option>
                       ))}
                     </optgroup>
                     {customCategories.length > 0 && (
@@ -1017,10 +1300,9 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                         ))}
                       </optgroup>
                     )}
-                    {/* Preserve a value not in any preset list (e.g. legacy/imported). */}
+                    {/* Preserve a value not in any preset list (e.g. legacy/imported/hidden). */}
                     {newMaintenance.category &&
-                      !DEFAULT_GENERAL_CATEGORIES.includes(newMaintenance.category) &&
-                      !DEFAULT_DRIVETRAIN_CATEGORIES.includes(newMaintenance.category) &&
+                      ![...effectiveDefaults.general, ...effectiveDefaults.drivetrain].some((c) => c.name === newMaintenance.category) &&
                       !customCategoryNames.includes(newMaintenance.category) && (
                         <option value={newMaintenance.category}>{newMaintenance.category}</option>
                       )}
@@ -1157,12 +1439,13 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() => handleRemoveCategory(c.name)}
+                                        onClick={() => requestDeleteCustom(c.name)}
                                         className="p-1 text-slate-400 hover:text-red-400"
                                         title="Delete category"
                                       >
                                         <Trash2 className="w-3.5 h-3.5" />
                                       </button>
+
                                     </div>
                                   </div>
                                 )}
@@ -1191,6 +1474,137 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                           </p>
                         </div>
                       )}
+
+                      {/* ===== BUILT-IN (DEFAULT) CATEGORIES — now editable ===== */}
+                      <div>
+                        <p className="text-xs text-slate-400 mb-1.5">
+                          Built-in categories
+                          <span className="text-slate-500"> — rename, recolor, delete, or drag to reorder</span>
+                        </p>
+                        <div className="space-y-2">
+                          {combinedDefaults.map((c, index) => {
+                            const orig = effectiveDefaults.originalByDisplay[c.name] || c.name;
+                            return (
+                              <div
+                                key={orig}
+                                onDragOver={(e) => handleDefaultDragOver(e, index)}
+                                onDrop={() => handleDefaultDrop(index)}
+                                className={`bg-slate-800 border rounded-lg p-2 transition-colors ${
+                                  defaultDragOverIndex === index && defaultDragIndex !== null && defaultDragIndex !== index
+                                    ? 'border-orange-500'
+                                    : 'border-slate-600'
+                                } ${defaultDragIndex === index ? 'opacity-50' : ''}`}
+                              >
+
+                                {renamingDefault === orig ? (
+                                  /* ===== RENAME MODE ===== */
+                                  <div>
+                                    <div className="flex gap-2">
+                                      <input
+                                        type="text"
+                                        value={renameDefaultValue}
+                                        autoFocus
+                                        onChange={(e) => { setRenameDefaultValue(e.target.value); setRenameDefaultError(null); }}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRenameDefault(orig); } }}
+                                        className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRenameDefault(orig)}
+                                        className="px-2.5 py-1 bg-green-500/20 text-green-400 rounded text-xs font-medium hover:bg-green-500/30"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => { setRenamingDefault(null); setRenameDefaultError(null); }}
+                                        className="px-2.5 py-1 bg-slate-700 text-slate-300 rounded text-xs hover:bg-slate-600"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                    {renameDefaultError && (
+                                      <p className="mt-1 text-xs text-red-400 flex items-center gap-1">
+                                        <AlertTriangle className="w-3 h-3" />{renameDefaultError}
+                                      </p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  /* ===== DISPLAY MODE ===== */
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span
+                                        className="w-3 h-3 rounded-full flex-shrink-0"
+                                        style={{ backgroundColor: c.color }}
+                                      />
+                                      <span className="text-sm text-white truncate">{c.name}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => { setRenamingDefault(orig); setRenameDefaultValue(c.name); setRenameDefaultError(null); }}
+                                        className="p-1 text-blue-400 hover:text-blue-300"
+                                        title="Rename category"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveDefault(orig)}
+                                        className="p-1 text-slate-400 hover:text-red-400"
+                                        title="Delete category"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                                {/* Per-category color picker */}
+                                {renamingDefault !== orig && (
+                                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                    {CATEGORY_COLOR_PALETTE.map((color) => (
+                                      <button
+                                        key={color}
+                                        type="button"
+                                        onClick={() => handleChangeDefaultColor(orig, color)}
+                                        className={`w-4 h-4 rounded-full border-2 transition-transform ${
+                                          c.color === color ? 'border-white scale-110' : 'border-transparent'
+                                        }`}
+                                        style={{ backgroundColor: color }}
+                                        title={color}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Restore any deleted built-in categories */}
+                        {defaultOverrides.hidden.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-[11px] text-slate-500 mb-1">Deleted built-in categories:</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {defaultOverrides.hidden.map((orig) => (
+                                <button
+                                  key={orig}
+                                  type="button"
+                                  onClick={() => handleRestoreDefault(orig)}
+                                  className="flex items-center gap-1 px-2 py-1 bg-slate-700 text-slate-300 rounded text-xs hover:bg-slate-600"
+                                  title="Restore this category"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  {defaultOverrides.renames[orig]?.trim() || orig}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <p className="mt-1.5 text-[11px] text-slate-500">
+                          Renaming updates every item using the category. Deleting hides it from the pickers; items already saved with it keep their value.
+                        </p>
+                      </div>
 
                     </div>
                   )}
@@ -1314,7 +1728,61 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
           </div>
         </div>
       )}
+
+      {/* ============ DELETE CATEGORY CONFIRMATION MODAL ============ */}
+      {pendingDeleteCategory && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
+          <div className="bg-slate-800 rounded-xl max-w-md w-full p-6 border border-slate-700">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-white">Delete category?</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  You're about to delete{' '}
+                  <span className="text-white font-medium">"{pendingDeleteCategory.display}"</span>
+                  {pendingDeleteCategory.kind === 'default' ? ' (built-in)' : ''}.
+                </p>
+              </div>
+            </div>
+            <div className={`rounded-lg p-3 mb-5 text-sm ${
+              pendingDeleteCategory.count > 0
+                ? 'bg-orange-500/10 border border-orange-500/30 text-orange-300'
+                : 'bg-slate-900/60 border border-slate-700 text-slate-400'
+            }`}>
+              {pendingDeleteCategory.count > 0 ? (
+                <>
+                  <span className="font-semibold text-orange-200">
+                    {pendingDeleteCategory.count} maintenance item{pendingDeleteCategory.count === 1 ? '' : 's'}
+                  </span>{' '}
+                  currently use{pendingDeleteCategory.count === 1 ? 's' : ''} this category. Those items will
+                  keep their saved value — only the picker option is removed.
+                </>
+              ) : (
+                'No maintenance items currently use this category.'
+              )}
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setPendingDeleteCategory(null)}
+                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteCategory}
+                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 flex items-center justify-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
+
 
   );
 };

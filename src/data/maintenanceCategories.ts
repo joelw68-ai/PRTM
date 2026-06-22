@@ -591,4 +591,34 @@ export const restoreDefaultCategory = async (
   if (!o.hidden.includes(orig)) return o;
   const next: DefaultOverride = { ...o, hidden: o.hidden.filter((h) => h !== orig) };
   return saveDefaultOverrides(next);
+  return saveDefaultOverrides(next);
+};
+
+// Persist a new ordering of the built-in (default) categories. `orderedOriginals`
+// is the full list of ORIGINAL default names in the user's preferred display
+// order (typically General group followed by Drivetrain group). Because
+// getEffectiveDefaults() sorts each group independently by this array's index,
+// storing the combined order is sufficient to drive both groups. Any default
+// names not present in the array fall to the end (stable).
+export const reorderDefaultCategories = async (
+  orderedOriginals: string[],
+  o: DefaultOverride
+): Promise<DefaultOverride> => {
+  const valid = orderedOriginals.filter(
+    (n) => DEFAULT_GENERAL_CATEGORIES.includes(n) || DEFAULT_DRIVETRAIN_CATEGORIES.includes(n)
+  );
+  const next: DefaultOverride = { ...o, order: valid };
+  return saveDefaultOverrides(next);
+};
+
+// Count how many of the provided maintenance items currently use a given
+// category display name (case-insensitive). Used to warn the user about the
+// impact of deleting a category before they confirm.
+export const countItemsUsingCategory = (
+  categoryName: string,
+  items: { category?: string }[]
+): number => {
+  const key = (categoryName || '').trim().toLowerCase();
+  if (!key) return 0;
+  return items.filter((m) => (m.category || '').trim().toLowerCase() === key).length;
 };
