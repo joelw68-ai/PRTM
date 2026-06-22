@@ -136,7 +136,13 @@ type AuditDateRange = '1d' | '7d' | '30d' | 'all';
 
 
 const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
-  const { profile, updateProfile, user, effectiveUserId } = useAuth();
+  const { profile, updateProfile, user, effectiveUserId, isDemoMode } = useAuth();
+  // When there is no real signed-in user (demo mode / not signed up), data
+  // CANNOT be written to the database — it lives only in this browser's
+  // localStorage and resets when the app is relaunched on another device or
+  // after the cache is cleared. This is the #1 cause of "my settings / service
+  // records did not save after relaunch".
+  const noRealAccount = !user;
   const { 
     engines, 
     superchargers, 
@@ -768,6 +774,31 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
               : 'bg-green-500/20 text-green-400 border border-green-500/50'
           }`}>
             {saveMessage}
+          </div>
+        )}
+
+        {/* CRITICAL: No real account = nothing persists to the database. */}
+        {noRealAccount && (
+          <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/40">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <p className="text-red-300 font-semibold text-base mb-1">
+                  {isDemoMode ? "You're in Demo Mode — nothing is being saved" : "You're not signed in — nothing is being saved"}
+                </p>
+                <p className="text-red-200/90 mb-2">
+                  Your alert thresholds, service records, and every other change are
+                  only being stored temporarily in <span className="font-semibold">this browser</span>.
+                  Because there is no account attached, they are <span className="font-semibold">not written to the database</span> and
+                  will reset when you relaunch the app, switch devices, or clear your cache.
+                </p>
+                <p className="text-red-200/90">
+                  To make everything save permanently, <span className="font-semibold">create a free account / sign in</span> from
+                  the menu, then re-enter your settings and click Save. This is the cause of
+                  "my thresholds and service records don't save after relaunch."
+                </p>
+              </div>
+            </div>
           </div>
         )}
 

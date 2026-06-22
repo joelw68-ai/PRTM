@@ -105,9 +105,18 @@ export function saveAlertSettings(settings: MaintenanceAlertSettings): void {
  */
 async function resolveUserId(userId?: string): Promise<string | undefined> {
   if (userId) return userId;
+  // 1. getUser() validates the JWT against the auth server.
   try {
     const { data } = await supabase.auth.getUser();
-    return data?.user?.id ?? undefined;
+    if (data?.user?.id) return data.user.id;
+  } catch {
+    /* fall through to session */
+  }
+  // 2. Fallback: read the locally-persisted (auto-refreshed) session. This
+  //    succeeds even if the getUser() network validation momentarily fails.
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.user?.id ?? undefined;
   } catch {
     return undefined;
   }
