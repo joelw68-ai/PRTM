@@ -854,9 +854,115 @@ END $$;
 
 
 
+-- ============================================================
+-- 44. VENDOR INVOICES (ensure exists before its indexes)
+-- ============================================================
+-- This table is referenced by the indexes in PART 4 and by the
+-- ALTER TABLE statements in PART 1. On a fresh database it was
+-- never created, so its indexes failed. Creating it here (if
+-- missing) makes the migration self-contained.
+CREATE TABLE IF NOT EXISTS public.vendor_invoices (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id         UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
+  vendor_id       TEXT,
+  vendor_name     TEXT NOT NULL,
+  invoice_number  TEXT NOT NULL,
+  invoice_date    TEXT NOT NULL,
+  due_date        TEXT,
+  amount          NUMERIC DEFAULT 0,
+  tax             NUMERIC DEFAULT 0,
+  total           NUMERIC DEFAULT 0,
+  status          TEXT DEFAULT 'Pending',
+  po_number       TEXT,
+  file_url        TEXT,
+  file_name       TEXT,
+  file_type       TEXT,
+  file_size       BIGINT,
+  notes           TEXT,
+  category        TEXT,
+  payment_method  TEXT,
+  payment_date    TEXT,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.vendor_invoices ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage own vendor_invoices' AND tablename = 'vendor_invoices') THEN
+    CREATE POLICY "Users manage own vendor_invoices" ON public.vendor_invoices FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+END $$;
+
+
+-- ============================================================
+-- 45. INVOICE LINE ITEMS (ensure exists before its index)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.invoice_line_items (
+  id                        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id                   UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
+  invoice_id                TEXT,
+  description               TEXT,
+  part_number               TEXT,
+  quantity                  NUMERIC DEFAULT 1,
+  unit_price                NUMERIC DEFAULT 0,
+  total                     NUMERIC DEFAULT 0,
+  category                  TEXT,
+  auto_created_inventory_id TEXT,
+  created_at                TIMESTAMPTZ DEFAULT NOW(),
+  updated_at                TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.invoice_line_items ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage own invoice_line_items' AND tablename = 'invoice_line_items') THEN
+    CREATE POLICY "Users manage own invoice_line_items" ON public.invoice_line_items FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+END $$;
+
+
+-- ============================================================
+-- 46. COST REPORTS (ensure exists before its indexes)
+-- ============================================================
+-- This was the table that triggered ERROR 42703 (column "date"
+-- does not exist): the indexes idx_cost_reports_user_id and
+-- idx_cost_reports_date were created against a table that was
+-- never defined in this migration. Defining it here (with the
+-- "date" column) resolves the error.
+--
+-- Referenced by: database-extra.ts (fetchCostReports / insertCostReport /
+--                deleteCostReport), CostAnalytics.tsx, InvoiceUpload.tsx,
+--                MiscExpenses.tsx
+CREATE TABLE IF NOT EXISTS public.cost_reports (
+  id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id      UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
+  invoice_id   UUID,
+  vendor_name  TEXT NOT NULL,
+  amount       NUMERIC DEFAULT 0,
+  category     TEXT,
+  date         TEXT NOT NULL,
+  description  TEXT,
+  source       TEXT,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Safety net: if cost_reports already existed without a "date"
+-- column (older deployment), add it so the index can be created.
+ALTER TABLE public.cost_reports
+  ADD COLUMN IF NOT EXISTS date TEXT;
+
+ALTER TABLE public.cost_reports ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage own cost_reports' AND tablename = 'cost_reports') THEN
+    CREATE POLICY "Users manage own cost_reports" ON public.cost_reports FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+END $$;
+
+
 -- ############################################################
 -- PART 4: PERFORMANCE INDEXES
 -- ############################################################
+
 
 -- All use IF NOT EXISTS — safe to run repeatedly.
 

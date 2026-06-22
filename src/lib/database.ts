@@ -769,84 +769,82 @@ export const fetchMaintenanceItems = async (userId?: string): Promise<Maintenanc
  * because of unknown columns, retry WITHOUT threshold and last_service_time.
  */
 export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: string): Promise<void> => {
-  // Build the base payload (columns that always exist)
-  const basePayload: any = {
+  // ── Resolve user_id so RLS never rejects the write ──
+  const effectiveUserId = userId || await getCurrentUserId();
+
+  // The `threshold` (INTEGER), `last_service_time` (TEXT) and `service_log`
+  // (JSONB) columns are CONFIRMED to exist in the live maintenance_items table,
+  // so they belong in the single canonical payload. Previously they were split
+  // into a "full payload" that got silently dropped whenever PostgREST's schema
+  // cache was stale — which is exactly why thresholds and service records
+  // "weren't saving". We now keep them in one payload and, on a stale-cache
+  // error, reload the cache and RETRY the SAME payload instead of dropping data.
+  const payload: any = {
     id: item.id,
     component: item.component,
     category: emptyToNull(item.category),
     pass_interval: emptyToNull(item.passInterval),
     current_passes: emptyToNull(item.currentPasses),
     last_service: emptyToNull(item.lastService),
+    last_service_time: emptyToNull(item.lastServiceTime),
     next_service_passes: emptyToNull(item.nextServicePasses),
     status: item.status,
     priority: item.priority,
     notes: emptyToNull(item.notes),
     estimated_cost: emptyToNull(item.estimatedCost),
-
-  };
-  
-  if (userId) basePayload.user_id = userId;
-
-  // Build the full payload including new columns (threshold, last_service_time, service_log)
-  const fullPayload: any = {
-    ...basePayload,
     threshold: item.threshold != null ? item.threshold : null,
-    last_service_time: emptyToNull(item.lastServiceTime),
     // Spreadsheet-style service log (array of { id, date, time, notes }) stored as JSONB.
     service_log: Array.isArray(item.serviceLog) ? item.serviceLog : [],
   };
 
-  // Attempt 1: Try with all columns (including threshold, last_service_time)
-  const { error: fullError } = await supabase.from('maintenance_items').upsert(fullPayload);
+  if (effectiveUserId) payload.user_id = effectiveUserId;
 
-  if (!fullError) {
-    // Success — columns exist, all good
-    return;
-  }
+  // Attempt 1: save the full canonical payload.
+  const { error: firstError } = await supabase.from('maintenance_items').upsert(payload);
+  if (!firstError) return;
 
-  // Check if the error is specifically about unknown columns OR a stale
-  // PostgREST schema cache. The `threshold` / `last_service_time` / `service_log`
-  // columns DO exist in the live table, but if PostgREST's in-memory schema
-  // cache is stale (PGRST204), it will reject the payload. Previously we silently
-  // dropped the threshold here — which is exactly why thresholds "weren't saving".
-  // Now we trigger a schema-cache reload and RETRY the full payload (with threshold)
-  // a couple of times before giving up, so the threshold is preserved.
-  if (isUnknownColumnError(fullError) || isTableNotInSchemaCache(fullError)) {
+  // If PostgREST rejected the payload because its in-memory schema cache is
+  // stale (PGRST204 / "could not find column … in schema cache") even though
+  // the columns exist, reload the cache and RETRY THE SAME PAYLOAD a few times.
+  // We never silently drop threshold / service_log — preserving the user's data
+  // is the whole point of this function.
+  if (isUnknownColumnError(firstError) || isTableNotInSchemaCache(firstError)) {
     console.warn(
-      '[upsertMaintenanceItem] threshold/last_service_time/service_log rejected (likely stale schema cache) — reloading cache and retrying with full payload.',
-      { code: fullError.code, message: fullError.message }
+      '[upsertMaintenanceItem] Payload rejected (likely stale PostgREST schema cache). ' +
+      'Reloading cache and retrying with the FULL payload (threshold + service_log preserved).',
+      { code: firstError.code, message: firstError.message }
     );
 
-    // Fire a schema-cache reload, then retry the FULL payload a few times.
     await triggerSchemaReload();
-    for (let attempt = 0; attempt < 3; attempt++) {
-      // Small backoff to let PostgREST pick up the reloaded schema.
-      await new Promise((r) => setTimeout(r, 700));
-      const { error: retryFullError } = await supabase.from('maintenance_items').upsert(fullPayload);
-      if (!retryFullError) {
-        console.log('[upsertMaintenanceItem] Full payload (with threshold) saved after schema reload.');
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await new Promise((r) => setTimeout(r, 800));
+      const { error: retryError } = await supabase.from('maintenance_items').upsert(payload);
+      if (!retryError) {
+        console.log('[upsertMaintenanceItem] Full payload (with threshold + service_log) saved after schema reload.');
         return;
       }
-      if (!isUnknownColumnError(retryFullError) && !isTableNotInSchemaCache(retryFullError)) {
-        // A different (real) error — stop retrying and surface it.
-        throw retryFullError;
+      // A different (real) error — surface it instead of looping.
+      if (!isUnknownColumnError(retryError) && !isTableNotInSchemaCache(retryError)) {
+        throw retryError;
       }
     }
 
-    // Last resort: save the base payload so the rest of the item isn't lost.
-    // (Threshold may be missing only in this degraded edge case.)
-    console.warn('[upsertMaintenanceItem] Full payload still rejected after reload — saving base payload as a fallback.');
-    const { error: baseError } = await supabase.from('maintenance_items').upsert(basePayload);
-    if (baseError) {
-      console.error('[upsertMaintenanceItem] Base payload save also failed:', baseError);
-      throw baseError;
-    }
-    return;
+    // Still failing after reload — throw so the caller shows the
+    // "saved locally but failed to sync" toast rather than pretending it saved.
+    const err: any = new Error(
+      'Could not save maintenance item to the database — the schema cache is still stale. ' +
+      'Wait a few seconds and try again.'
+    );
+    err.code = firstError.code || 'SCHEMA_CACHE_STALE';
+    err.details = firstError.message;
+    err.hint = 'PostgREST schema cache reload was triggered; retry the save shortly.';
+    throw err;
   }
 
-  // Not a column error — throw the original error
-  throw fullError;
+  // Not a column / cache error — surface the real error.
+  throw firstError;
 }
+
 
 
 
