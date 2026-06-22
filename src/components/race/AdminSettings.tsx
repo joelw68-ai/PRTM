@@ -22,6 +22,8 @@ import { carClasses, memberRoles, specialtyOptions } from '@/data/carClasses';
 import {
   loadAlertSettings,
   saveAlertSettings,
+  loadAlertSettingsFromDB,
+  saveAlertSettingsToDB,
   getDefaultSettings,
   checkMaintenanceAlerts,
   type MaintenanceAlertSettings,
@@ -30,11 +32,14 @@ import {
 import {
   loadSFIAlertSettings,
   saveSFIAlertSettings,
+  loadSFIAlertSettingsFromDB,
+  saveSFIAlertSettingsToDB,
   getDefaultSFISettings,
   checkSFIAlerts,
   type SFIAlertSettings,
   type SFIAlertThreshold,
 } from '@/lib/sfiAlerts';
+
 
 import { 
 
@@ -131,7 +136,7 @@ type AuditDateRange = '1d' | '7d' | '30d' | 'all';
 
 
 const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
-  const { profile, updateProfile } = useAuth();
+  const { profile, updateProfile, user } = useAuth();
   const { 
     engines, 
     superchargers, 
@@ -175,16 +180,30 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
   const [alertSettings, setAlertSettings] = useState<MaintenanceAlertSettings>(() => loadAlertSettings());
   const [alertSaveMsg, setAlertSaveMsg] = useState<string | null>(null);
 
-  const handleSaveAlertSettings = () => {
-    saveAlertSettings(alertSettings);
-    setAlertSaveMsg('Alert settings saved!');
+  // Load both alert + SFI threshold settings from the database (per-user) on
+  // mount so saved thresholds sync across devices / survive cache clears.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const m = await loadAlertSettingsFromDB(user?.id);
+      if (!cancelled && m) setAlertSettings(m);
+      const s = await loadSFIAlertSettingsFromDB(user?.id);
+      if (!cancelled && s) setSfiAlertSettings(s);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  const handleSaveAlertSettings = async () => {
+    const ok = await saveAlertSettingsToDB(alertSettings, user?.id);
+    setAlertSaveMsg(ok ? 'Alert settings saved!' : 'Saved locally (database unavailable).');
     setTimeout(() => setAlertSaveMsg(null), 3000);
   };
 
-  const handleResetAlertSettings = () => {
+  const handleResetAlertSettings = async () => {
     const defaults = getDefaultSettings();
     setAlertSettings(defaults);
-    saveAlertSettings(defaults);
+    await saveAlertSettingsToDB(defaults, user?.id);
     setAlertSaveMsg('Alert settings reset to defaults.');
     setTimeout(() => setAlertSaveMsg(null), 3000);
   };
@@ -217,19 +236,20 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
   const [sfiAlertSettings, setSfiAlertSettings] = useState<SFIAlertSettings>(() => loadSFIAlertSettings());
   const [sfiAlertSaveMsg, setSfiAlertSaveMsg] = useState<string | null>(null);
 
-  const handleSaveSfiAlertSettings = () => {
-    saveSFIAlertSettings(sfiAlertSettings);
-    setSfiAlertSaveMsg('SFI alert settings saved!');
+  const handleSaveSfiAlertSettings = async () => {
+    const ok = await saveSFIAlertSettingsToDB(sfiAlertSettings, user?.id);
+    setSfiAlertSaveMsg(ok ? 'SFI alert settings saved!' : 'Saved locally (database unavailable).');
     setTimeout(() => setSfiAlertSaveMsg(null), 3000);
   };
 
-  const handleResetSfiAlertSettings = () => {
+  const handleResetSfiAlertSettings = async () => {
     const defaults = getDefaultSFISettings();
     setSfiAlertSettings(defaults);
-    saveSFIAlertSettings(defaults);
+    await saveSFIAlertSettingsToDB(defaults, user?.id);
     setSfiAlertSaveMsg('SFI alert settings reset to defaults.');
     setTimeout(() => setSfiAlertSaveMsg(null), 3000);
   };
+
 
   const updateSfiThreshold = (index: number, field: keyof SFIAlertThreshold, value: any) => {
     setSfiAlertSettings(prev => ({

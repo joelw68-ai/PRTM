@@ -101,14 +101,16 @@ export function saveAlertSettings(settings: MaintenanceAlertSettings): void {
  * Load alert settings from the database (async).
  * Returns null if the table doesn't exist or no settings are found.
  * The caller should fall back to localStorage/defaults if null.
+ *
+ * Settings are stored PER USER (one row per user_id) and the FULL thresholds
+ * array is persisted as JSON so custom thresholds survive across devices.
  */
 export async function loadAlertSettingsFromDB(userId?: string): Promise<MaintenanceAlertSettings | null> {
   try {
-    const { data, error } = await supabase
-      .from('maintenance_alert_settings')
-      .select('*')
-      .eq('alert_type', 'global')
-      .maybeSingle();
+    let query = supabase.from('maintenance_alert_settings').select('*');
+    query = userId ? query.eq('user_id', userId) : query;
+
+    const { data, error } = await query.maybeSingle();
 
     if (error) {
       // Table may not exist yet — silently return null
@@ -118,12 +120,23 @@ export async function loadAlertSettingsFromDB(userId?: string): Promise<Maintena
 
     if (!data) return null;
 
-    // Reconstruct MaintenanceAlertSettings from the DB row
+    // Parse the stored thresholds JSON. Fall back to defaults if missing/empty.
+    let thresholds: AlertThreshold[] = DEFAULT_SETTINGS.thresholds.map(t => ({ ...t }));
+    try {
+      const raw = data.thresholds_json;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        thresholds = parsed as AlertThreshold[];
+      }
+    } catch {
+      /* keep defaults */
+    }
+
     const settings: MaintenanceAlertSettings = {
       enabled: data.is_enabled ?? true,
       showToastNotifications: data.notify_toast ?? true,
       showBellAlerts: data.notify_bell ?? true,
-      thresholds: DEFAULT_SETTINGS.thresholds.map(t => ({ ...t })), // Use defaults
+      thresholds,
     };
 
     // Also sync to localStorage so next load is instant
@@ -137,25 +150,26 @@ export async function loadAlertSettingsFromDB(userId?: string): Promise<Maintena
 }
 
 /**
- * Save alert settings to the database (async, fire-and-forget safe).
+ * Save alert settings to the database (async).
  * Also saves to localStorage for instant reads.
- * Silently fails if the table doesn't exist.
+ * The FULL thresholds array is persisted as JSON, keyed by user_id, so the
+ * exact configuration survives cache clears and syncs across devices.
+ *
+ * @returns true if the DB write succeeded, false otherwise.
  */
 export async function saveAlertSettingsToDB(
   settings: MaintenanceAlertSettings,
   userId?: string
-): Promise<void> {
+): Promise<boolean> {
   // Always save to localStorage first (synchronous, guaranteed)
   saveAlertSettings(settings);
 
   try {
     const payload: Record<string, any> = {
-      id: 'global_settings',
-      alert_type: 'global',
       is_enabled: settings.enabled,
       notify_toast: settings.showToastNotifications,
       notify_bell: settings.showBellAlerts,
-      threshold_pct: settings.thresholds.find(t => t.severity === 'info')?.percentage ?? 80,
+      thresholds_json: settings.thresholds,
       updated_at: new Date().toISOString(),
     };
 
@@ -163,15 +177,19 @@ export async function saveAlertSettingsToDB(
 
     const { error } = await supabase
       .from('maintenance_alert_settings')
-      .upsert(payload);
+      .upsert(payload, { onConflict: 'user_id' });
 
     if (error) {
-      console.warn('[maintenanceAlerts] DB save failed (table may not exist):', error.message);
+      console.warn('[maintenanceAlerts] DB save failed:', error.message);
+      return false;
     }
+    return true;
   } catch (e) {
     console.warn('[maintenanceAlerts] Unexpected error saving to DB:', e);
+    return false;
   }
 }
+
 
 
 /**

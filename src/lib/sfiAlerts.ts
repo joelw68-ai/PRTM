@@ -89,14 +89,14 @@ export function saveSFIAlertSettings(settings: SFIAlertSettings): void {
 /**
  * Load SFI alert settings from the database (async).
  * Returns null if the table doesn't exist or no settings are found.
+ * Settings are stored PER USER (one row per user_id), full thresholds as JSON.
  */
 export async function loadSFIAlertSettingsFromDB(userId?: string): Promise<SFIAlertSettings | null> {
   try {
-    const { data, error } = await supabase
-      .from('sfi_alert_settings')
-      .select('*')
-      .eq('alert_type', 'global')
-      .maybeSingle();
+    let query = supabase.from('sfi_alert_settings').select('*');
+    query = userId ? query.eq('user_id', userId) : query;
+
+    const { data, error } = await query.maybeSingle();
 
     if (error) {
       console.warn('[sfiAlerts] DB load failed (table may not exist):', error.message);
@@ -105,13 +105,22 @@ export async function loadSFIAlertSettingsFromDB(userId?: string): Promise<SFIAl
 
     if (!data) return null;
 
+    let thresholds: SFIAlertThreshold[] = DEFAULT_SETTINGS.thresholds.map(t => ({ ...t }));
+    try {
+      const raw = data.thresholds_json;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        thresholds = parsed as SFIAlertThreshold[];
+      }
+    } catch {
+      /* keep defaults */
+    }
+
     const settings: SFIAlertSettings = {
       enabled: data.is_enabled ?? true,
       showToastNotifications: data.notify_toast ?? true,
       showBellAlerts: data.notify_bell ?? true,
-      thresholds: data.thresholds_json
-        ? JSON.parse(data.thresholds_json)
-        : DEFAULT_SETTINGS.thresholds.map(t => ({ ...t })),
+      thresholds,
     };
 
     // Sync to localStorage for instant reads
@@ -125,24 +134,24 @@ export async function loadSFIAlertSettingsFromDB(userId?: string): Promise<SFIAl
 }
 
 /**
- * Save SFI alert settings to the database (async, fire-and-forget safe).
- * Also saves to localStorage for instant reads.
+ * Save SFI alert settings to the database (async).
+ * Also saves to localStorage for instant reads. Keyed per user_id.
+ *
+ * @returns true if the DB write succeeded, false otherwise.
  */
 export async function saveSFIAlertSettingsToDB(
   settings: SFIAlertSettings,
   userId?: string
-): Promise<void> {
+): Promise<boolean> {
   // Always save to localStorage first
   saveSFIAlertSettings(settings);
 
   try {
     const payload: Record<string, any> = {
-      id: 'sfi_global_settings',
-      alert_type: 'global',
       is_enabled: settings.enabled,
       notify_toast: settings.showToastNotifications,
       notify_bell: settings.showBellAlerts,
-      thresholds_json: JSON.stringify(settings.thresholds),
+      thresholds_json: settings.thresholds,
       updated_at: new Date().toISOString(),
     };
 
@@ -150,15 +159,19 @@ export async function saveSFIAlertSettingsToDB(
 
     const { error } = await supabase
       .from('sfi_alert_settings')
-      .upsert(payload);
+      .upsert(payload, { onConflict: 'user_id' });
 
     if (error) {
-      console.warn('[sfiAlerts] DB save failed (table may not exist):', error.message);
+      console.warn('[sfiAlerts] DB save failed:', error.message);
+      return false;
     }
+    return true;
   } catch (e) {
     console.warn('[sfiAlerts] Unexpected error saving to DB:', e);
+    return false;
   }
 }
+
 
 /**
  * Get the default settings (for reset)
