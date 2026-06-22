@@ -772,13 +772,9 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
   // ── Resolve user_id so RLS never rejects the write ──
   const effectiveUserId = userId || await getCurrentUserId();
 
-  // The `threshold` (INTEGER), `last_service_time` (TEXT) and `service_log`
-  // (JSONB) columns are CONFIRMED to exist in the live maintenance_items table,
-  // so they belong in the single canonical payload. Previously they were split
-  // into a "full payload" that got silently dropped whenever PostgREST's schema
-  // cache was stale — which is exactly why thresholds and service records
-  // "weren't saving". We now keep them in one payload and, on a stale-cache
-  // error, reload the cache and RETRY the SAME payload instead of dropping data.
+  // Canonical payload. threshold (INTEGER), last_service_time (TEXT) and
+  // service_log (JSONB) are CONFIRMED to exist in the live maintenance_items
+  // table. We keep them in ONE payload and never silently drop them.
   const payload: any = {
     id: item.id,
     component: item.component,
@@ -799,38 +795,53 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
 
   if (effectiveUserId) payload.user_id = effectiveUserId;
 
-  // Attempt 1: save the full canonical payload.
+  // ── PRIMARY PATH: RPC function ──
+  // upsert_maintenance_item(jsonb) is a SECURITY DEFINER Postgres function whose
+  // body is compiled SQL. It writes threshold / service_log / last_service_time
+  // DIRECTLY into the table without going through PostgREST's column schema cache.
+  // This is the definitive fix for the "schema cache is still stale" error: even
+  // when PostgREST hasn't reloaded its column cache, the RPC still saves every
+  // field correctly because PostgREST only needs to know the function signature.
+  {
+    const { error: rpcError } = await supabase.rpc('upsert_maintenance_item', { p: payload });
+    if (!rpcError) {
+      return; // Saved with ALL fields, schema-cache-proof.
+    }
+
+    // If the RPC itself isn't in the schema cache yet (function not found),
+    // trigger a reload and fall through to the direct-upsert fallback below.
+    console.warn(
+      '[upsertMaintenanceItem] RPC upsert_maintenance_item failed — falling back to direct upsert.',
+      { code: rpcError.code, message: rpcError.message }
+    );
+    if (isUnknownColumnError(rpcError) || isTableNotInSchemaCache(rpcError)) {
+      triggerSchemaReload();
+    }
+  }
+
+  // ── FALLBACK PATH: direct PostgREST upsert ──
   const { error: firstError } = await supabase.from('maintenance_items').upsert(payload);
   if (!firstError) return;
 
-  // If PostgREST rejected the payload because its in-memory schema cache is
-  // stale (PGRST204 / "could not find column … in schema cache") even though
-  // the columns exist, reload the cache and RETRY THE SAME PAYLOAD a few times.
-  // We never silently drop threshold / service_log — preserving the user's data
-  // is the whole point of this function.
+  // Stale schema cache (PGRST204) — reload and RETRY the SAME full payload.
   if (isUnknownColumnError(firstError) || isTableNotInSchemaCache(firstError)) {
-    console.warn(
-      '[upsertMaintenanceItem] Payload rejected (likely stale PostgREST schema cache). ' +
-      'Reloading cache and retrying with the FULL payload (threshold + service_log preserved).',
-      { code: firstError.code, message: firstError.message }
-    );
-
     await triggerSchemaReload();
     for (let attempt = 0; attempt < 4; attempt++) {
       await new Promise((r) => setTimeout(r, 800));
+
+      // Retry the RPC first (it may now be registered)…
+      const { error: retryRpc } = await supabase.rpc('upsert_maintenance_item', { p: payload });
+      if (!retryRpc) return;
+
+      // …then the direct upsert.
       const { error: retryError } = await supabase.from('maintenance_items').upsert(payload);
-      if (!retryError) {
-        console.log('[upsertMaintenanceItem] Full payload (with threshold + service_log) saved after schema reload.');
-        return;
-      }
-      // A different (real) error — surface it instead of looping.
+      if (!retryError) return;
+
       if (!isUnknownColumnError(retryError) && !isTableNotInSchemaCache(retryError)) {
         throw retryError;
       }
     }
 
-    // Still failing after reload — throw so the caller shows the
-    // "saved locally but failed to sync" toast rather than pretending it saved.
     const err: any = new Error(
       'Could not save maintenance item to the database — the schema cache is still stale. ' +
       'Wait a few seconds and try again.'
@@ -844,6 +855,7 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
   // Not a column / cache error — surface the real error.
   throw firstError;
 }
+
 
 
 
@@ -999,38 +1011,27 @@ export const fetchPartsInventory = async (userId?: string): Promise<PartInventor
  * upsertPartInventory — Create or update a parts inventory item.
  *
  * ═══════════════════════════════════════════════════════════════════════
- * POSTREST SCHEMA-CACHE WORKAROUND  (March 2026)
+ * RPC-BASED SAVE STRATEGY  (June 2026)
  * ═══════════════════════════════════════════════════════════════════════
  *
  * Several columns exist in the live `parts_inventory` table (verified via
- * `information_schema.columns`) but PostgREST's schema cache refuses to
- * acknowledge them, returning PGRST204 / 42703 errors:
+ * information_schema) but PostgREST's schema cache intermittently refuses to
+ * acknowledge them, returning PGRST204 / 42703 errors and silently dropping:
  *
- *   EXCLUDED from payload (PostgREST rejects them):
- *     • name
- *     • car_id
- *     • related_drivetrain_component_id
- *     • subcategory
- *     • vendor_part_number
- *     • last_ordered
- *     • last_used
- *     • reorder_status
+ *     name, subcategory, vendor_part_number, last_ordered, last_used,
+ *     reorder_status, related_drivetrain_component_id, car_id
  *
- *   INCLUDED — the 16 "day-one" safe columns:
- *     id, user_id, part_number, description, category, on_hand,
- *     min_quantity, max_quantity, vendor, unit_cost, total_value,
- *     location, notes, status, created_at, updated_at
+ * FIX — identical strategy to upsertMaintenanceItem:
+ *   PRIMARY PATH is the SECURITY DEFINER Postgres function
+ *   `upsert_part_inventory(jsonb)`. Because its body is compiled SQL, it
+ *   writes EVERY field directly into the table without depending on
+ *   PostgREST's column schema cache. PostgREST only needs to know the
+ *   function signature, so all fields persist even when the column cache
+ *   is stale.
  *
- * The READ path (toPartInventoryItem via SELECT *) still maps every
- * column that comes back from the DB, so the UI can display name,
- * car_id, etc. if they are present in existing rows.
- *
- * BELT-AND-SUSPENDERS:
- *   The entire upsert is wrapped in a try/catch.  If Attempt 1 (the 16
- *   safe columns) somehow fails with an unknown-column / schema-cache
- *   error, we automatically RETRY with a "nuclear minimum" payload of
- *   only 7 columns that are absolutely guaranteed to exist in any
- *   version of the table.
+ *   FALLBACK PATH is the direct PostgREST upsert (full payload). If the
+ *   cache is stale we trigger a reload and retry both the RPC and the
+ *   direct upsert a few times before surfacing a clear error.
  * ═══════════════════════════════════════════════════════════════════════
  */
 export const upsertPartInventory = async (part: PartInventoryItem, userId?: string): Promise<void> => {
@@ -1046,98 +1047,92 @@ export const upsertPartInventory = async (part: PartInventoryItem, userId?: stri
     throw err;
   }
 
-  // ── 2. Build the SAFE payload — ONLY the 16 day-one columns ──
-  // Columns deliberately EXCLUDED (PostgREST schema cache rejects them):
-  //   name, car_id, related_drivetrain_component_id, subcategory,
-  //   vendor_part_number, last_ordered, last_used, reorder_status
-  const safePayload: Record<string, any> = {
-    id:            part.id,
-    user_id:       effectiveUserId,
-    part_number:   part.partNumber,
-    description:   part.description,
-    category:      emptyToNull(part.category),
-    on_hand:       part.onHand ?? 0,
-    min_quantity:   part.minQuantity ?? 1,
-    max_quantity:   part.maxQuantity ?? 5,
-    vendor:        emptyToNull(part.vendor),
-    unit_cost:     part.unitCost ?? 0,
-    total_value:   part.totalValue ?? 0,
-    location:      emptyToNull(part.location),
-    notes:         emptyToNull(part.notes),
-    status:        part.status || 'In Stock',
-    created_at:    part.id ? undefined : new Date().toISOString(), // only on insert
-    updated_at:    new Date().toISOString()
+  // ── 2. Build the canonical FULL payload — ALL columns, never silently dropped ──
+  const payload: Record<string, any> = {
+    id:                              part.id,
+    user_id:                         effectiveUserId,
+    part_number:                     part.partNumber,
+    description:                     part.description,
+    name:                            emptyToNull(part.name),
+    category:                        emptyToNull(part.category),
+    subcategory:                     emptyToNull(part.subcategory),
+    on_hand:                         part.onHand ?? 0,
+    min_quantity:                    part.minQuantity ?? 1,
+    max_quantity:                    part.maxQuantity ?? 5,
+    vendor:                          emptyToNull(part.vendor),
+    vendor_part_number:              emptyToNull(part.vendorPartNumber),
+    unit_cost:                       part.unitCost ?? 0,
+    total_value:                     part.totalValue ?? 0,
+    last_ordered:                    emptyToNull(part.lastOrdered),
+    last_used:                       emptyToNull(part.lastUsed),
+    location:                        emptyToNull(part.location),
+    notes:                           emptyToNull(part.notes),
+    status:                          part.status || 'In Stock',
+    reorder_status:                  emptyToNull(part.reorderStatus),
+    related_drivetrain_component_id: emptyToNull(part.relatedDrivetrainComponentId),
   };
 
-  // Remove undefined keys so Supabase doesn't choke on them
-  Object.keys(safePayload).forEach(k => {
-    if (safePayload[k] === undefined) delete safePayload[k];
-  });
+  // ── PRIMARY PATH: RPC function (schema-cache-proof) ──
+  // upsert_part_inventory(jsonb) is a SECURITY DEFINER Postgres function whose
+  // compiled SQL body writes every field DIRECTLY into the table, bypassing
+  // PostgREST's column schema cache entirely.
+  {
+    const { error: rpcError } = await supabase.rpc('upsert_part_inventory', { p: payload });
+    if (!rpcError) {
+      return; // Saved with ALL fields, schema-cache-proof.
+    }
 
-  console.log('[upsertPartInventory] Attempt 1 — safe 16-column payload:', JSON.stringify(safePayload, null, 2));
+    console.warn(
+      '[upsertPartInventory] RPC upsert_part_inventory failed — falling back to direct upsert.',
+      { code: rpcError.code, message: rpcError.message }
+    );
+    if (isUnknownColumnError(rpcError) || isTableNotInSchemaCache(rpcError)) {
+      triggerSchemaReload();
+    }
+  }
 
-  // ── 3. Attempt 1: Safe payload (16 columns) ──
-  try {
-    const { error } = await supabase.from('parts_inventory').upsert(safePayload);
+  // ── FALLBACK PATH: direct PostgREST upsert (full payload) ──
+  const { error: firstError } = await supabase.from('parts_inventory').upsert(payload);
+  if (!firstError) return;
 
-    if (error) {
-      if (isUnknownColumnError(error)) {
-        console.warn(
-          '[upsertPartInventory] Attempt 1 failed with unknown-column error — will retry with nuclear minimum.',
-          { code: error.code, message: error.message, details: error.details }
-        );
-        // Fall through to Attempt 2
-      } else {
-        // Not a column error — throw immediately
-        console.error('[upsertPartInventory] Attempt 1 failed (non-column error):', error);
-        const enrichedError: any = new Error(error.message);
-        enrichedError.code = error.code;
-        enrichedError.details = error.details;
-        enrichedError.hint = error.hint;
-        throw enrichedError;
+  // Stale schema cache — reload and RETRY the SAME full payload via both paths.
+  if (isUnknownColumnError(firstError) || isTableNotInSchemaCache(firstError)) {
+    await triggerSchemaReload();
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await new Promise((r) => setTimeout(r, 800));
+
+      // Retry the RPC first (it may now be registered)…
+      const { error: retryRpc } = await supabase.rpc('upsert_part_inventory', { p: payload });
+      if (!retryRpc) return;
+
+      // …then the direct upsert.
+      const { error: retryError } = await supabase.from('parts_inventory').upsert(payload);
+      if (!retryError) return;
+
+      if (!isUnknownColumnError(retryError) && !isTableNotInSchemaCache(retryError)) {
+        throw retryError;
       }
-    } else {
-      console.log('[upsertPartInventory] SUCCESS (attempt 1) — part saved. ID:', part.id);
-      return;
     }
-  } catch (thrown: any) {
-    // Re-throw non-column errors
-    if (thrown && !isUnknownColumnError(thrown)) {
-      throw thrown;
-    }
-    console.warn('[upsertPartInventory] Caught column error in attempt 1, proceeding to nuclear retry:', thrown?.message);
+
+    const err: any = new Error(
+      'Could not save part to the database — the schema cache is still stale. ' +
+      'Wait a few seconds and try again.'
+    );
+    err.code = firstError.code || 'SCHEMA_CACHE_STALE';
+    err.details = firstError.message;
+    err.hint = 'PostgREST schema cache reload was triggered; retry the save shortly.';
+    throw err;
   }
 
-  // ── 4. Attempt 2: NUCLEAR MINIMUM — only 7 absolutely-guaranteed columns ──
-  const nuclearPayload: Record<string, any> = {
-    id:          part.id,
-    user_id:     effectiveUserId,
-    part_number: part.partNumber,
-    description: part.description,
-    on_hand:     part.onHand ?? 0,
-    status:      part.status || 'In Stock',
-    updated_at:  new Date().toISOString()
-  };
-
-  console.log('[upsertPartInventory] Attempt 2 — nuclear minimum payload:', JSON.stringify(nuclearPayload, null, 2));
-
-  const { error: retryError } = await supabase.from('parts_inventory').upsert(nuclearPayload);
-
-  if (retryError) {
-    console.error('[upsertPartInventory] Attempt 2 (nuclear minimum) ALSO FAILED:', {
-      message: retryError.message,
-      details: retryError.details,
-      hint: retryError.hint,
-      code: retryError.code
-    });
-    const enrichedError: any = new Error(retryError.message);
-    enrichedError.code = retryError.code;
-    enrichedError.details = retryError.details;
-    enrichedError.hint = retryError.hint;
-    throw enrichedError;
-  }
-
-  console.log('[upsertPartInventory] SUCCESS (attempt 2 — nuclear minimum) — part saved. ID:', part.id);
+  // Not a column / cache error — surface the real error.
+  console.error('[upsertPartInventory] Save failed (non-column error):', {
+    message: firstError.message, details: firstError.details, hint: firstError.hint, code: firstError.code
+  });
+  const enrichedError: any = new Error(firstError.message);
+  enrichedError.code = firstError.code;
+  enrichedError.details = firstError.details;
+  enrichedError.hint = firstError.hint;
+  throw enrichedError;
 };
 
 
