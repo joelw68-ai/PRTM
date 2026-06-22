@@ -127,7 +127,12 @@ export async function loadAlertSettingsFromDB(userId?: string): Promise<Maintena
     let query = supabase.from('maintenance_alert_settings').select('*');
     query = uid ? query.eq('user_id', uid) : query;
 
-    const { data, error } = await query.maybeSingle();
+    // NOTE: We intentionally do NOT use .maybeSingle() here. If more than one
+    // row somehow exists for a user, maybeSingle() throws and we'd lose the
+    // saved settings. Instead grab the most-recently-updated row.
+    const { data, error } = await query
+      .order('updated_at', { ascending: false })
+      .limit(1);
 
     if (error) {
       // Table may not exist yet — silently return null
@@ -135,12 +140,13 @@ export async function loadAlertSettingsFromDB(userId?: string): Promise<Maintena
       return null;
     }
 
-    if (!data) return null;
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return null;
 
     // Parse the stored thresholds JSON. Fall back to defaults if missing/empty.
     let thresholds: AlertThreshold[] = DEFAULT_SETTINGS.thresholds.map(t => ({ ...t }));
     try {
-      const raw = data.thresholds_json;
+      const raw = row.thresholds_json;
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (Array.isArray(parsed) && parsed.length > 0) {
         thresholds = parsed as AlertThreshold[];
@@ -150,9 +156,9 @@ export async function loadAlertSettingsFromDB(userId?: string): Promise<Maintena
     }
 
     const settings: MaintenanceAlertSettings = {
-      enabled: data.is_enabled ?? true,
-      showToastNotifications: data.notify_toast ?? true,
-      showBellAlerts: data.notify_bell ?? true,
+      enabled: row.is_enabled ?? true,
+      showToastNotifications: row.notify_toast ?? true,
+      showBellAlerts: row.notify_bell ?? true,
       thresholds,
     };
 

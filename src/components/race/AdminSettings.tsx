@@ -136,7 +136,7 @@ type AuditDateRange = '1d' | '7d' | '30d' | 'all';
 
 
 const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
-  const { profile, updateProfile, user } = useAuth();
+  const { profile, updateProfile, user, effectiveUserId } = useAuth();
   const { 
     engines, 
     superchargers, 
@@ -179,31 +179,41 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
   // Maintenance Alert Threshold Settings
   const [alertSettings, setAlertSettings] = useState<MaintenanceAlertSettings>(() => loadAlertSettings());
   const [alertSaveMsg, setAlertSaveMsg] = useState<string | null>(null);
+  // The id we persist threshold settings against. For crew members this is the
+  // team owner's id (effectiveUserId) so the whole team shares one config; for a
+  // team owner it is their own user id. Falls back to user.id.
+  const persistUserId = effectiveUserId || user?.id;
 
   // Load both alert + SFI threshold settings from the database (per-user) on
   // mount so saved thresholds sync across devices / survive cache clears.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const m = await loadAlertSettingsFromDB(user?.id);
+      const m = await loadAlertSettingsFromDB(persistUserId);
       if (!cancelled && m) setAlertSettings(m);
-      const s = await loadSFIAlertSettingsFromDB(user?.id);
+      const s = await loadSFIAlertSettingsFromDB(persistUserId);
       if (!cancelled && s) setSfiAlertSettings(s);
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [persistUserId]);
 
   const handleSaveAlertSettings = async () => {
-    const ok = await saveAlertSettingsToDB(alertSettings, user?.id);
-    setAlertSaveMsg(ok ? 'Alert settings saved!' : 'Saved locally (database unavailable).');
-    setTimeout(() => setAlertSaveMsg(null), 3000);
+    if (!persistUserId) {
+      setAlertSaveMsg('Sign in to save settings to your account (saved on this device only).');
+      saveAlertSettings(alertSettings);
+      setTimeout(() => setAlertSaveMsg(null), 4000);
+      return;
+    }
+    const ok = await saveAlertSettingsToDB(alertSettings, persistUserId);
+    setAlertSaveMsg(ok ? 'Alert settings saved!' : 'Could not reach the database — saved on this device only.');
+    setTimeout(() => setAlertSaveMsg(null), 4000);
   };
 
   const handleResetAlertSettings = async () => {
     const defaults = getDefaultSettings();
     setAlertSettings(defaults);
-    await saveAlertSettingsToDB(defaults, user?.id);
+    await saveAlertSettingsToDB(defaults, persistUserId);
     setAlertSaveMsg('Alert settings reset to defaults.');
     setTimeout(() => setAlertSaveMsg(null), 3000);
   };
@@ -237,15 +247,21 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
   const [sfiAlertSaveMsg, setSfiAlertSaveMsg] = useState<string | null>(null);
 
   const handleSaveSfiAlertSettings = async () => {
-    const ok = await saveSFIAlertSettingsToDB(sfiAlertSettings, user?.id);
-    setSfiAlertSaveMsg(ok ? 'SFI alert settings saved!' : 'Saved locally (database unavailable).');
-    setTimeout(() => setSfiAlertSaveMsg(null), 3000);
+    if (!persistUserId) {
+      setSfiAlertSaveMsg('Sign in to save settings to your account (saved on this device only).');
+      saveSFIAlertSettings(sfiAlertSettings);
+      setTimeout(() => setSfiAlertSaveMsg(null), 4000);
+      return;
+    }
+    const ok = await saveSFIAlertSettingsToDB(sfiAlertSettings, persistUserId);
+    setSfiAlertSaveMsg(ok ? 'SFI alert settings saved!' : 'Could not reach the database — saved on this device only.');
+    setTimeout(() => setSfiAlertSaveMsg(null), 4000);
   };
 
   const handleResetSfiAlertSettings = async () => {
     const defaults = getDefaultSFISettings();
     setSfiAlertSettings(defaults);
-    await saveSFIAlertSettingsToDB(defaults, user?.id);
+    await saveSFIAlertSettingsToDB(defaults, persistUserId);
     setSfiAlertSaveMsg('SFI alert settings reset to defaults.');
     setTimeout(() => setSfiAlertSaveMsg(null), 3000);
   };
@@ -876,7 +892,10 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
                   </p>
 
                   <div className="space-y-3">
-                    {alertSettings.thresholds.sort((a, b) => a.percentage - b.percentage).map((threshold, idx) => (
+                    {[...alertSettings.thresholds]
+                      .map((t, i) => ({ t, i }))
+                      .sort((a, b) => a.t.percentage - b.t.percentage)
+                      .map(({ t: threshold, i: idx }) => (
                       <div key={idx} className={`p-4 rounded-lg border transition-colors ${threshold.enabled ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-900/30 border-slate-700/50 opacity-60'}`}>
                         <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center gap-3">
@@ -1085,7 +1104,10 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
                   </p>
 
                   <div className="space-y-3">
-                    {sfiAlertSettings.thresholds.sort((a, b) => b.days - a.days).map((threshold, idx) => (
+                    {[...sfiAlertSettings.thresholds]
+                      .map((t, i) => ({ t, i }))
+                      .sort((a, b) => b.t.days - a.t.days)
+                      .map(({ t: threshold, i: idx }) => (
                       <div key={idx} className={`p-4 rounded-lg border transition-colors ${threshold.enabled ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-900/30 border-slate-700/50 opacity-60'}`}>
                         <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center gap-3">

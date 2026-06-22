@@ -112,18 +112,23 @@ export async function loadSFIAlertSettingsFromDB(userId?: string): Promise<SFIAl
     let query = supabase.from('sfi_alert_settings').select('*');
     query = uid ? query.eq('user_id', uid) : query;
 
-    const { data, error } = await query.maybeSingle();
+    // Avoid .maybeSingle() so a stray duplicate row never throws and wipes
+    // the saved configuration. Take the most-recently-updated row.
+    const { data, error } = await query
+      .order('updated_at', { ascending: false })
+      .limit(1);
 
     if (error) {
       console.warn('[sfiAlerts] DB load failed (table may not exist):', error.message);
       return null;
     }
 
-    if (!data) return null;
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return null;
 
     let thresholds: SFIAlertThreshold[] = DEFAULT_SETTINGS.thresholds.map(t => ({ ...t }));
     try {
-      const raw = data.thresholds_json;
+      const raw = row.thresholds_json;
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (Array.isArray(parsed) && parsed.length > 0) {
         thresholds = parsed as SFIAlertThreshold[];
@@ -133,9 +138,9 @@ export async function loadSFIAlertSettingsFromDB(userId?: string): Promise<SFIAl
     }
 
     const settings: SFIAlertSettings = {
-      enabled: data.is_enabled ?? true,
-      showToastNotifications: data.notify_toast ?? true,
-      showBellAlerts: data.notify_bell ?? true,
+      enabled: row.is_enabled ?? true,
+      showToastNotifications: row.notify_toast ?? true,
+      showBellAlerts: row.notify_bell ?? true,
       thresholds,
     };
 
