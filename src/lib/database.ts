@@ -359,9 +359,9 @@ const isTableNotInSchemaCache = (error: any): boolean => {
 let _lastSchemaReloadAt = 0;
 const SCHEMA_RELOAD_COOLDOWN_MS = 30_000; // 30 seconds
 
-const triggerSchemaReload = async (): Promise<void> => {
+const triggerSchemaReload = async (force = false): Promise<void> => {
   const now = Date.now();
-  if (now - _lastSchemaReloadAt < SCHEMA_RELOAD_COOLDOWN_MS) {
+  if (!force && now - _lastSchemaReloadAt < SCHEMA_RELOAD_COOLDOWN_MS) {
     console.log('[triggerSchemaReload] Skipped — cooldown active (last reload was', Math.round((now - _lastSchemaReloadAt) / 1000), 's ago)');
     return;
   }
@@ -823,11 +823,17 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
   const { error: firstError } = await supabase.from('maintenance_items').upsert(payload);
   if (!firstError) return;
 
-  // Stale schema cache (PGRST204) — reload and RETRY the SAME full payload.
+  // Stale schema cache (PGRST204 / PGRST202) — force a reload and RETRY both paths
+  // with increasing backoff. PostgREST's NOTIFY-based reload can take several
+  // seconds, so we retry for up to ~12 seconds and re-trigger the reload partway.
   if (isUnknownColumnError(firstError) || isTableNotInSchemaCache(firstError)) {
-    await triggerSchemaReload();
-    for (let attempt = 0; attempt < 4; attempt++) {
-      await new Promise((r) => setTimeout(r, 800));
+    await triggerSchemaReload(true); // force — bypass the 30s cooldown
+    const delays = [600, 900, 1200, 1500, 2000, 2500, 3000];
+    for (let attempt = 0; attempt < delays.length; attempt++) {
+      await new Promise((r) => setTimeout(r, delays[attempt]));
+
+      // Re-trigger the reload halfway through in case the first NOTIFY was missed.
+      if (attempt === 3) await triggerSchemaReload(true);
 
       // Retry the RPC first (it may now be registered)…
       const { error: retryRpc } = await supabase.rpc('upsert_maintenance_item', { p: payload });
