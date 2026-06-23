@@ -350,35 +350,23 @@ const isTableNotInSchemaCache = (error: any): boolean => {
 };
 
 /**
- * Trigger a PostgREST schema cache reload by calling the `reload-schema-cache`
- * edge function, which sends `NOTIFY pgrst, 'reload schema'` via the service
- * role.  This is fire-and-forget — failures are logged but never thrown.
+ * triggerSchemaReload — NO-OP.
  *
- * A simple deduplication flag prevents multiple reloads within 30 seconds.
+ * Previously this invoked the `reload-schema-cache` edge function via
+ * supabase.functions.invoke(), which produced CORS errors
+ * ("Failed to send a request to the Edge Function").
+ *
+ * Pass logs and parts inventory save fine WITHOUT any schema-cache reload,
+ * so this is now a no-op that simply logs. All existing call sites remain
+ * valid but no longer trigger any network request (and therefore no CORS
+ * errors). The function is kept (rather than deleted) so the many existing
+ * callers throughout this file continue to compile unchanged.
  */
-let _lastSchemaReloadAt = 0;
-const SCHEMA_RELOAD_COOLDOWN_MS = 30_000; // 30 seconds
-
-const triggerSchemaReload = async (force = false): Promise<void> => {
-  const now = Date.now();
-  if (!force && now - _lastSchemaReloadAt < SCHEMA_RELOAD_COOLDOWN_MS) {
-    console.log('[triggerSchemaReload] Skipped — cooldown active (last reload was', Math.round((now - _lastSchemaReloadAt) / 1000), 's ago)');
-    return;
-  }
-  _lastSchemaReloadAt = now;
-
-  console.log('[triggerSchemaReload] Sending NOTIFY pgrst to reload PostgREST schema cache...');
-  try {
-    const { data, error } = await supabase.functions.invoke('reload-schema-cache', { body: {} });
-    if (error) {
-      console.warn('[triggerSchemaReload] Edge function returned error:', error);
-    } else {
-      console.log('[triggerSchemaReload] Schema reload triggered successfully:', data);
-    }
-  } catch (err) {
-    console.warn('[triggerSchemaReload] Failed to invoke reload-schema-cache edge function:', err);
-  }
+const triggerSchemaReload = async (_force = false): Promise<void> => {
+  // Intentionally does nothing — no edge function invocation, no CORS errors.
+  return;
 };
+
 
 
 
@@ -761,68 +749,31 @@ export const fetchMaintenanceItems = async (userId?: string): Promise<Maintenanc
 /**
  * upsertMaintenanceItem — Create or update a maintenance item.
  *
- * RESILIENT COLUMN HANDLING:
- * The `threshold` (INTEGER) and `last_service_time` (TEXT) columns may not exist
- * in the database if the user hasn't run the latest migration.
+ * ═══════════════════════════════════════════════════════════════════════
+ * DIRECT UPSERT STRATEGY  (June 2026 — rewrite)
+ * ═══════════════════════════════════════════════════════════════════════
  *
- * Strategy: Try with all columns first. If PostgREST rejects the payload
- * because of unknown columns, retry WITHOUT threshold and last_service_time.
+ * This saves DIRECTLY to the maintenance_items table using the standard
+ * supabase.from('maintenance_items').upsert() method — EXACTLY the same way
+ * pass_logs and parts_inventory save successfully.
+ *
+ * NO Edge Function. NO RPC. NO schema-cache-reload calls.
+ *
+ * The optional `threshold`, `last_service_time` and `service_log` columns may
+ * not exist in older databases, so — just like upsertPassLog — we use a simple
+ * column-fallback cascade:
+ *   1. FULL payload    (all columns, including the 3 optional ones)
+ *   2. BASE payload    (drops threshold / last_service_time / service_log)
+ *   3. NUCLEAR payload (core guaranteed columns only)
+ *
+ * An error is only thrown if a real, non-column database error occurs.
  */
 export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: string): Promise<void> => {
   // ── Resolve user_id so RLS never rejects the write ──
   const effectiveUserId = userId || await getCurrentUserId();
 
-  // ══════════════════════════════════════════════════════════════════════
-  // AUTHORITATIVE SAVE PATH — dedicated service-role edge function.
-  //
-  // `save-maintenance-item` runs with the SERVICE ROLE and the correct DB
-  // schema, calling the SECURITY DEFINER `upsert_maintenance_item` RPC (with a
-  // direct-upsert fallback). It is completely immune to PostgREST's anon-role
-  // column/schema cache — the exact thing that produced the recurring
-  // "schema cache is still stale" Save Error.
-  //
-  // We try it up to 3 times to ride through cold starts / transient network
-  // blips before ever surfacing an error to the user.
-  // ══════════════════════════════════════════════════════════════════════
-  const tryEdgeFunction = async (): Promise<boolean> => {
-    try {
-      const { data, error } = await supabase.functions.invoke('save-maintenance-item', {
-        body: { item, userId: effectiveUserId ?? null },
-      });
-      if (error) {
-        console.warn('[upsertMaintenanceItem] Edge invoke error:', error.message || error);
-        return false;
-      }
-      // Accept either a parsed object or a JSON string body.
-      let payload: any = data;
-      if (typeof payload === 'string') {
-        try { payload = JSON.parse(payload); } catch { /* leave as-is */ }
-      }
-      if (payload && payload.ok === true) return true;
-      console.warn('[upsertMaintenanceItem] Edge function returned not-ok:', payload);
-      return false;
-    } catch (e) {
-      console.warn('[upsertMaintenanceItem] Edge invoke threw:', e);
-      return false;
-    }
-  };
-
-  const edgeDelays = [0, 700, 1500];
-  for (let attempt = 0; attempt < edgeDelays.length; attempt++) {
-    if (edgeDelays[attempt] > 0) {
-      await new Promise((r) => setTimeout(r, edgeDelays[attempt]));
-    }
-    if (await tryEdgeFunction()) {
-      return; // Saved reliably via service role.
-    }
-  }
-
-  // ══════════════════════════════════════════════════════════════════════
-  // BEST-EFFORT CLIENT FALLBACK (only reached if the edge function is
-  // unreachable, e.g. the user is fully offline). Tries the schema-cache-proof
-  // RPC, then a direct upsert. Either succeeding fully persists the row.
-  // ══════════════════════════════════════════════════════════════════════
-  const payload: any = {
+  // FULL — includes the three optional columns that may be missing in older DBs.
+  const fullPayload: any = {
     id: item.id,
     component: item.component,
     category: emptyToNull(item.category),
@@ -838,24 +789,76 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
     threshold: item.threshold != null ? item.threshold : null,
     service_log: Array.isArray(item.serviceLog) ? item.serviceLog : [],
   };
-  if (effectiveUserId) payload.user_id = effectiveUserId;
+  if (effectiveUserId) fullPayload.user_id = effectiveUserId;
 
-  const { error: rpcError } = await supabase.rpc('upsert_maintenance_item', { p: payload });
-  if (!rpcError) return;
+  // BASE — drops the three optional columns (threshold, last_service_time, service_log)
+  const basePayload: any = {
+    id: item.id,
+    component: item.component,
+    category: emptyToNull(item.category),
+    pass_interval: emptyToNull(item.passInterval),
+    current_passes: emptyToNull(item.currentPasses),
+    last_service: emptyToNull(item.lastService),
+    next_service_passes: emptyToNull(item.nextServicePasses),
+    status: item.status,
+    priority: item.priority,
+    notes: emptyToNull(item.notes),
+    estimated_cost: emptyToNull(item.estimatedCost),
+  };
+  if (effectiveUserId) basePayload.user_id = effectiveUserId;
 
-  const { error: directError } = await supabase.from('maintenance_items').upsert(payload);
-  if (!directError) return;
+  // NUCLEAR — only the columns guaranteed to exist in every schema version
+  const nuclearPayload: any = {
+    id: item.id,
+    component: item.component,
+    category: emptyToNull(item.category),
+    pass_interval: emptyToNull(item.passInterval),
+    current_passes: emptyToNull(item.currentPasses),
+    next_service_passes: emptyToNull(item.nextServicePasses),
+    status: item.status,
+    priority: item.priority,
+  };
+  if (effectiveUserId) nuclearPayload.user_id = effectiveUserId;
 
-  // Everything failed — surface a clear, actionable error.
-  console.error('[upsertMaintenanceItem] ALL save paths failed', { rpcError, directError });
-  const err: any = new Error(
-    'Could not save maintenance item. Check your internet connection and try again.'
-  );
-  err.code = (directError as any)?.code || (rpcError as any)?.code || 'MAINTENANCE_SAVE_FAILED';
-  err.details = (directError as any)?.message || (rpcError as any)?.message;
-  err.hint = 'If you are online, wait a few seconds and retry.';
-  throw err;
+  // ── Attempt 1: FULL payload (direct upsert) ──
+  {
+    const { error } = await supabase.from('maintenance_items').upsert(fullPayload);
+    if (!error) return;
+    if (isUnknownColumnError(error)) {
+      console.warn('[upsertMaintenanceItem] FULL upsert hit unknown column — retrying without optional columns.', error.message);
+    } else {
+      console.error('[upsertMaintenanceItem] FULL upsert failed (non-column error):', error.code, error.message);
+      throw error;
+    }
+  }
+
+  // ── Attempt 2: BASE payload (drops optional columns) ──
+  {
+    const { error } = await supabase.from('maintenance_items').upsert(basePayload);
+    if (!error) {
+      console.log('[upsertMaintenanceItem] Saved via BASE payload (threshold/last_service_time/service_log skipped).');
+      return;
+    }
+    if (isUnknownColumnError(error)) {
+      console.warn('[upsertMaintenanceItem] BASE upsert still hit unknown column — retrying with nuclear minimum.', error.message);
+    } else {
+      console.error('[upsertMaintenanceItem] BASE upsert failed (non-column error):', error.code, error.message);
+      throw error;
+    }
+  }
+
+  // ── Attempt 3: NUCLEAR payload (core columns only) ──
+  {
+    const { error } = await supabase.from('maintenance_items').upsert(nuclearPayload);
+    if (!error) {
+      console.warn('[upsertMaintenanceItem] Saved via NUCLEAR payload — only core fields persisted.');
+      return;
+    }
+    console.error('[upsertMaintenanceItem] NUCLEAR upsert ALSO failed:', error.code, error.message);
+    throw error;
+  }
 }
+
 
 
 
