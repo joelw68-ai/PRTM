@@ -772,6 +772,24 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
   // ── Resolve user_id so RLS never rejects the write ──
   const effectiveUserId = userId || await getCurrentUserId();
 
+  // ── PRIMARY PATH: dedicated edge function (service role + RPC) ──
+  // This bypasses PostgREST's anon-role column schema cache entirely and is
+  // immune to the "schema cache is stale" PGRST204 errors that were causing
+  // the persistent Save Error. The edge function calls the SECURITY DEFINER
+  // upsert_maintenance_item RPC with the service role, so every column
+  // (threshold, service_log, last_service_time) is written reliably.
+  try {
+    const { data, error } = await supabase.functions.invoke('save-maintenance-item', {
+      body: { item, userId: effectiveUserId },
+    });
+    if (!error && data && (data as any).ok) {
+      return; // Saved reliably via service role.
+    }
+    console.warn('[upsertMaintenanceItem] Edge function save did not succeed — falling back to client paths.', error || data);
+  } catch (e) {
+    console.warn('[upsertMaintenanceItem] Edge function invoke threw — falling back to client paths.', e);
+  }
+
   // Canonical payload. threshold (INTEGER), last_service_time (TEXT) and
   // service_log (JSONB) are CONFIRMED to exist in the live maintenance_items
   // table. We keep them in ONE payload and never silently drop them.
