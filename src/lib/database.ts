@@ -761,18 +761,37 @@ export const fetchMaintenanceItems = async (userId?: string): Promise<Maintenanc
  * satisfied.
  */
 export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: string): Promise<void> => {
-  // ── Resolve user_id so RLS never rejects the write ──
+  // ── 1. Resolve user_id so RLS never rejects the write ──
   const effectiveUserId = userId || await getCurrentUserId();
 
-  const payload: Record<string, any> = {
+  if (!effectiveUserId) {
+    console.error('[upsertMaintenanceItem] FATAL: No user_id available. Cannot insert — RLS will reject.');
+    const err: any = new Error('No authenticated user ID available. Cannot save maintenance item. Please log in again.');
+    err.code = 'NO_USER_ID';
+    err.details = 'Neither the passed userId nor supabase.auth.getUser() returned a valid user ID.';
+    err.hint = 'Ensure you are logged in. Try refreshing the page or logging out and back in.';
+    throw err;
+  }
+
+  // ── 2. Build the FULL payload (includes the legacy `name` column) ──
+  // `component` is the canonical column; `name` is mapped from `component`
+  // for older databases that still have a (now-nullable) `name` column.
+  //
+  // NOTE (June 2026): `last_service_time` is intentionally OMITTED from this
+  // payload. The live schema cache does not have that column yet and including
+  // it caused PGRST204 ("could not find last_service_time column in schema
+  // cache"), which blocked the entire save. We send only the core fields plus
+  // `threshold` and `service_log`, which are confirmed working. `last_service_time`
+  // will be re-added once the column is present in the schema cache.
+  const fullPayload: Record<string, any> = {
     id: item.id,
+    user_id: effectiveUserId,
     component: item.component,
     name: item.component,
     category: emptyToNull(item.category),
     pass_interval: emptyToNull(item.passInterval),
     current_passes: emptyToNull(item.currentPasses),
     last_service: emptyToNull(item.lastService),
-    last_service_time: emptyToNull(item.lastServiceTime),
     next_service_passes: emptyToNull(item.nextServicePasses),
     status: item.status,
     priority: item.priority,
@@ -781,15 +800,33 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
     threshold: item.threshold != null ? item.threshold : null,
     service_log: Array.isArray(item.serviceLog) ? item.serviceLog : [],
   };
-  if (effectiveUserId) payload.user_id = effectiveUserId;
 
-  const { error } = await supabase.from('maintenance_items').upsert(payload);
-  if (error) {
-    console.error('[upsertMaintenanceItem] upsert failed:', {
-      code: error.code, message: error.message, details: error.details, hint: error.hint,
+  // ── 3. Attempt 1: direct upsert with the full payload ──
+  // This is the SAME direct pattern that pass_logs and parts_inventory use.
+  const { error: fullError } = await supabase.from('maintenance_items').upsert(fullPayload);
+  if (!fullError) return;
+
+  // ── 4. If the legacy `name` column was dropped entirely, retry without it ──
+  if (isUnknownColumnError(fullError)) {
+    console.warn(
+      '[upsertMaintenanceItem] Unknown column on full payload — retrying without legacy `name` column.',
+      { code: fullError.code, message: fullError.message }
+    );
+    const { name: _droppedName, ...payloadWithoutName } = fullPayload;
+    const { error: retryError } = await supabase.from('maintenance_items').upsert(payloadWithoutName);
+    if (!retryError) return;
+
+    console.error('[upsertMaintenanceItem] Retry (without name) also failed:', {
+      code: retryError.code, message: retryError.message, details: retryError.details, hint: retryError.hint,
     });
-    throw error;
+    throw retryError;
   }
+
+  // ── 5. Non-column error — surface it ──
+  console.error('[upsertMaintenanceItem] upsert failed:', {
+    code: fullError.code, message: fullError.message, details: fullError.details, hint: fullError.hint,
+  });
+  throw fullError;
 }
 
 
