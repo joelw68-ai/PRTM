@@ -750,30 +750,28 @@ export const fetchMaintenanceItems = async (userId?: string): Promise<Maintenanc
  * upsertMaintenanceItem — Create or update a maintenance item.
  *
  * ═══════════════════════════════════════════════════════════════════════
- * DIRECT UPSERT STRATEGY  (June 2026 — rewrite)
+ * RPC-BASED SAVE STRATEGY  (June 2026 — rewrite)
  * ═══════════════════════════════════════════════════════════════════════
  *
- * This saves DIRECTLY to the maintenance_items table using the standard
- * supabase.from('maintenance_items').upsert() method — EXACTLY the same way
- * pass_logs and parts_inventory save successfully.
+ * The direct supabase.from('maintenance_items').upsert() path kept hitting
+ * the PostgREST schema-cache error (PGRST204) and silently dropping the
+ * optional `threshold` / `service_log` columns.
  *
- * NO Edge Function. NO RPC. NO schema-cache-reload calls.
- *
- * The optional `threshold`, `last_service_time` and `service_log` columns may
- * not exist in older databases, so — just like upsertPassLog — we use a simple
- * column-fallback cascade:
- *   1. FULL payload    (all columns, including the 3 optional ones)
- *   2. BASE payload    (drops threshold / last_service_time / service_log)
- *   3. NUCLEAR payload (core guaranteed columns only)
- *
- * An error is only thrown if a real, non-column database error occurs.
+ * FIX — identical strategy to upsertPartInventory:
+ *   The PRIMARY (and only) path is the SECURITY DEFINER Postgres function
+ *   `upsert_maintenance_item(jsonb)`. Its compiled SQL body writes EVERY field
+ *   directly into the table, so it does NOT depend on PostgREST's column
+ *   schema cache. PostgREST only needs the function signature, so all fields
+ *   persist even when the column cache is stale. This bypasses the cache
+ *   completely.
  */
 export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: string): Promise<void> => {
   // ── Resolve user_id so RLS never rejects the write ──
   const effectiveUserId = userId || await getCurrentUserId();
 
-  // FULL — includes the three optional columns that may be missing in older DBs.
-  const fullPayload: any = {
+  // Build the canonical payload — keys match the columns the
+  // upsert_maintenance_item(jsonb) Postgres function reads.
+  const payload: Record<string, any> = {
     id: item.id,
     component: item.component,
     category: emptyToNull(item.category),
@@ -789,96 +787,18 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
     threshold: item.threshold != null ? item.threshold : null,
     service_log: Array.isArray(item.serviceLog) ? item.serviceLog : [],
   };
-  if (effectiveUserId) fullPayload.user_id = effectiveUserId;
+  if (effectiveUserId) payload.user_id = effectiveUserId;
 
-  // BASE — DERIVED FROM FULL so it can NEVER drift / silently drop fields.
-  // We start from a copy of the full payload and remove ONLY `last_service_time`
-  // (the single column that could be absent in the very oldest schemas).
-  // CRITICAL: `threshold` and `service_log` are STILL PRESENT here — both
-  // columns are confirmed to exist in the maintenance_items table, so they must
-  // survive the BASE fallback. Only the NUCLEAR tier omits them.
-  const basePayload: any = { ...fullPayload };
-  delete basePayload.last_service_time;
-
-  // NUCLEAR — only the columns guaranteed to exist in every schema version.
-  // This is the ONLY tier that intentionally omits threshold + service_log.
-  const nuclearPayload: any = {
-    id: item.id,
-    component: item.component,
-    category: emptyToNull(item.category),
-    pass_interval: emptyToNull(item.passInterval),
-    current_passes: emptyToNull(item.currentPasses),
-    next_service_passes: emptyToNull(item.nextServicePasses),
-    status: item.status,
-    priority: item.priority,
-  };
-  if (effectiveUserId) nuclearPayload.user_id = effectiveUserId;
-
-  // ════════════════════════════════════════════════════════════════════
-  // DEBUG: Confirm BOTH tiers that should persist these fields actually do.
-  // ════════════════════════════════════════════════════════════════════
-  console.log('[upsertMaintenanceItem] ▶ FULL payload being sent to .upsert():', JSON.stringify(fullPayload, null, 2));
-  console.log('[upsertMaintenanceItem] ▶ threshold in FULL payload:', fullPayload.threshold,
-    '| service_log in FULL payload:', JSON.stringify(fullPayload.service_log));
-  console.log('[upsertMaintenanceItem] ▶ threshold in BASE payload:', basePayload.threshold,
-    '| service_log in BASE payload:', JSON.stringify(basePayload.service_log),
-    '| (BASE drops ONLY last_service_time:', !('last_service_time' in basePayload), ')');
-  console.log('[upsertMaintenanceItem] ▶ NUCLEAR payload intentionally omits threshold + service_log:',
-    !('threshold' in nuclearPayload) && !('service_log' in nuclearPayload));
-
-
-  // ── Attempt 1: FULL payload (direct upsert) ──
-  // .select() makes Supabase return the row(s) it actually saved so we can
-  // inspect whether threshold and service_log came back from the database.
-  {
-    const { data, error } = await supabase.from('maintenance_items').upsert(fullPayload).select();
-    if (!error) {
-      const savedRow = Array.isArray(data) ? data[0] : data;
-      console.log('[upsertMaintenanceItem] ◀ RAW row returned from DB after FULL save:', JSON.stringify(savedRow, null, 2));
-      console.log('[upsertMaintenanceItem] ◀ threshold returned from DB:', savedRow?.threshold,
-        '| service_log returned from DB:', JSON.stringify(savedRow?.service_log));
-      return;
-    }
-    if (isUnknownColumnError(error)) {
-      console.warn('[upsertMaintenanceItem] FULL upsert hit unknown column — retrying without optional columns.', error.message);
-    } else {
-      console.error('[upsertMaintenanceItem] FULL upsert failed (non-column error):', error.code, error.message);
-      throw error;
-    }
-  }
-
-  // ── Attempt 2: BASE payload (drops only last_service_time; KEEPS threshold + service_log) ──
-  {
-    console.log('[upsertMaintenanceItem] ▶ BASE payload being sent to .upsert():', JSON.stringify(basePayload, null, 2));
-    const { data, error } = await supabase.from('maintenance_items').upsert(basePayload).select();
-    if (!error) {
-      const savedRow = Array.isArray(data) ? data[0] : data;
-      console.log('[upsertMaintenanceItem] ◀ Saved via BASE payload (last_service_time skipped). RAW row returned:', JSON.stringify(savedRow, null, 2));
-      console.log('[upsertMaintenanceItem] ◀ threshold returned from DB (BASE):', savedRow?.threshold,
-        '| service_log returned from DB (BASE):', JSON.stringify(savedRow?.service_log));
-      return;
-    }
-    if (isUnknownColumnError(error)) {
-      console.warn('[upsertMaintenanceItem] BASE upsert still hit unknown column — retrying with nuclear minimum.', error.message);
-    } else {
-      console.error('[upsertMaintenanceItem] BASE upsert failed (non-column error):', error.code, error.message);
-      throw error;
-    }
-  }
-
-  // ── Attempt 3: NUCLEAR payload (core columns only) ──
-  {
-    console.warn('[upsertMaintenanceItem] ▶ Falling back to NUCLEAR payload — threshold and service_log will NOT be saved at this tier:', JSON.stringify(nuclearPayload, null, 2));
-    const { data, error } = await supabase.from('maintenance_items').upsert(nuclearPayload).select();
-    if (!error) {
-      const savedRow = Array.isArray(data) ? data[0] : data;
-      console.warn('[upsertMaintenanceItem] ◀ Saved via NUCLEAR payload — only core fields persisted. RAW row:', JSON.stringify(savedRow, null, 2));
-      return;
-    }
-    console.error('[upsertMaintenanceItem] NUCLEAR upsert ALSO failed:', error.code, error.message);
+  // ── Call the SECURITY DEFINER RPC — schema-cache-proof ──
+  const { error } = await supabase.rpc('upsert_maintenance_item', { p: payload });
+  if (error) {
+    console.error('[upsertMaintenanceItem] RPC upsert_maintenance_item failed:', {
+      code: error.code, message: error.message, details: error.details, hint: error.hint,
+    });
     throw error;
   }
 }
+
 
 
 
