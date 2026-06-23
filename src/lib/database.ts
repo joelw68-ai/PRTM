@@ -825,10 +825,28 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
   };
   if (effectiveUserId) nuclearPayload.user_id = effectiveUserId;
 
+  // ════════════════════════════════════════════════════════════════════
+  // DEBUG: Print the EXACT FULL payload being sent to Supabase, with explicit
+  // visibility into threshold and service_log so we can confirm they are present.
+  // ════════════════════════════════════════════════════════════════════
+  console.log('[upsertMaintenanceItem] ▶ FULL payload being sent to .upsert():', JSON.stringify(fullPayload, null, 2));
+  console.log('[upsertMaintenanceItem] ▶ threshold in FULL payload:', fullPayload.threshold,
+    '| service_log in FULL payload:', JSON.stringify(fullPayload.service_log));
+  console.log('[upsertMaintenanceItem] ▶ BASE payload also includes threshold:', basePayload.threshold,
+    '| service_log:', JSON.stringify(basePayload.service_log));
+
   // ── Attempt 1: FULL payload (direct upsert) ──
+  // .select() makes Supabase return the row(s) it actually saved so we can
+  // inspect whether threshold and service_log came back from the database.
   {
-    const { error } = await supabase.from('maintenance_items').upsert(fullPayload);
-    if (!error) return;
+    const { data, error } = await supabase.from('maintenance_items').upsert(fullPayload).select();
+    if (!error) {
+      const savedRow = Array.isArray(data) ? data[0] : data;
+      console.log('[upsertMaintenanceItem] ◀ RAW row returned from DB after FULL save:', JSON.stringify(savedRow, null, 2));
+      console.log('[upsertMaintenanceItem] ◀ threshold returned from DB:', savedRow?.threshold,
+        '| service_log returned from DB:', JSON.stringify(savedRow?.service_log));
+      return;
+    }
     if (isUnknownColumnError(error)) {
       console.warn('[upsertMaintenanceItem] FULL upsert hit unknown column — retrying without optional columns.', error.message);
     } else {
@@ -837,11 +855,15 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
     }
   }
 
-  // ── Attempt 2: BASE payload (drops optional columns) ──
+  // ── Attempt 2: BASE payload (drops only last_service_time; KEEPS threshold + service_log) ──
   {
-    const { error } = await supabase.from('maintenance_items').upsert(basePayload);
+    console.log('[upsertMaintenanceItem] ▶ BASE payload being sent to .upsert():', JSON.stringify(basePayload, null, 2));
+    const { data, error } = await supabase.from('maintenance_items').upsert(basePayload).select();
     if (!error) {
-      console.log('[upsertMaintenanceItem] Saved via BASE payload (threshold/last_service_time/service_log skipped).');
+      const savedRow = Array.isArray(data) ? data[0] : data;
+      console.log('[upsertMaintenanceItem] ◀ Saved via BASE payload (last_service_time skipped). RAW row returned:', JSON.stringify(savedRow, null, 2));
+      console.log('[upsertMaintenanceItem] ◀ threshold returned from DB (BASE):', savedRow?.threshold,
+        '| service_log returned from DB (BASE):', JSON.stringify(savedRow?.service_log));
       return;
     }
     if (isUnknownColumnError(error)) {
@@ -854,9 +876,11 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
 
   // ── Attempt 3: NUCLEAR payload (core columns only) ──
   {
-    const { error } = await supabase.from('maintenance_items').upsert(nuclearPayload);
+    console.warn('[upsertMaintenanceItem] ▶ Falling back to NUCLEAR payload — threshold and service_log will NOT be saved at this tier:', JSON.stringify(nuclearPayload, null, 2));
+    const { data, error } = await supabase.from('maintenance_items').upsert(nuclearPayload).select();
     if (!error) {
-      console.warn('[upsertMaintenanceItem] Saved via NUCLEAR payload — only core fields persisted.');
+      const savedRow = Array.isArray(data) ? data[0] : data;
+      console.warn('[upsertMaintenanceItem] ◀ Saved via NUCLEAR payload — only core fields persisted. RAW row:', JSON.stringify(savedRow, null, 2));
       return;
     }
     console.error('[upsertMaintenanceItem] NUCLEAR upsert ALSO failed:', error.code, error.message);
