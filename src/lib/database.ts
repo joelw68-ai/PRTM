@@ -791,28 +791,17 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
   };
   if (effectiveUserId) fullPayload.user_id = effectiveUserId;
 
-  // BASE — STILL includes threshold + service_log (both columns are confirmed to exist
-  // in the maintenance_items table). They are kept here so that even if the schema cache
-  // is briefly stale and the FULL payload is rejected, these two fields are NOT silently
-  // dropped. Only `last_service_time` is removed at this tier.
-  const basePayload: any = {
-    id: item.id,
-    component: item.component,
-    category: emptyToNull(item.category),
-    pass_interval: emptyToNull(item.passInterval),
-    current_passes: emptyToNull(item.currentPasses),
-    last_service: emptyToNull(item.lastService),
-    next_service_passes: emptyToNull(item.nextServicePasses),
-    status: item.status,
-    priority: item.priority,
-    notes: emptyToNull(item.notes),
-    estimated_cost: emptyToNull(item.estimatedCost),
-    threshold: item.threshold != null ? item.threshold : null,
-    service_log: Array.isArray(item.serviceLog) ? item.serviceLog : [],
-  };
-  if (effectiveUserId) basePayload.user_id = effectiveUserId;
+  // BASE — DERIVED FROM FULL so it can NEVER drift / silently drop fields.
+  // We start from a copy of the full payload and remove ONLY `last_service_time`
+  // (the single column that could be absent in the very oldest schemas).
+  // CRITICAL: `threshold` and `service_log` are STILL PRESENT here — both
+  // columns are confirmed to exist in the maintenance_items table, so they must
+  // survive the BASE fallback. Only the NUCLEAR tier omits them.
+  const basePayload: any = { ...fullPayload };
+  delete basePayload.last_service_time;
 
-  // NUCLEAR — only the columns guaranteed to exist in every schema version
+  // NUCLEAR — only the columns guaranteed to exist in every schema version.
+  // This is the ONLY tier that intentionally omits threshold + service_log.
   const nuclearPayload: any = {
     id: item.id,
     component: item.component,
@@ -826,14 +815,17 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
   if (effectiveUserId) nuclearPayload.user_id = effectiveUserId;
 
   // ════════════════════════════════════════════════════════════════════
-  // DEBUG: Print the EXACT FULL payload being sent to Supabase, with explicit
-  // visibility into threshold and service_log so we can confirm they are present.
+  // DEBUG: Confirm BOTH tiers that should persist these fields actually do.
   // ════════════════════════════════════════════════════════════════════
   console.log('[upsertMaintenanceItem] ▶ FULL payload being sent to .upsert():', JSON.stringify(fullPayload, null, 2));
   console.log('[upsertMaintenanceItem] ▶ threshold in FULL payload:', fullPayload.threshold,
     '| service_log in FULL payload:', JSON.stringify(fullPayload.service_log));
-  console.log('[upsertMaintenanceItem] ▶ BASE payload also includes threshold:', basePayload.threshold,
-    '| service_log:', JSON.stringify(basePayload.service_log));
+  console.log('[upsertMaintenanceItem] ▶ threshold in BASE payload:', basePayload.threshold,
+    '| service_log in BASE payload:', JSON.stringify(basePayload.service_log),
+    '| (BASE drops ONLY last_service_time:', !('last_service_time' in basePayload), ')');
+  console.log('[upsertMaintenanceItem] ▶ NUCLEAR payload intentionally omits threshold + service_log:',
+    !('threshold' in nuclearPayload) && !('service_log' in nuclearPayload));
+
 
   // ── Attempt 1: FULL payload (direct upsert) ──
   // .select() makes Supabase return the row(s) it actually saved so we can
