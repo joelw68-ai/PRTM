@@ -772,27 +772,56 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
   // ── Resolve user_id so RLS never rejects the write ──
   const effectiveUserId = userId || await getCurrentUserId();
 
-  // ── PRIMARY PATH: dedicated edge function (service role + RPC) ──
-  // This bypasses PostgREST's anon-role column schema cache entirely and is
-  // immune to the "schema cache is stale" PGRST204 errors that were causing
-  // the persistent Save Error. The edge function calls the SECURITY DEFINER
-  // upsert_maintenance_item RPC with the service role, so every column
-  // (threshold, service_log, last_service_time) is written reliably.
-  try {
-    const { data, error } = await supabase.functions.invoke('save-maintenance-item', {
-      body: { item, userId: effectiveUserId },
-    });
-    if (!error && data && (data as any).ok) {
+  // ══════════════════════════════════════════════════════════════════════
+  // AUTHORITATIVE SAVE PATH — dedicated service-role edge function.
+  //
+  // `save-maintenance-item` runs with the SERVICE ROLE and the correct DB
+  // schema, calling the SECURITY DEFINER `upsert_maintenance_item` RPC (with a
+  // direct-upsert fallback). It is completely immune to PostgREST's anon-role
+  // column/schema cache — the exact thing that produced the recurring
+  // "schema cache is still stale" Save Error.
+  //
+  // We try it up to 3 times to ride through cold starts / transient network
+  // blips before ever surfacing an error to the user.
+  // ══════════════════════════════════════════════════════════════════════
+  const tryEdgeFunction = async (): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.functions.invoke('save-maintenance-item', {
+        body: { item, userId: effectiveUserId ?? null },
+      });
+      if (error) {
+        console.warn('[upsertMaintenanceItem] Edge invoke error:', error.message || error);
+        return false;
+      }
+      // Accept either a parsed object or a JSON string body.
+      let payload: any = data;
+      if (typeof payload === 'string') {
+        try { payload = JSON.parse(payload); } catch { /* leave as-is */ }
+      }
+      if (payload && payload.ok === true) return true;
+      console.warn('[upsertMaintenanceItem] Edge function returned not-ok:', payload);
+      return false;
+    } catch (e) {
+      console.warn('[upsertMaintenanceItem] Edge invoke threw:', e);
+      return false;
+    }
+  };
+
+  const edgeDelays = [0, 700, 1500];
+  for (let attempt = 0; attempt < edgeDelays.length; attempt++) {
+    if (edgeDelays[attempt] > 0) {
+      await new Promise((r) => setTimeout(r, edgeDelays[attempt]));
+    }
+    if (await tryEdgeFunction()) {
       return; // Saved reliably via service role.
     }
-    console.warn('[upsertMaintenanceItem] Edge function save did not succeed — falling back to client paths.', error || data);
-  } catch (e) {
-    console.warn('[upsertMaintenanceItem] Edge function invoke threw — falling back to client paths.', e);
   }
 
-  // Canonical payload. threshold (INTEGER), last_service_time (TEXT) and
-  // service_log (JSONB) are CONFIRMED to exist in the live maintenance_items
-  // table. We keep them in ONE payload and never silently drop them.
+  // ══════════════════════════════════════════════════════════════════════
+  // BEST-EFFORT CLIENT FALLBACK (only reached if the edge function is
+  // unreachable, e.g. the user is fully offline). Tries the schema-cache-proof
+  // RPC, then a direct upsert. Either succeeding fully persists the row.
+  // ══════════════════════════════════════════════════════════════════════
   const payload: any = {
     id: item.id,
     component: item.component,
@@ -807,78 +836,27 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
     notes: emptyToNull(item.notes),
     estimated_cost: emptyToNull(item.estimatedCost),
     threshold: item.threshold != null ? item.threshold : null,
-    // Spreadsheet-style service log (array of { id, date, time, notes }) stored as JSONB.
     service_log: Array.isArray(item.serviceLog) ? item.serviceLog : [],
   };
-
   if (effectiveUserId) payload.user_id = effectiveUserId;
 
-  // ── PRIMARY PATH: RPC function ──
-  // upsert_maintenance_item(jsonb) is a SECURITY DEFINER Postgres function whose
-  // body is compiled SQL. It writes threshold / service_log / last_service_time
-  // DIRECTLY into the table without going through PostgREST's column schema cache.
-  // This is the definitive fix for the "schema cache is still stale" error: even
-  // when PostgREST hasn't reloaded its column cache, the RPC still saves every
-  // field correctly because PostgREST only needs to know the function signature.
-  {
-    const { error: rpcError } = await supabase.rpc('upsert_maintenance_item', { p: payload });
-    if (!rpcError) {
-      return; // Saved with ALL fields, schema-cache-proof.
-    }
+  const { error: rpcError } = await supabase.rpc('upsert_maintenance_item', { p: payload });
+  if (!rpcError) return;
 
-    // If the RPC itself isn't in the schema cache yet (function not found),
-    // trigger a reload and fall through to the direct-upsert fallback below.
-    console.warn(
-      '[upsertMaintenanceItem] RPC upsert_maintenance_item failed — falling back to direct upsert.',
-      { code: rpcError.code, message: rpcError.message }
-    );
-    if (isUnknownColumnError(rpcError) || isTableNotInSchemaCache(rpcError)) {
-      triggerSchemaReload();
-    }
-  }
+  const { error: directError } = await supabase.from('maintenance_items').upsert(payload);
+  if (!directError) return;
 
-  // ── FALLBACK PATH: direct PostgREST upsert ──
-  const { error: firstError } = await supabase.from('maintenance_items').upsert(payload);
-  if (!firstError) return;
-
-  // Stale schema cache (PGRST204 / PGRST202) — force a reload and RETRY both paths
-  // with increasing backoff. PostgREST's NOTIFY-based reload can take several
-  // seconds, so we retry for up to ~12 seconds and re-trigger the reload partway.
-  if (isUnknownColumnError(firstError) || isTableNotInSchemaCache(firstError)) {
-    await triggerSchemaReload(true); // force — bypass the 30s cooldown
-    const delays = [600, 900, 1200, 1500, 2000, 2500, 3000];
-    for (let attempt = 0; attempt < delays.length; attempt++) {
-      await new Promise((r) => setTimeout(r, delays[attempt]));
-
-      // Re-trigger the reload halfway through in case the first NOTIFY was missed.
-      if (attempt === 3) await triggerSchemaReload(true);
-
-      // Retry the RPC first (it may now be registered)…
-      const { error: retryRpc } = await supabase.rpc('upsert_maintenance_item', { p: payload });
-      if (!retryRpc) return;
-
-      // …then the direct upsert.
-      const { error: retryError } = await supabase.from('maintenance_items').upsert(payload);
-      if (!retryError) return;
-
-      if (!isUnknownColumnError(retryError) && !isTableNotInSchemaCache(retryError)) {
-        throw retryError;
-      }
-    }
-
-    const err: any = new Error(
-      'Could not save maintenance item to the database — the schema cache is still stale. ' +
-      'Wait a few seconds and try again.'
-    );
-    err.code = firstError.code || 'SCHEMA_CACHE_STALE';
-    err.details = firstError.message;
-    err.hint = 'PostgREST schema cache reload was triggered; retry the save shortly.';
-    throw err;
-  }
-
-  // Not a column / cache error — surface the real error.
-  throw firstError;
+  // Everything failed — surface a clear, actionable error.
+  console.error('[upsertMaintenanceItem] ALL save paths failed', { rpcError, directError });
+  const err: any = new Error(
+    'Could not save maintenance item. Check your internet connection and try again.'
+  );
+  err.code = (directError as any)?.code || (rpcError as any)?.code || 'MAINTENANCE_SAVE_FAILED';
+  err.details = (directError as any)?.message || (rpcError as any)?.message;
+  err.hint = 'If you are online, wait a few seconds and retry.';
+  throw err;
 }
+
 
 
 
