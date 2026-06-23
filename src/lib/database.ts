@@ -750,30 +750,24 @@ export const fetchMaintenanceItems = async (userId?: string): Promise<Maintenanc
  * upsertMaintenanceItem — Create or update a maintenance item.
  *
  * ═══════════════════════════════════════════════════════════════════════
- * RPC-BASED SAVE STRATEGY  (June 2026 — rewrite)
+ * DIRECT UPSERT STRATEGY  (June 2026 — reverted from RPC)
  * ═══════════════════════════════════════════════════════════════════════
  *
- * The direct supabase.from('maintenance_items').upsert() path kept hitting
- * the PostgREST schema-cache error (PGRST204) and silently dropping the
- * optional `threshold` / `service_log` columns.
- *
- * FIX — identical strategy to upsertPartInventory:
- *   The PRIMARY (and only) path is the SECURITY DEFINER Postgres function
- *   `upsert_maintenance_item(jsonb)`. Its compiled SQL body writes EVERY field
- *   directly into the table, so it does NOT depend on PostgREST's column
- *   schema cache. PostgREST only needs the function signature, so all fields
- *   persist even when the column cache is stale. This bypasses the cache
- *   completely.
+ * The upsert_maintenance_item RPC kept failing with PGRST202 (function not in
+ * schema cache). The `name` column NOT NULL constraint has now been dropped,
+ * so we revert to the same simple direct upsert that pass_logs and
+ * parts_inventory use successfully. `component` is also mapped to the legacy
+ * `name` column so older databases that still have a `name` column are
+ * satisfied.
  */
 export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: string): Promise<void> => {
   // ── Resolve user_id so RLS never rejects the write ──
   const effectiveUserId = userId || await getCurrentUserId();
 
-  // Build the canonical payload — keys match the columns the
-  // upsert_maintenance_item(jsonb) Postgres function reads.
   const payload: Record<string, any> = {
     id: item.id,
     component: item.component,
+    name: item.component,
     category: emptyToNull(item.category),
     pass_interval: emptyToNull(item.passInterval),
     current_passes: emptyToNull(item.currentPasses),
@@ -789,15 +783,15 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
   };
   if (effectiveUserId) payload.user_id = effectiveUserId;
 
-  // ── Call the SECURITY DEFINER RPC — schema-cache-proof ──
-  const { error } = await supabase.rpc('upsert_maintenance_item', { p: payload });
+  const { error } = await supabase.from('maintenance_items').upsert(payload);
   if (error) {
-    console.error('[upsertMaintenanceItem] RPC upsert_maintenance_item failed:', {
+    console.error('[upsertMaintenanceItem] upsert failed:', {
       code: error.code, message: error.message, details: error.details, hint: error.hint,
     });
     throw error;
   }
 }
+
 
 
 
