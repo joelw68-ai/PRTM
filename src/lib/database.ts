@@ -791,7 +791,10 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
   };
   if (effectiveUserId) fullPayload.user_id = effectiveUserId;
 
-  // BASE — drops the three optional columns (threshold, last_service_time, service_log)
+  // BASE — STILL includes threshold + service_log (both columns are confirmed to exist
+  // in the maintenance_items table). They are kept here so that even if the schema cache
+  // is briefly stale and the FULL payload is rejected, these two fields are NOT silently
+  // dropped. Only `last_service_time` is removed at this tier.
   const basePayload: any = {
     id: item.id,
     component: item.component,
@@ -804,6 +807,8 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
     priority: item.priority,
     notes: emptyToNull(item.notes),
     estimated_cost: emptyToNull(item.estimatedCost),
+    threshold: item.threshold != null ? item.threshold : null,
+    service_log: Array.isArray(item.serviceLog) ? item.serviceLog : [],
   };
   if (effectiveUserId) basePayload.user_id = effectiveUserId;
 
