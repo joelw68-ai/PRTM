@@ -175,6 +175,8 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
   // Ids that have been saved to the database (or localStorage).
   const [savingId, setSavingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Surfaces a save failure to the user so a silent RLS/network error is visible.
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Photo-upload state: which note is currently uploading + per-row file inputs.
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -299,6 +301,7 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
       const draft = drafts[id];
       if (!draft) return;
       setSavingId(id);
+      setSaveError(null);
       try {
         if (useDatabase) {
           const { error } = await supabase.from('general_notes').upsert({
@@ -312,7 +315,9 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
           });
           if (error) {
             console.error('Failed to save note:', error.message);
-            // Keep the row in edit mode so the user can retry.
+            // Surface the failure so the user knows it did NOT save, and keep
+            // the row in edit mode so they can retry.
+            setSaveError(`Couldn't save note: ${error.message}. Please try again.`);
             return;
           }
         }
@@ -570,7 +575,7 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
             </button>
             <button
               type="button"
-              onClick={() => removeNote(note.id)}
+              onClick={() => setConfirmDeleteId(note.id)}
               className="p-1.5 text-red-400 hover:bg-red-500/20 rounded"
               title="Delete note"
             >

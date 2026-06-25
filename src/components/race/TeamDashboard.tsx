@@ -11,7 +11,8 @@ import {
   Zap, CheckSquare, AlertTriangle, Package,
   RefreshCw, Loader2, Circle, Wifi, Eye, ChevronDown, ChevronUp,
   ArrowRight, Cog, RotateCcw, Flame, X, ShieldCheck, ChevronRight, Download, Printer,
-  ListTodo, Clock, Calendar, Flag, BellOff, CalendarClock
+  ListTodo, Clock, Calendar, Flag, BellOff, CalendarClock, FileText
+
 } from 'lucide-react';
 
 import { fetchToDoItems, ToDoItem } from '@/lib/database';
@@ -1571,6 +1572,14 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ currentRole, onNavigate }
                   <Package className="w-4 h-4" />
                   Parts
                 </button>
+                <button
+                  onClick={() => onNavigate('general-notes')}
+                  className="flex items-center gap-2 p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 transition-colors text-xs font-medium"
+                >
+                  <FileText className="w-4 h-4" />
+                  General Notes
+                </button>
+
               </div>
             </div>
           </div>
