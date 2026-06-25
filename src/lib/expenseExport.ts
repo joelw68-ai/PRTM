@@ -151,6 +151,35 @@ export const exportToCSV = (
   downloadFile(csvContent, filename, 'text/csv;charset=utf-8;');
 };
 
+// ===== GENERAL NOTES CSV EXPORT =====
+// Exports already-filtered/sorted notes. Reuses the same escapeCSV +
+// downloadFile + getLocalDateString pattern used for expenses above.
+export interface ExportableNote {
+  date: string;
+  time: string;
+  category: string;
+  description: string;
+}
+
+export const exportNotesToCSV = (notes: ExportableNote[]): void => {
+  const headers = ['Date', 'Time', 'Category', 'Description'];
+
+  const rows = notes.map((n) => [
+    n.date || '',
+    n.time || '',
+    n.category || '',
+    n.description || '',
+  ]);
+
+  const csvContent = [
+    headers.map(escapeCSV).join(','),
+    ...rows.map((row) => row.map(escapeCSV).join(',')),
+  ].join('\n');
+
+  const dateStr = getLocalDateString();
+  downloadFile(csvContent, `general_notes_${dateStr}.csv`, 'text/csv;charset=utf-8;');
+};
+
 // ===== SHARED PDF STYLES =====
 const getPDFStyles = (): string => `
   @page { margin: 0.6in; size: letter; }
