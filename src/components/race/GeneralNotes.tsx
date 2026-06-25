@@ -164,6 +164,8 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [managerOpen, setManagerOpen] = useState(false);
+  // Note id pending delete-confirmation (null = no confirmation open).
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Which notes are currently in edit mode (show inputs + Save button).
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set());
