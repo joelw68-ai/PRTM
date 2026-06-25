@@ -17,8 +17,9 @@ import {
   User, LogOut, LogIn, UserPlus, Play, Bell,
   Loader2,
   Home, HardDrive, Radio, Zap, Activity,
-  PackageCheck
+  PackageCheck, StickyNote
 } from 'lucide-react';
+
 
 
 
@@ -97,8 +98,10 @@ const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
     { id: 'calendar', label: 'Event Calendar', icon: Calendar },
+    { id: 'general-notes', label: 'General Notes', icon: StickyNote },
     { id: 'vendors', label: 'Vendors', icon: User },
     { id: 'gallery', label: 'Gallery', icon: Camera },
+
     { id: 'profile', label: 'Team & Crew Profile', icon: User },
     { id: 'dashboard', label: 'Dashboard', icon: Home },
     { id: 'setup', label: 'Setup', icon: SlidersHorizontal },

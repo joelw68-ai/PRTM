@@ -34,6 +34,8 @@ import BackupRestore from './race/BackupRestore';
 import MaintenanceTracker from './race/MaintenanceTracker';
 import SFICertifications from './race/SFICertifications';
 import TeamNotes from './race/TeamNotes';
+import GeneralNotes from './race/GeneralNotes';
+
 import HeroSection from './race/HeroSection';
 
 import AuthModal from './auth/AuthModal';
@@ -425,6 +427,15 @@ const AppLayoutContent: React.FC = () => {
             <PackTheTrailer currentRole={currentRole} onNavigate={handleNavigate} />
           </div>
         );
+
+      case 'general-notes':
+        return (
+          <div className="bg-slate-950">
+            <GeneralNotes currentRole={currentRole} />
+          </div>
+        );
+
+
 
 
 
