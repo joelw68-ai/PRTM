@@ -18,7 +18,9 @@ import {
   HardDrive,
   Download,
   ImagePlus,
+  RotateCcw,
 } from 'lucide-react';
+
 import DateInputDark from '@/components/ui/DateInputDark';
 import { CrewRole } from '@/lib/permissions';
 import { useAuth } from '@/contexts/AuthContext';
@@ -180,6 +182,18 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
   // Photo-upload state: which note is currently uploading + per-row file inputs.
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  // Holds the most recently deleted note so it can be restored via the Undo toast.
+  const [undoNote, setUndoNote] = useState<GeneralNote | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [restoring, setRestoring] = useState(false);
+
+  // Clear any pending undo timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    };
+  }, []);
+
 
   // ---- Load notes (DB or localStorage) ----
   useEffect(() => {
@@ -338,6 +352,9 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
 
   const removeNote = useCallback(
     async (id: string) => {
+      // Capture the full note BEFORE removing it so Undo can restore it.
+      const deleted = notes.find((n) => n.id === id) ?? null;
+
       if (useDatabase) {
         const { error } = await supabase.from('general_notes').delete().eq('id', id);
         if (error) {
@@ -352,9 +369,55 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
         delete next[id];
         return next;
       });
+
+      // Show the Undo toast for 5 seconds, replacing any prior pending undo.
+      if (deleted) {
+        if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+        setUndoNote(deleted);
+        undoTimerRef.current = setTimeout(() => {
+          setUndoNote(null);
+          undoTimerRef.current = null;
+        }, 5000);
+      }
     },
-    [useDatabase],
+    [useDatabase, notes],
   );
+
+  // Restore the most recently deleted note (re-insert into DB or local state).
+  const restoreNote = useCallback(async () => {
+    const note = undoNote;
+    if (!note) return;
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    setRestoring(true);
+    try {
+      if (useDatabase) {
+        const { error } = await supabase.from('general_notes').upsert({
+          id: note.id,
+          user_id: persistUserId,
+          date: note.date,
+          time: note.time,
+          category: note.category,
+          description: note.description,
+          attachments: note.attachments ?? [],
+        });
+        if (error) {
+          console.error('Failed to restore note:', error.message);
+          return;
+        }
+      }
+      // Re-insert into the visible list (avoid duplicates) at the top.
+      setNotes((prev) =>
+        prev.some((n) => n.id === note.id) ? prev : [note, ...prev],
+      );
+      setUndoNote(null);
+    } finally {
+      setRestoring(false);
+    }
+  }, [undoNote, useDatabase, persistUserId]);
+
 
   // ---- Photo attachments ----
   const handleAttachFiles = useCallback(
@@ -710,12 +773,13 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
             </button>
             <button
               type="button"
-              onClick={() => removeNote(note.id)}
+              onClick={() => setConfirmDeleteId(note.id)}
               className="p-1 text-red-400 hover:bg-red-500/20 rounded"
               title="Delete note"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
+
           </div>
         </div>
       </div>
@@ -921,6 +985,100 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
           onClose={() => setManagerOpen(false)}
         />
       )}
+
+      {/* Delete Confirmation Modal */}
+      {confirmDeleteId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setConfirmDeleteId(null)}
+        >
+          <div
+            className="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 px-5 py-4 border-b border-slate-700">
+              <Trash2 className="w-5 h-5 text-red-400" />
+              <h2 className="text-base font-semibold text-white">Delete Note</h2>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm text-slate-300">
+                Are you sure you want to delete this note?
+              </p>
+            </div>
+            <div className="px-5 py-4 border-t border-slate-700 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteId(null)}
+                className="px-4 py-2 text-sm text-slate-300 hover:text-white border border-slate-600 rounded-lg hover:bg-slate-700/50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const id = confirmDeleteId;
+                  setConfirmDeleteId(null);
+                  removeNote(id);
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Undo Delete Toast */}
+      {undoNote && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] w-[min(92vw,440px)]">
+          <div className="relative overflow-hidden flex items-center gap-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl px-4 py-3">
+            <div className="w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center flex-shrink-0">
+              <Trash2 className="w-4 h-4 text-red-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white">Note deleted</p>
+              <p className="text-xs text-slate-400 truncate">
+                {undoNote.description?.trim()
+                  ? undoNote.description
+                  : `${undoNote.category} · ${undoNote.date}`}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={restoreNote}
+              disabled={restoring}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-400 disabled:opacity-60 text-white text-sm font-semibold rounded-lg flex-shrink-0"
+            >
+              {restoring ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RotateCcw className="w-4 h-4" />
+              )}
+              Undo
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (undoTimerRef.current) {
+                  clearTimeout(undoTimerRef.current);
+                  undoTimerRef.current = null;
+                }
+                setUndoNote(null);
+              }}
+              className="p-1 text-slate-500 hover:text-white rounded flex-shrink-0"
+              title="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            {/* 5s countdown bar */}
+            <div className="absolute bottom-0 left-0 h-1 bg-orange-500/80 animate-[undoBar_5s_linear_forwards]" />
+          </div>
+          <style>{`@keyframes undoBar { from { width: 100%; } to { width: 0%; } }`}</style>
+        </div>
+      )}
+
     </div>
   );
 };
