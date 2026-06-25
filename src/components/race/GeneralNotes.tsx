@@ -398,18 +398,7 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
     });
   }, []);
 
-  // ---- CSV export (current filtered + sorted view) ----
-  const handleExportCSV = useCallback(() => {
-    if (sorted.length === 0) return;
-    exportNotesToCSV(
-      sorted.map((n) => ({
-        date: n.date,
-        time: n.time,
-        category: n.category,
-        description: n.description,
-      })),
-    );
-  }, [sorted]);
+  // ---- CSV export handler is defined after `sorted` is computed (see below). ----
 
   // ---- Category manager actions ----
   const addCategory = useCallback(() => {
@@ -503,6 +492,19 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
     });
     return Array.from(map.entries());
   }, [sorted, sortMode]);
+
+  // ---- CSV export (current filtered + sorted view) ----
+  const handleExportCSV = useCallback(() => {
+    if (sorted.length === 0) return;
+    exportNotesToCSV(
+      sorted.map((n) => ({
+        date: n.date,
+        time: n.time,
+        category: n.category,
+        description: n.description,
+      })),
+    );
+  }, [sorted]);
 
   const CategoryBadge: React.FC<{ name: string }> = ({ name }) => {
     if (!name) return null;
