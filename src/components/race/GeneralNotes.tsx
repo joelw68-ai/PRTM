@@ -165,6 +165,9 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
   const [dateAsc, setDateAsc] = useState(false); // newest first by default
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  // Date-range filter (inclusive). Empty string = no bound on that end.
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [managerOpen, setManagerOpen] = useState(false);
   // Note id pending delete-confirmation (null = no confirmation open).
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -518,11 +521,15 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
     });
   }, []);
 
-  // Filter (search + category)
+  // Filter (search + category + date range)
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return notes.filter((n) => {
       if (categoryFilter !== 'all' && n.category !== categoryFilter) return false;
+      // Date-range filter (inclusive). Note dates are YYYY-MM-DD so string
+      // comparison gives correct chronological ordering.
+      if (startDate && (!n.date || n.date < startDate)) return false;
+      if (endDate && (!n.date || n.date > endDate)) return false;
       if (!q) return true;
       return (
         n.description.toLowerCase().includes(q) ||
@@ -530,7 +537,7 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
         n.date.includes(q)
       );
     });
-  }, [notes, search, categoryFilter]);
+  }, [notes, search, categoryFilter, startDate, endDate]);
 
   // Sorting
   const sorted = useMemo(() => {
@@ -927,7 +934,57 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
             className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-sm text-white"
           />
         </div>
+
+        {/* Date-range filter */}
+        <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1">
+          <CalendarDays className="w-4 h-4 text-slate-500 flex-shrink-0" />
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs text-slate-400">From</label>
+            <DateInputDark
+              value={startDate}
+              max={endDate || undefined}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-white"
+            />
+          </div>
+          <span className="text-slate-600">–</span>
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs text-slate-400">To</label>
+            <DateInputDark
+              value={endDate}
+              min={startDate || undefined}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-white"
+            />
+          </div>
+          {(startDate || endDate) && (
+            <button
+              type="button"
+              onClick={() => {
+                setStartDate('');
+                setEndDate('');
+              }}
+              className="flex items-center gap-1 text-xs text-slate-400 hover:text-white px-1.5 py-1 rounded hover:bg-slate-700/50"
+              title="Clear date range"
+            >
+              <X className="w-3.5 h-3.5" />
+              Clear
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Active date-range summary */}
+      {(startDate || endDate) && (
+        <div className="mb-3 text-xs text-slate-400">
+          Showing {sorted.length} note{sorted.length === 1 ? '' : 's'}
+          {startDate && endDate
+            ? ` from ${startDate} to ${endDate}`
+            : startDate
+            ? ` on or after ${startDate}`
+            : ` on or before ${endDate}`}
+        </div>
+      )}
 
       {/* Spreadsheet */}
       {sortMode === 'date' ? (
