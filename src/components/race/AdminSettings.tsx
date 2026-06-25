@@ -22,6 +22,8 @@ import { carClasses, memberRoles, specialtyOptions } from '@/data/carClasses';
 import {
   loadAlertSettings,
   saveAlertSettings,
+  loadAlertSettingsFromDB,
+  saveAlertSettingsToDB,
   getDefaultSettings,
   checkMaintenanceAlerts,
   type MaintenanceAlertSettings,
@@ -30,11 +32,14 @@ import {
 import {
   loadSFIAlertSettings,
   saveSFIAlertSettings,
+  loadSFIAlertSettingsFromDB,
+  saveSFIAlertSettingsToDB,
   getDefaultSFISettings,
   checkSFIAlerts,
   type SFIAlertSettings,
   type SFIAlertThreshold,
 } from '@/lib/sfiAlerts';
+
 
 import { 
 
@@ -131,7 +136,13 @@ type AuditDateRange = '1d' | '7d' | '30d' | 'all';
 
 
 const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
-  const { profile, updateProfile } = useAuth();
+  const { profile, updateProfile, user, effectiveUserId, isDemoMode } = useAuth();
+  // When there is no real signed-in user (demo mode / not signed up), data
+  // CANNOT be written to the database — it lives only in this browser's
+  // localStorage and resets when the app is relaunched on another device or
+  // after the cache is cleared. This is the #1 cause of "my settings / service
+  // records did not save after relaunch".
+  const noRealAccount = !user;
   const { 
     engines, 
     superchargers, 
@@ -174,17 +185,41 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
   // Maintenance Alert Threshold Settings
   const [alertSettings, setAlertSettings] = useState<MaintenanceAlertSettings>(() => loadAlertSettings());
   const [alertSaveMsg, setAlertSaveMsg] = useState<string | null>(null);
+  // The id we persist threshold settings against. For crew members this is the
+  // team owner's id (effectiveUserId) so the whole team shares one config; for a
+  // team owner it is their own user id. Falls back to user.id.
+  const persistUserId = effectiveUserId || user?.id;
 
-  const handleSaveAlertSettings = () => {
-    saveAlertSettings(alertSettings);
-    setAlertSaveMsg('Alert settings saved!');
-    setTimeout(() => setAlertSaveMsg(null), 3000);
+  // Load both alert + SFI threshold settings from the database (per-user) on
+  // mount so saved thresholds sync across devices / survive cache clears.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const m = await loadAlertSettingsFromDB(persistUserId);
+      if (!cancelled && m) setAlertSettings(m);
+      const s = await loadSFIAlertSettingsFromDB(persistUserId);
+      if (!cancelled && s) setSfiAlertSettings(s);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistUserId]);
+
+  const handleSaveAlertSettings = async () => {
+    if (!persistUserId) {
+      setAlertSaveMsg('Sign in to save settings to your account (saved on this device only).');
+      saveAlertSettings(alertSettings);
+      setTimeout(() => setAlertSaveMsg(null), 4000);
+      return;
+    }
+    const ok = await saveAlertSettingsToDB(alertSettings, persistUserId);
+    setAlertSaveMsg(ok ? 'Alert settings saved!' : 'Could not reach the database — saved on this device only.');
+    setTimeout(() => setAlertSaveMsg(null), 4000);
   };
 
-  const handleResetAlertSettings = () => {
+  const handleResetAlertSettings = async () => {
     const defaults = getDefaultSettings();
     setAlertSettings(defaults);
-    saveAlertSettings(defaults);
+    await saveAlertSettingsToDB(defaults, persistUserId);
     setAlertSaveMsg('Alert settings reset to defaults.');
     setTimeout(() => setAlertSaveMsg(null), 3000);
   };
@@ -217,19 +252,26 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
   const [sfiAlertSettings, setSfiAlertSettings] = useState<SFIAlertSettings>(() => loadSFIAlertSettings());
   const [sfiAlertSaveMsg, setSfiAlertSaveMsg] = useState<string | null>(null);
 
-  const handleSaveSfiAlertSettings = () => {
-    saveSFIAlertSettings(sfiAlertSettings);
-    setSfiAlertSaveMsg('SFI alert settings saved!');
-    setTimeout(() => setSfiAlertSaveMsg(null), 3000);
+  const handleSaveSfiAlertSettings = async () => {
+    if (!persistUserId) {
+      setSfiAlertSaveMsg('Sign in to save settings to your account (saved on this device only).');
+      saveSFIAlertSettings(sfiAlertSettings);
+      setTimeout(() => setSfiAlertSaveMsg(null), 4000);
+      return;
+    }
+    const ok = await saveSFIAlertSettingsToDB(sfiAlertSettings, persistUserId);
+    setSfiAlertSaveMsg(ok ? 'SFI alert settings saved!' : 'Could not reach the database — saved on this device only.');
+    setTimeout(() => setSfiAlertSaveMsg(null), 4000);
   };
 
-  const handleResetSfiAlertSettings = () => {
+  const handleResetSfiAlertSettings = async () => {
     const defaults = getDefaultSFISettings();
     setSfiAlertSettings(defaults);
-    saveSFIAlertSettings(defaults);
+    await saveSFIAlertSettingsToDB(defaults, persistUserId);
     setSfiAlertSaveMsg('SFI alert settings reset to defaults.');
     setTimeout(() => setSfiAlertSaveMsg(null), 3000);
   };
+
 
   const updateSfiThreshold = (index: number, field: keyof SFIAlertThreshold, value: any) => {
     setSfiAlertSettings(prev => ({
@@ -735,6 +777,31 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
           </div>
         )}
 
+        {/* CRITICAL: No real account = nothing persists to the database. */}
+        {noRealAccount && (
+          <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/40">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <p className="text-red-300 font-semibold text-base mb-1">
+                  {isDemoMode ? "You're in Demo Mode — nothing is being saved" : "You're not signed in — nothing is being saved"}
+                </p>
+                <p className="text-red-200/90 mb-2">
+                  Your alert thresholds, service records, and every other change are
+                  only being stored temporarily in <span className="font-semibold">this browser</span>.
+                  Because there is no account attached, they are <span className="font-semibold">not written to the database</span> and
+                  will reset when you relaunch the app, switch devices, or clear your cache.
+                </p>
+                <p className="text-red-200/90">
+                  To make everything save permanently, <span className="font-semibold">create a free account / sign in</span> from
+                  the menu, then re-enter your settings and click Save. This is the cause of
+                  "my thresholds and service records don't save after relaunch."
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid lg:grid-cols-4 gap-6">
           {/* Sidebar Navigation */}
           <div className="lg:col-span-1">
@@ -856,7 +923,10 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
                   </p>
 
                   <div className="space-y-3">
-                    {alertSettings.thresholds.sort((a, b) => a.percentage - b.percentage).map((threshold, idx) => (
+                    {[...alertSettings.thresholds]
+                      .map((t, i) => ({ t, i }))
+                      .sort((a, b) => a.t.percentage - b.t.percentage)
+                      .map(({ t: threshold, i: idx }) => (
                       <div key={idx} className={`p-4 rounded-lg border transition-colors ${threshold.enabled ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-900/30 border-slate-700/50 opacity-60'}`}>
                         <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center gap-3">
@@ -1065,7 +1135,10 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ currentRole }) => {
                   </p>
 
                   <div className="space-y-3">
-                    {sfiAlertSettings.thresholds.sort((a, b) => b.days - a.days).map((threshold, idx) => (
+                    {[...sfiAlertSettings.thresholds]
+                      .map((t, i) => ({ t, i }))
+                      .sort((a, b) => b.t.days - a.t.days)
+                      .map(({ t: threshold, i: idx }) => (
                       <div key={idx} className={`p-4 rounded-lg border transition-colors ${threshold.enabled ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-900/30 border-slate-700/50 opacity-60'}`}>
                         <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center gap-3">

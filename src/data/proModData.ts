@@ -175,6 +175,16 @@ export interface ComponentTracker {
   vendor?: string;
 }
 
+// A single row in a maintenance item's service log spreadsheet.
+// Each entry captures one service event with a date, time, and free-form
+// description/notes. The list is unbounded ("infinite lines").
+export interface ServiceLogEntry {
+  id: string;
+  date: string;        // Last service date (YYYY-MM-DD)
+  time: string;        // Last service time (HH:mm)
+  notes: string;       // Description / notes for this service record
+}
+
 export interface MaintenanceItem {
 
   id: string;
@@ -190,7 +200,12 @@ export interface MaintenanceItem {
   notes: string;
   estimatedCost?: number;
   threshold?: number; // Alert threshold - number of passes remaining before alert triggers
+  // Spreadsheet-style service log: an unbounded list of service records, each
+  // with its own date, time, and description/notes. Replaces the three
+  // separate single-value modals (last service date, last service time, notes).
+  serviceLog?: ServiceLogEntry[];
 }
+
 
 
 export interface SFICertification {

@@ -590,7 +590,7 @@ const RaceCalendar: React.FC<RaceCalendarProps> = ({ currentRole = 'Crew' }) => 
             {events.slice(0, 2).map(event => (
               <div
                 key={event.id}
-                className={`text-xs px-1 py-0.5 rounded truncate ${getEventTypeColor(event.eventType)} text-white`}
+                className={`text-xs px-1 py-0.5 rounded truncate ${event.status === 'Completed' ? 'bg-green-500' : getEventTypeColor(event.eventType)} text-white`}
               >
                 {event.title}
               </div>

@@ -7,8 +7,39 @@ import DateInputDark from '@/components/ui/DateInputDark';
 
 import { useApp } from '@/contexts/AppContext';
 import { CrewRole } from '@/lib/permissions';
-import { MaintenanceItem, calculateMaintenanceStatus } from '@/data/proModData';
+import { MaintenanceItem, ServiceLogEntry, calculateMaintenanceStatus } from '@/data/proModData';
 import MaintenanceTemplates from './MaintenanceTemplates';
+import ServiceLogGrid, { createServiceLogRow } from './ServiceLogGrid';
+import {
+  DEFAULT_GENERAL_CATEGORIES,
+  DEFAULT_DRIVETRAIN_CATEGORIES,
+  loadCustomCategories,
+  addCustomCategory,
+  removeCustomCategory,
+  renameCustomCategory,
+  setCustomCategoryColor,
+  reorderCustomCategories,
+  categoryExists,
+  getCategoryColor,
+  CustomCategory,
+  CATEGORY_COLOR_PALETTE,
+  DEFAULT_CATEGORY_COLOR,
+  // Editable built-in (default) category overrides
+  DefaultOverride,
+  loadDefaultOverrides,
+  getEffectiveDefaults,
+  buildColorResolutionList,
+  renameDefaultCategory,
+  removeDefaultCategory,
+  restoreDefaultCategory,
+  setDefaultCategoryColor,
+  reorderDefaultCategories,
+  countItemsUsingCategory,
+} from '@/data/maintenanceCategories';
+import CategoryBreakdownCard from './CategoryBreakdownCard';
+
+
+
 
 import CompleteMaintenanceModal, {
   MaintenanceHistoryEntry,
@@ -31,7 +62,9 @@ import {
   Package,
   History,
   BookOpen,
-  Download
+  Download,
+  GripVertical
+
 } from 'lucide-react';
 
 
@@ -94,10 +127,10 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     ring_and_pinion: 'Ring & Pinion'
   };
 
-  // Build categories list including drivetrain types
-  const baseCats = [...new Set(maintenanceItems.map(m => m.category))];
-  const drivetrainCats = ['Drivetrain - Transmission', 'Drivetrain - Torque Converter', 'Drivetrain - 3rd Member', 'Drivetrain - Ring & Pinion', 'Drivetrain - Trans Drive'];
-  const categories = [...new Set([...baseCats, ...drivetrainCats])];
+  // NOTE: the category filter list (`categories`) is built lower down, after
+  // the `customCategories` state is declared, to avoid a temporal-dead-zone
+  // reference. See "USER-EDITABLE CATEGORIES" below.
+
 
 
   // ============ DYNAMIC STATUS COMPUTATION ============
@@ -128,7 +161,9 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
 
 
-  // Default new maintenance item
+  // Default new maintenance item. Seeded with one empty service-log row so the
+  // spreadsheet grid is always backed by state (prevents the row the user sees
+  // from being lost if they save without explicitly editing the grid).
   const defaultMaintenance: MaintenanceItem = {
     id: '',
     component: '',
@@ -142,7 +177,9 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     priority: 'Medium',
     notes: '',
     threshold: 5,
+    serviceLog: [createServiceLogRow({ date: getLocalDateString() })],
   };
+
 
 
   const [newMaintenance, setNewMaintenance] = useState<MaintenanceItem>(defaultMaintenance);
@@ -151,6 +188,263 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   // Inline validation error for the required Threshold field. Alerts depend
   // entirely on a configured threshold, so saving without one is blocked.
   const [thresholdError, setThresholdError] = useState<string | null>(null);
+
+  // ============ USER-EDITABLE CATEGORIES ============
+  // Custom categories are user-created and persisted PER USER to the Supabase
+  // `maintenance_categories` table (with a color), syncing across devices.
+  // localStorage acts only as an offline cache. Each category carries a color
+  // used for the dot/badge in the table and filter chips.
+  const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
+  const [showManageCategories, setShowManageCategories] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryColor, setNewCategoryColor] = useState<string>(DEFAULT_CATEGORY_COLOR);
+  const [categoryError, setCategoryError] = useState<string | null>(null);
+  // Rename editing state for the inline manager.
+  const [renamingCategory, setRenamingCategory] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  // ============ EDITABLE BUILT-IN (DEFAULT) CATEGORIES ============
+  // The shipped General + Drivetrain categories can now be renamed, recolored,
+  // and deleted (hidden) per user. Edits are stored as a small "override" object
+  // (renames / colors / hidden / order) in the maintenance_category_overrides
+  // table, with a localStorage cache fallback. We keep the ORIGINAL shipped name
+  // as the stable key and migrate items on rename.
+  const [defaultOverrides, setDefaultOverrides] = useState<DefaultOverride>({
+    renames: {}, colors: {}, hidden: [], order: [],
+  });
+  // Rename state for built-in categories (keyed by ORIGINAL name).
+  const [renamingDefault, setRenamingDefault] = useState<string | null>(null);
+  const [renameDefaultValue, setRenameDefaultValue] = useState('');
+  const [renameDefaultError, setRenameDefaultError] = useState<string | null>(null);
+
+  // ===== DELETE-CATEGORY CONFIRMATION =====
+  // Deleting (hiding) a category — built-in or custom — first asks the user to
+  // confirm, surfacing how many maintenance items currently use it so the
+  // impact is clear before anything changes.
+  const [pendingDeleteCategory, setPendingDeleteCategory] = useState<
+    { display: string; key: string; kind: 'custom' | 'default'; count: number } | null
+  >(null);
+  // When the deleted category still has items, the user can optionally pick a
+  // target category here to reassign those items to (instead of leaving them on
+  // the removed value). Empty string = "keep their saved value".
+  const [reassignTo, setReassignTo] = useState<string>('');
+
+  // ===== BULK THRESHOLD EDITING =====
+  // Users can select multiple rows via checkboxes and apply a single alert
+  // threshold to all of them at once (instead of editing each item).
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [bulkThreshold, setBulkThreshold] = useState<string>('');
+  const [bulkApplying, setBulkApplying] = useState(false);
+
+  // ===== DRAG-TO-REORDER built-in (default) categories =====
+  // Mirrors the custom-category reordering. We track the index within the
+  // combined [general, drivetrain] effective list and persist the new order of
+  // ORIGINAL names to the overrides 'order' field.
+  const [defaultDragIndex, setDefaultDragIndex] = useState<number | null>(null);
+  const [defaultDragOverIndex, setDefaultDragOverIndex] = useState<number | null>(null);
+
+
+  useEffect(() => {
+    let mounted = true;
+    loadDefaultOverrides().then((o) => {
+      if (mounted) setDefaultOverrides(o);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  // Effective (post-override) built-in category lists used by the dropdown.
+  const effectiveDefaults = useMemo(
+    () => getEffectiveDefaults(defaultOverrides),
+    [defaultOverrides]
+  );
+
+  // Combined color-resolution list (effective defaults + customs) so the dots /
+  // badges across the table & filter chips reflect built-in edits too.
+  const colorResolutionList = useMemo(
+    () => buildColorResolutionList(customCategories, defaultOverrides),
+    [customCategories, defaultOverrides]
+  );
+
+  // Rename a built-in category. `orig` = original shipped name. Persists the
+  // override AND migrates every maintenance item from the current display name
+  // to the new name so data stays consistent.
+  const handleRenameDefault = async (orig: string) => {
+    const newName = renameDefaultValue.trim();
+    if (!newName) {
+      setRenameDefaultError('Enter a new name.');
+      return;
+    }
+    const currentDisplay = defaultOverrides.renames[orig]?.trim() || orig;
+    const next = await renameDefaultCategory(orig, newName, defaultOverrides, customCategories);
+    // If nothing changed (collision blocked), surface an error.
+    if ((next.renames[orig]?.trim() || orig) === currentDisplay && newName.toLowerCase() !== currentDisplay.toLowerCase()) {
+      setRenameDefaultError('That name collides with another category.');
+      return;
+    }
+    setDefaultOverrides(next);
+
+    // Migrate items currently saved under the old display name.
+    if (newName !== currentDisplay) {
+      const affected = maintenanceItems.filter((m) => m.category === currentDisplay);
+      await Promise.all(affected.map((m) => updateMaintenanceItem(m.id, { category: newName })));
+      setNewMaintenance((prev) => prev.category === currentDisplay ? { ...prev, category: newName } : prev);
+      setFilterCategory((prev) => (prev === currentDisplay ? newName : prev));
+    }
+
+    setRenamingDefault(null);
+    setRenameDefaultValue('');
+    setRenameDefaultError(null);
+  };
+
+  // Delete (hide) a built-in category from the pickers. Items already saved
+  // with it keep their stored value.
+  const handleRemoveDefault = async (orig: string) => {
+    const next = await removeDefaultCategory(orig, defaultOverrides);
+    setDefaultOverrides(next);
+    if (renamingDefault === orig) setRenamingDefault(null);
+  };
+
+  // Restore a previously hidden built-in category.
+  const handleRestoreDefault = async (orig: string) => {
+    const next = await restoreDefaultCategory(orig, defaultOverrides);
+    setDefaultOverrides(next);
+  };
+
+  // Recolor a built-in category.
+  const handleChangeDefaultColor = async (orig: string, color: string) => {
+    const next = await setDefaultCategoryColor(orig, color, defaultOverrides);
+    setDefaultOverrides(next);
+  };
+
+
+  // Load custom categories from the DB (falls back to local cache) on mount.
+  useEffect(() => {
+    let mounted = true;
+    loadCustomCategories().then((cats) => {
+      if (mounted) setCustomCategories(cats);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  // Names only — used for the dropdown <optgroup> and to test membership.
+  const customCategoryNames = useMemo(
+    () => customCategories.map((c) => c.name),
+    [customCategories]
+  );
+
+  // Build the category filter list (declared here, after state, to avoid a TDZ
+  // reference): categories actually used by items + built-in drivetrain types +
+  // any user-created custom categories so they're selectable before first use.
+  const baseCats = [...new Set(maintenanceItems.map((m) => m.category))];
+  const drivetrainCats = [
+    'Drivetrain - Transmission',
+    'Drivetrain - Torque Converter',
+    'Drivetrain - 3rd Member',
+    'Drivetrain - Ring & Pinion',
+    'Drivetrain - Trans Drive',
+  ];
+  const categories = [...new Set([...baseCats, ...drivetrainCats, ...customCategoryNames])];
+
+  // Create a new custom category (with color), then select it on the item.
+  const handleAddCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) {
+      setCategoryError('Enter a category name.');
+      return;
+    }
+    if (categoryExists(name, customCategories)) {
+      setCategoryError('That category already exists.');
+      return;
+    }
+    const next = await addCustomCategory(name, newCategoryColor, customCategories);
+    setCustomCategories(next);
+    setNewMaintenance((prev) => ({ ...prev, category: name }));
+    setNewCategoryName('');
+    setNewCategoryColor(DEFAULT_CATEGORY_COLOR);
+    setCategoryError(null);
+  };
+
+  // Delete a custom category. Items still using it keep their stored value.
+  const handleRemoveCategory = async (name: string) => {
+    const next = await removeCustomCategory(name, customCategories);
+    setCustomCategories(next);
+    if (renamingCategory === name) setRenamingCategory(null);
+  };
+
+  // Change a custom category's color (persisted to DB).
+  const handleChangeCategoryColor = async (name: string, color: string) => {
+    const next = await setCustomCategoryColor(name, color, customCategories);
+    setCustomCategories(next);
+  };
+
+  // Rename a custom category AND migrate every maintenance item currently using
+  // the old name so the data stays consistent across the app.
+  const handleRenameCategory = async (oldName: string) => {
+    const newName = renameValue.trim();
+    if (!newName) {
+      setRenameError('Enter a new name.');
+      return;
+    }
+    if (
+      newName.toLowerCase() !== oldName.toLowerCase() &&
+      categoryExists(newName, customCategories)
+    ) {
+      setRenameError('That category already exists.');
+      return;
+    }
+    // 1) Persist the rename in the category store / DB.
+    const next = await renameCustomCategory(oldName, newName, customCategories);
+    setCustomCategories(next);
+
+    // 2) Migrate every maintenance item referencing the old category name.
+    const affected = maintenanceItems.filter((m) => m.category === oldName);
+    await Promise.all(
+      affected.map((m) => updateMaintenanceItem(m.id, { category: newName }))
+    );
+
+    // 3) Keep the in-progress edit form & active filter in sync.
+    setNewMaintenance((prev) =>
+      prev.category === oldName ? { ...prev, category: newName } : prev
+    );
+    setFilterCategory((prev) => (prev === oldName ? newName : prev));
+
+    setRenamingCategory(null);
+    setRenameValue('');
+    setRenameError(null);
+  };
+
+  // ===== DRAG-TO-REORDER custom categories =====
+  // Users can drag rows in the inline manager to set their preferred order;
+  // the new order is persisted to the maintenance_categories.sort_order column
+  // so the dropdown and filter chips follow it across devices.
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  const handleDragStart = (index: number) => setDragIndex(index);
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (index !== dragOverIndex) setDragOverIndex(index);
+  };
+
+  const handleDrop = async (dropIndex: number) => {
+    if (dragIndex === null || dragIndex === dropIndex) {
+      setDragIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+    const reordered = [...customCategories];
+    const [moved] = reordered.splice(dragIndex, 1);
+    reordered.splice(dropIndex, 0, moved);
+    setCustomCategories(reordered); // optimistic
+    setDragIndex(null);
+    setDragOverIndex(null);
+    const next = await reorderCustomCategories(reordered);
+    setCustomCategories(next);
+  };
+
+
 
 
 
@@ -164,9 +458,59 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   };
 
 
+  // ============ SERVICE LOG HELPERS ============
+  // The service log is a spreadsheet-style list of service records (date, time,
+  // notes). When opening an item for add/edit, seed the grid: use the saved
+  // serviceLog if present, otherwise migrate the legacy single lastService /
+  // lastServiceTime / notes fields into a single first row so existing data
+  // isn't lost. Always guarantee at least one editable row.
+  const seedServiceLog = (item: MaintenanceItem): ServiceLogEntry[] => {
+    if (Array.isArray(item.serviceLog) && item.serviceLog.length > 0) {
+      return item.serviceLog.map((r) => ({
+        id: r.id || createServiceLogRow().id,
+        date: r.date || '',
+        time: r.time || '',
+        notes: r.notes || '',
+      }));
+    }
+    if (item.lastService || item.lastServiceTime || item.notes) {
+      return [
+        createServiceLogRow({
+          date: item.lastService || '',
+          time: item.lastServiceTime || '',
+          notes: item.notes || '',
+        }),
+      ];
+    }
+    return [createServiceLogRow({ date: getLocalDateString() })];
+  };
+
+  // Derive the canonical "last service" snapshot (lastService / lastServiceTime /
+  // notes) from the spreadsheet rows. The most recent dated row wins; rows with
+  // no date are treated as oldest. This keeps the status badges, expanded-row
+  // display, and any code that still reads the single fields in sync with the
+  // spreadsheet — without keeping three separate modals.
+  const deriveLastServiceFields = (rows: ServiceLogEntry[]) => {
+    const filled = rows.filter((r) => r.date || r.time || (r.notes && r.notes.trim()));
+    if (filled.length === 0) {
+      return { lastService: '', lastServiceTime: '', notes: '' };
+    }
+    const sorted = [...filled].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const latest = sorted[sorted.length - 1];
+    // Notes: combine all non-empty notes (newest first) so nothing is lost.
+    const combinedNotes = [...sorted]
+      .reverse()
+      .map((r) => (r.notes || '').trim())
+      .filter(Boolean)
+      .join(' | ');
+    return {
+      lastService: latest.date || '',
+      lastServiceTime: latest.time || '',
+      notes: combinedNotes,
+    };
+  };
 
 
-  // ============ EXISTING HANDLERS ============
 
 
 
@@ -183,13 +527,19 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
     setThresholdError(null);
 
     try {
+      // Sync the legacy single fields (lastService / lastServiceTime / notes)
+      // from the spreadsheet rows so status badges and other readers stay correct.
+      const derived = deriveLastServiceFields(newMaintenance.serviceLog || []);
+
       // Use the canonical calculateMaintenanceStatus function for consistency
       const computedStatus = calculateMaintenanceStatus(newMaintenance);
 
       const itemToSave: MaintenanceItem = {
         ...newMaintenance,
+        ...derived,
         status: computedStatus
       };
+
 
       if (editingMaintenance) {
         await updateMaintenanceItem(editingMaintenance.id, itemToSave);
@@ -241,6 +591,151 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
   const getItemHistory = (itemId: string) => {
     return maintenanceHistory.filter(h => h.maintenanceItemId === itemId);
   };
+
+  // ===== DELETE-CATEGORY CONFIRMATION HELPERS =====
+  // Open the confirmation panel for a CUSTOM category, computing how many items
+  // currently use it.
+  const requestDeleteCustom = (name: string) => {
+    setReassignTo('');
+    setPendingDeleteCategory({
+      display: name,
+      key: name,
+      kind: 'custom',
+      count: countItemsUsingCategory(name, maintenanceItems),
+    });
+  };
+  // Open the confirmation panel for a BUILT-IN category. `orig` is the original
+  // shipped key; `display` is the current (possibly renamed) display name used
+  // by items.
+  const requestDeleteDefault = (orig: string, display: string) => {
+    setReassignTo('');
+    setPendingDeleteCategory({
+      display,
+      key: orig,
+      kind: 'default',
+      count: countItemsUsingCategory(display, maintenanceItems),
+    });
+  };
+
+  // NOTE: `reassignOptions` (which depends on `combinedDefaults`) is declared
+  // further down, AFTER `combinedDefaults`, to avoid a temporal-dead-zone ref.
+
+
+  // Execute the confirmed deletion. If the user chose a reassignment target,
+  // first migrate every item currently using the deleted category to that
+  // target; otherwise items keep their saved value.
+  const confirmDeleteCategory = async () => {
+    if (!pendingDeleteCategory) return;
+    const { display, key, kind } = pendingDeleteCategory;
+
+    // Reassign affected items to the chosen target category first.
+    if (reassignTo && reassignTo !== display) {
+      const affected = maintenanceItems.filter((m) => m.category === display);
+      await Promise.all(
+        affected.map((m) => updateMaintenanceItem(m.id, { category: reassignTo }))
+      );
+      // Keep the in-progress edit form & active filter in sync.
+      setNewMaintenance((prev) =>
+        prev.category === display ? { ...prev, category: reassignTo } : prev
+      );
+      setFilterCategory((prev) => (prev === display ? reassignTo : prev));
+    }
+
+    if (kind === 'custom') {
+      await handleRemoveCategory(key);
+    } else {
+      await handleRemoveDefault(key);
+    }
+    setReassignTo('');
+    setPendingDeleteCategory(null);
+  };
+
+  // ===== BULK THRESHOLD HELPERS =====
+  const toggleSelectItem = (id: string) => {
+    setSelectedItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const allVisibleSelected =
+    sortedMaintenance.length > 0 && sortedMaintenance.every((m) => selectedItemIds.has(m.id));
+  const toggleSelectAll = () => {
+    setSelectedItemIds((prev) => {
+      if (sortedMaintenance.every((m) => prev.has(m.id))) {
+        // Deselect all currently-visible rows.
+        const next = new Set(prev);
+        sortedMaintenance.forEach((m) => next.delete(m.id));
+        return next;
+      }
+      const next = new Set(prev);
+      sortedMaintenance.forEach((m) => next.add(m.id));
+      return next;
+    });
+  };
+  const clearSelection = () => {
+    setSelectedItemIds(new Set());
+    setBulkThreshold('');
+  };
+  const applyBulkThreshold = async () => {
+    const parsed = parseInt(bulkThreshold, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) return;
+    if (selectedItemIds.size === 0) return;
+    setBulkApplying(true);
+    try {
+      const ids = Array.from(selectedItemIds);
+      await Promise.all(ids.map((id) => updateMaintenanceItem(id, { threshold: parsed })));
+      clearSelection();
+    } catch (err) {
+      console.error('Failed to bulk-apply threshold:', err);
+    } finally {
+      setBulkApplying(false);
+    }
+  };
+
+  // ===== DRAG-TO-REORDER built-in categories =====
+  // The combined list order (general first, then drivetrain) maps each visible
+  // built-in to its ORIGINAL name; we reorder within that combined list and
+  // persist the full ordered list of originals.
+  const combinedDefaults = useMemo(
+    () => [...effectiveDefaults.general, ...effectiveDefaults.drivetrain],
+    [effectiveDefaults]
+  );
+
+  // Candidate target categories for reassigning items off a category being
+  // deleted — all currently-visible built-ins + customs, minus the one being
+  // removed. Built-in order first (user's preferred order), then customs.
+  const reassignOptions = useMemo(() => {
+    if (!pendingDeleteCategory) return [] as string[];
+    const all = [
+      ...combinedDefaults.map((c) => c.name),
+      ...customCategories.map((c) => c.name),
+    ];
+    return [...new Set(all)].filter((n) => n !== pendingDeleteCategory.display);
+  }, [pendingDeleteCategory, combinedDefaults, customCategories]);
+  const handleDefaultDragStart = (index: number) => setDefaultDragIndex(index);
+  const handleDefaultDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (index !== defaultDragOverIndex) setDefaultDragOverIndex(index);
+  };
+  const handleDefaultDrop = async (dropIndex: number) => {
+    if (defaultDragIndex === null || defaultDragIndex === dropIndex) {
+      setDefaultDragIndex(null);
+      setDefaultDragOverIndex(null);
+      return;
+    }
+    // Build the current ordered list of ORIGINAL names from the combined list.
+    const originals = combinedDefaults.map(
+      (c) => effectiveDefaults.originalByDisplay[c.name] || c.name
+    );
+    const [moved] = originals.splice(defaultDragIndex, 1);
+    originals.splice(dropIndex, 0, moved);
+    setDefaultDragIndex(null);
+    setDefaultDragOverIndex(null);
+    const next = await reorderDefaultCategories(originals, defaultOverrides);
+    setDefaultOverrides(next);
+  };
+
 
   return (
     <section className="py-8 px-4">
@@ -306,15 +801,21 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                   <button
                     key={cat}
                     onClick={() => setFilterCategory(cat)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
                       filterCategory === cat 
                         ? 'bg-orange-500/20 text-orange-400' 
                         : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                     }`}
                   >
+                    {/* Color dot for faster visual scanning */}
+                    <span
+                      className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: getCategoryColor(cat, colorResolutionList) }}
+                    />
                     {cat}
                   </button>
                 ))}
+
               </div>
               <button
                 onClick={() => {
@@ -370,6 +871,47 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
               </div>
             </div>
 
+            {/* Category Breakdown analytics — grouped by category with status
+                counts and category-colored bars for quick visual insight. */}
+            <CategoryBreakdownCard
+              items={filteredMaintenance}
+              customCategories={customCategories}
+            />
+
+
+
+            {/* ===== BULK THRESHOLD ACTION BAR ===== */}
+            {selectedItemIds.size > 0 && (
+              <div className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-xl">
+                <span className="text-sm font-medium text-cyan-200">
+                  {selectedItemIds.size} item{selectedItemIds.size === 1 ? '' : 's'} selected
+                </span>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-slate-300">Set threshold (passes):</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={bulkThreshold}
+                    onChange={(e) => setBulkThreshold(e.target.value)}
+                    placeholder="e.g., 5"
+                    className="w-24 bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-sm text-white"
+                  />
+                </div>
+                <button
+                  onClick={applyBulkThreshold}
+                  disabled={bulkApplying || !(parseInt(bulkThreshold, 10) >= 1)}
+                  className="px-3 py-1.5 bg-cyan-500 text-white rounded-lg text-sm font-medium hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {bulkApplying ? 'Applying…' : 'Apply to selected'}
+                </button>
+                <button
+                  onClick={clearSelection}
+                  className="px-3 py-1.5 bg-slate-700 text-slate-300 rounded-lg text-sm hover:bg-slate-600"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
 
             {/* Maintenance Table */}
             <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
@@ -377,6 +919,15 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                 <table className="w-full">
                   <thead>
                     <tr className="bg-slate-900/50 border-b border-slate-700/50">
+                      <th className="px-4 py-3 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={allVisibleSelected}
+                          onChange={toggleSelectAll}
+                          className="w-4 h-4 accent-cyan-500 cursor-pointer"
+                          title="Select all"
+                        />
+                      </th>
                       <th className="text-left px-4 py-3 text-sm font-medium text-slate-400">Component</th>
                       <th className="text-left px-4 py-3 text-sm font-medium text-slate-400">Category</th>
                       <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">Interval</th>
@@ -389,6 +940,7 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                     </tr>
                   </thead>
                   <tbody>
+
                     {sortedMaintenance.map((item) => {
                       const remaining = item.nextServicePasses - item.currentPasses;
                       const progress = (item.currentPasses / item.nextServicePasses) * 100;
@@ -400,12 +952,30 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                             className="border-b border-slate-700/30 hover:bg-slate-700/20 cursor-pointer"
                             onClick={() => setExpandedItem(expandedItem === item.id ? null : item.id)}
                           >
+                            <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={selectedItemIds.has(item.id)}
+                                onChange={() => toggleSelectItem(item.id)}
+                                className="w-4 h-4 accent-cyan-500 cursor-pointer"
+                                title="Select item"
+                              />
+                            </td>
+
                             <td className="px-4 py-3">
                               <p className="text-white font-medium">{item.component}</p>
                             </td>
                             <td className="px-4 py-3">
-                              <span className="text-slate-400">{item.category}</span>
+                              <span className="inline-flex items-center gap-2">
+                                {/* Category color dot/badge for fast visual scanning */}
+                                <span
+                                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                  style={{ backgroundColor: getCategoryColor(item.category, colorResolutionList) }}
+                                />
+                                <span className="text-slate-300">{item.category}</span>
+                              </span>
                             </td>
+
                             <td className="px-4 py-3 text-center">
                               <span className="text-white">{item.passInterval} passes</span>
                             </td>
@@ -443,10 +1013,17 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                                       remaining <= item.threshold ? 'text-yellow-400' : 'text-slate-500'
                                     }`}
                                   >
-                                    {remaining <= item.threshold
-                                      ? 'alert active'
-                                      : `${item.threshold} passes left to alert`}
+                                    {(() => {
+                                      // Passes remaining until the alert fires is the
+                                      // gap between the current "remaining" count and the
+                                      // threshold (NOT the threshold value itself).
+                                      const passesUntilAlert = remaining - item.threshold;
+                                      return passesUntilAlert <= 0
+                                        ? 'alert active'
+                                        : `${passesUntilAlert} pass${passesUntilAlert === 1 ? '' : 'es'} left to alert`;
+                                    })()}
                                   </span>
+
                                 </div>
                               ) : (
                                 <span className="text-slate-600" title="No alert threshold set">—</span>
@@ -474,11 +1051,20 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                                     e.stopPropagation(); 
                                     setEditingMaintenance(item);
                                     // Ensure a sensible default threshold for legacy items that
-                                    // were saved before the threshold field was required.
-                                    setNewMaintenance({ ...item, threshold: item.threshold ?? 5 });
+                                    // were saved before the threshold field was required, AND
+                                    // seed the spreadsheet service-log rows into state so the
+                                    // grid is backed by state (migrates legacy lastService /
+                                    // lastServiceTime / notes into a row and prevents that row
+                                    // from being lost if the user saves without editing it).
+                                    setNewMaintenance({
+                                      ...item,
+                                      threshold: item.threshold ?? 5,
+                                      serviceLog: seedServiceLog(item),
+                                    });
                                     setThresholdError(null);
                                     setShowMaintenanceModal(true);
                                   }}
+
                                   className="p-1.5 bg-blue-500/20 text-blue-400 rounded hover:bg-blue-500/30"
                                   title="Edit"
                                 >
@@ -515,7 +1101,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                           
                           {expandedItem === item.id && (
                             <tr className="bg-slate-900/30">
-                              <td colSpan={8} className="px-4 py-4">
+                              <td colSpan={9} className="px-4 py-4">
+
 
                                 <div className="grid md:grid-cols-3 gap-4">
                                   <div>
@@ -708,7 +1295,8 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
       {/* Maintenance Modal */}
       {showMaintenanceModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-xl max-w-lg w-full p-6 border border-slate-700 max-h-[90vh] overflow-y-auto">
+          <div className="bg-slate-800 rounded-xl max-w-2xl w-full p-6 border border-slate-700 max-h-[90vh] overflow-y-auto">
+
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-xl font-bold text-white">
                 {editingMaintenance ? 'Edit Maintenance Item' : 'Add Maintenance Item'}
@@ -733,35 +1321,360 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-slate-400 mb-1">Category</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-sm text-slate-400">Category</label>
+                    <button
+                      type="button"
+                      onClick={() => { setShowManageCategories(v => !v); setCategoryError(null); }}
+                      className="text-xs text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                      {showManageCategories ? 'Done' : 'Manage'}
+                    </button>
+                  </div>
                   <select
                     value={newMaintenance.category}
                     onChange={(e) => setNewMaintenance({...newMaintenance, category: e.target.value})}
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
                   >
                     <optgroup label="General">
-                      <option value="Drivetrain">Drivetrain</option>
-                      <option value="Engine">Engine</option>
-                      <option value="Fuel System">Fuel System</option>
-                      <option value="Electronics">Electronics</option>
-                      <option value="Suspension">Suspension</option>
-                      <option value="Brakes">Brakes</option>
-                      <option value="Wheels and Tires">Wheels and Tires</option>
-
-                      <option value="Fluids">Fluids</option>
-                      <option value="Safety">Safety</option>
-                      <option value="Body">Body</option>
+                      {effectiveDefaults.general.map((c) => (
+                        <option key={c.name} value={c.name}>{c.name}</option>
+                      ))}
                     </optgroup>
                     <optgroup label="Drivetrain Components">
-                      <option value="Transmission">Transmission</option>
-                      <option value="Torque Converter">Torque Converter</option>
-                      <option value="3rd Member">3rd Member</option>
-                      <option value="Ring and Pinion">Ring and Pinion</option>
-                      <option value="Transmission Drive">Transmission Drive</option>
-                      <option value="Ty-Drive">Ty-Drive</option>
-                      <option value="Quick Drive">Quick Drive</option>
+                      {effectiveDefaults.drivetrain.map((c) => (
+                        <option key={c.name} value={c.name}>{c.name}</option>
+                      ))}
                     </optgroup>
+                    {customCategories.length > 0 && (
+                      <optgroup label="Custom">
+                        {customCategories.map((c) => (
+                          <option key={c.name} value={c.name}>{c.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {/* Preserve a value not in any preset list (e.g. legacy/imported/hidden). */}
+                    {newMaintenance.category &&
+                      ![...effectiveDefaults.general, ...effectiveDefaults.drivetrain].some((c) => c.name === newMaintenance.category) &&
+                      !customCategoryNames.includes(newMaintenance.category) && (
+                        <option value={newMaintenance.category}>{newMaintenance.category}</option>
+                      )}
+
                   </select>
+
+                  {/* ===== INLINE CATEGORY MANAGER ===== */}
+                  {showManageCategories && (
+                    <div className="mt-2 bg-slate-900/60 border border-slate-700 rounded-lg p-3 space-y-3">
+                      <div>
+                        <p className="text-xs text-slate-400 mb-1.5">Create a new category</p>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={newCategoryName}
+                            onChange={(e) => { setNewCategoryName(e.target.value); setCategoryError(null); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCategory(); } }}
+                            placeholder="e.g., Parachute"
+                            className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-sm text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddCategory}
+                            className="px-3 py-1.5 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 flex items-center gap-1"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Add
+                          </button>
+                        </div>
+                        {/* Color picker for the new category */}
+                        <div className="flex items-center gap-1.5 mt-2">
+                          <span className="text-[11px] text-slate-500 mr-1">Color:</span>
+                          {CATEGORY_COLOR_PALETTE.map((color) => (
+                            <button
+                              key={color}
+                              type="button"
+                              onClick={() => setNewCategoryColor(color)}
+                              className={`w-5 h-5 rounded-full border-2 transition-transform ${
+                                newCategoryColor === color ? 'border-white scale-110' : 'border-transparent'
+                              }`}
+                              style={{ backgroundColor: color }}
+                              title={color}
+                            />
+                          ))}
+                        </div>
+                        {categoryError && (
+                          <p className="mt-1 text-xs text-red-400 flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3" />{categoryError}
+                          </p>
+                        )}
+                      </div>
+
+                      {customCategories.length > 0 && (
+                        <div>
+                          <p className="text-xs text-slate-400 mb-1.5">
+                            Your custom categories
+                            <span className="text-slate-500"> — drag to reorder</span>
+                          </p>
+                          <div className="space-y-2">
+                            {customCategories.map((c, index) => (
+                              <div
+                                key={c.name}
+                                onDragOver={(e) => handleDragOver(e, index)}
+                                onDrop={() => handleDrop(index)}
+                                className={`bg-slate-800 border rounded-lg p-2 transition-colors ${
+                                  dragOverIndex === index && dragIndex !== null && dragIndex !== index
+                                    ? 'border-orange-500'
+                                    : 'border-slate-600'
+                                } ${dragIndex === index ? 'opacity-50' : ''}`}
+                              >
+
+                                {renamingCategory === c.name ? (
+                                  /* ===== RENAME MODE ===== */
+                                  <div>
+                                    <div className="flex gap-2">
+                                      <input
+                                        type="text"
+                                        value={renameValue}
+                                        autoFocus
+                                        onChange={(e) => { setRenameValue(e.target.value); setRenameError(null); }}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRenameCategory(c.name); } }}
+                                        className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRenameCategory(c.name)}
+                                        className="px-2.5 py-1 bg-green-500/20 text-green-400 rounded text-xs font-medium hover:bg-green-500/30"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => { setRenamingCategory(null); setRenameError(null); }}
+                                        className="px-2.5 py-1 bg-slate-700 text-slate-300 rounded text-xs hover:bg-slate-600"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                    {renameError && (
+                                      <p className="mt-1 text-xs text-red-400 flex items-center gap-1">
+                                        <AlertTriangle className="w-3 h-3" />{renameError}
+                                      </p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  /* ===== DISPLAY MODE ===== */
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      {/* Drag handle — only this grip starts a drag so
+                                          the color swatches/buttons stay clickable. */}
+                                      <span
+                                        draggable
+                                        onDragStart={() => handleDragStart(index)}
+                                        onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
+                                        className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300 flex-shrink-0"
+                                        title="Drag to reorder"
+                                      >
+                                        <GripVertical className="w-4 h-4" />
+                                      </span>
+                                      <span
+                                        className="w-3 h-3 rounded-full flex-shrink-0"
+                                        style={{ backgroundColor: c.color }}
+                                      />
+                                      <span className="text-sm text-white truncate">{c.name}</span>
+                                    </div>
+
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => { setRenamingCategory(c.name); setRenameValue(c.name); setRenameError(null); }}
+                                        className="p-1 text-blue-400 hover:text-blue-300"
+                                        title="Rename category"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => requestDeleteCustom(c.name)}
+                                        className="p-1 text-slate-400 hover:text-red-400"
+                                        title="Delete category"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+
+                                    </div>
+                                  </div>
+                                )}
+                                {/* Per-category color picker (always visible in display mode) */}
+                                {renamingCategory !== c.name && (
+                                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                    {CATEGORY_COLOR_PALETTE.map((color) => (
+                                      <button
+                                        key={color}
+                                        type="button"
+                                        onClick={() => handleChangeCategoryColor(c.name, color)}
+                                        className={`w-4 h-4 rounded-full border-2 transition-transform ${
+                                          c.color === color ? 'border-white scale-110' : 'border-transparent'
+                                        }`}
+                                        style={{ backgroundColor: color }}
+                                        title={color}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          <p className="mt-1.5 text-[11px] text-slate-500">
+                            Renaming updates every item using the category. Deleting won't change items already saved with it.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* ===== BUILT-IN (DEFAULT) CATEGORIES — now editable ===== */}
+                      <div>
+                        <p className="text-xs text-slate-400 mb-1.5">
+                          Built-in categories
+                          <span className="text-slate-500"> — rename, recolor, delete, or drag to reorder</span>
+                        </p>
+                        <div className="space-y-2">
+                          {combinedDefaults.map((c, index) => {
+                            const orig = effectiveDefaults.originalByDisplay[c.name] || c.name;
+                            return (
+                              <div
+                                key={orig}
+                                onDragOver={(e) => handleDefaultDragOver(e, index)}
+                                onDrop={() => handleDefaultDrop(index)}
+                                className={`bg-slate-800 border rounded-lg p-2 transition-colors ${
+                                  defaultDragOverIndex === index && defaultDragIndex !== null && defaultDragIndex !== index
+                                    ? 'border-orange-500'
+                                    : 'border-slate-600'
+                                } ${defaultDragIndex === index ? 'opacity-50' : ''}`}
+                              >
+
+                                {renamingDefault === orig ? (
+                                  /* ===== RENAME MODE ===== */
+                                  <div>
+                                    <div className="flex gap-2">
+                                      <input
+                                        type="text"
+                                        value={renameDefaultValue}
+                                        autoFocus
+                                        onChange={(e) => { setRenameDefaultValue(e.target.value); setRenameDefaultError(null); }}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRenameDefault(orig); } }}
+                                        className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRenameDefault(orig)}
+                                        className="px-2.5 py-1 bg-green-500/20 text-green-400 rounded text-xs font-medium hover:bg-green-500/30"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => { setRenamingDefault(null); setRenameDefaultError(null); }}
+                                        className="px-2.5 py-1 bg-slate-700 text-slate-300 rounded text-xs hover:bg-slate-600"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                    {renameDefaultError && (
+                                      <p className="mt-1 text-xs text-red-400 flex items-center gap-1">
+                                        <AlertTriangle className="w-3 h-3" />{renameDefaultError}
+                                      </p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  /* ===== DISPLAY MODE ===== */
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      {/* Drag handle — only this grip starts a drag so
+                                          the color swatches/buttons stay clickable. */}
+                                      <span
+                                        draggable
+                                        onDragStart={() => handleDefaultDragStart(index)}
+                                        onDragEnd={() => { setDefaultDragIndex(null); setDefaultDragOverIndex(null); }}
+                                        className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300 flex-shrink-0"
+                                        title="Drag to reorder"
+                                      >
+                                        <GripVertical className="w-4 h-4" />
+                                      </span>
+                                      <span
+                                        className="w-3 h-3 rounded-full flex-shrink-0"
+                                        style={{ backgroundColor: c.color }}
+                                      />
+                                      <span className="text-sm text-white truncate">{c.name}</span>
+                                    </div>
+
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => { setRenamingDefault(orig); setRenameDefaultValue(c.name); setRenameDefaultError(null); }}
+                                        className="p-1 text-blue-400 hover:text-blue-300"
+                                        title="Rename category"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => requestDeleteDefault(orig, c.name)}
+                                        className="p-1 text-slate-400 hover:text-red-400"
+                                        title="Delete category"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+
+                                    </div>
+                                  </div>
+                                )}
+                                {/* Per-category color picker */}
+                                {renamingDefault !== orig && (
+                                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                    {CATEGORY_COLOR_PALETTE.map((color) => (
+                                      <button
+                                        key={color}
+                                        type="button"
+                                        onClick={() => handleChangeDefaultColor(orig, color)}
+                                        className={`w-4 h-4 rounded-full border-2 transition-transform ${
+                                          c.color === color ? 'border-white scale-110' : 'border-transparent'
+                                        }`}
+                                        style={{ backgroundColor: color }}
+                                        title={color}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Restore any deleted built-in categories */}
+                        {defaultOverrides.hidden.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-[11px] text-slate-500 mb-1">Deleted built-in categories:</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {defaultOverrides.hidden.map((orig) => (
+                                <button
+                                  key={orig}
+                                  type="button"
+                                  onClick={() => handleRestoreDefault(orig)}
+                                  className="flex items-center gap-1 px-2 py-1 bg-slate-700 text-slate-300 rounded text-xs hover:bg-slate-600"
+                                  title="Restore this category"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  {defaultOverrides.renames[orig]?.trim() || orig}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <p className="mt-1.5 text-[11px] text-slate-500">
+                          Renaming updates every item using the category. Deleting hides it from the pickers; items already saved with it keep their value.
+                        </p>
+                      </div>
+
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">Threshold (passes before alert) *</label>
@@ -852,37 +1765,16 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
                 </div>
               </div>
               
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Last Service Date</label>
-                  <DateInputDark
-                    value={newMaintenance.lastService}
-                    onChange={(e) => setNewMaintenance({...newMaintenance, lastService: e.target.value})}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Last Service Time</label>
-                  <input
-                    type="time"
-                    value={newMaintenance.lastServiceTime || ''}
-                    onChange={(e) => setNewMaintenance({...newMaintenance, lastServiceTime: e.target.value})}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                  />
-                </div>
-              </div>
+              {/* Spreadsheet-style service log — replaces the three separate
+                  Last Service Date / Last Service Time / Notes inputs with one
+                  grid of unbounded rows. */}
+              <ServiceLogGrid
+                rows={newMaintenance.serviceLog && newMaintenance.serviceLog.length > 0
+                  ? newMaintenance.serviceLog
+                  : seedServiceLog(newMaintenance)}
+                onChange={(rows) => setNewMaintenance({ ...newMaintenance, serviceLog: rows })}
+              />
 
-
-              
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Notes</label>
-                <textarea
-                  value={newMaintenance.notes}
-                  onChange={(e) => setNewMaintenance({...newMaintenance, notes: e.target.value})}
-                  rows={3}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
-                />
-              </div>
             </div>
             
             <div className="flex gap-3 mt-6">
@@ -903,7 +1795,90 @@ const MaintenanceTracker: React.FC<MaintenanceTrackerProps> = ({ onNavigate, cur
           </div>
         </div>
       )}
+
+      {/* ============ DELETE CATEGORY CONFIRMATION MODAL ============ */}
+      {pendingDeleteCategory && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
+          <div className="bg-slate-800 rounded-xl max-w-md w-full p-6 border border-slate-700">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-white">Delete category?</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  You're about to delete{' '}
+                  <span className="text-white font-medium">"{pendingDeleteCategory.display}"</span>
+                  {pendingDeleteCategory.kind === 'default' ? ' (built-in)' : ''}.
+                </p>
+              </div>
+            </div>
+            <div className={`rounded-lg p-3 mb-5 text-sm ${
+              pendingDeleteCategory.count > 0
+                ? 'bg-orange-500/10 border border-orange-500/30 text-orange-300'
+                : 'bg-slate-900/60 border border-slate-700 text-slate-400'
+            }`}>
+              {pendingDeleteCategory.count > 0 ? (
+                <>
+                  <span className="font-semibold text-orange-200">
+                    {pendingDeleteCategory.count} maintenance item{pendingDeleteCategory.count === 1 ? '' : 's'}
+                  </span>{' '}
+                  currently use{pendingDeleteCategory.count === 1 ? 's' : ''} this category. Choose a
+                  category below to move {pendingDeleteCategory.count === 1 ? 'it' : 'them'} to, or leave
+                  it on "Keep current value" to leave {pendingDeleteCategory.count === 1 ? 'it' : 'them'} on
+                  the removed value.
+                </>
+              ) : (
+                'No maintenance items currently use this category.'
+              )}
+            </div>
+
+            {/* ===== OPTIONAL REASSIGNMENT ===== */}
+            {pendingDeleteCategory.count > 0 && (
+              <div className="mb-5">
+                <label className="block text-sm text-slate-300 mb-1.5">
+                  Reassign {pendingDeleteCategory.count} item{pendingDeleteCategory.count === 1 ? '' : 's'} to
+                </label>
+                <select
+                  value={reassignTo}
+                  onChange={(e) => setReassignTo(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">Keep current value (don't reassign)</option>
+                  {reassignOptions.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+                {reassignTo && (
+                  <p className="mt-1.5 text-[11px] text-cyan-300 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" />
+                    {pendingDeleteCategory.count} item{pendingDeleteCategory.count === 1 ? '' : 's'} will move to "{reassignTo}".
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setPendingDeleteCategory(null)}
+                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteCategory}
+                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 flex items-center justify-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                {reassignTo ? 'Reassign & Delete' : 'Delete'}
+              </button>
+
+            </div>
+          </div>
+        </div>
+      )}
     </section>
+
 
   );
 };
