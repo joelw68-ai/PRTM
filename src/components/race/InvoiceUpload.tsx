@@ -8,6 +8,8 @@ import { parseRows } from '@/lib/validatedQuery';
 import { VendorInvoiceRowSchema, InvoiceLineItemRowSchema } from '@/lib/validators';
 import DateInputDark from '@/components/ui/DateInputDark';
 import InvoiceLineItemsEditor, { InvoiceLineItem } from './InvoiceLineItemsEditor';
+import SavedViews from './SavedViews';
+
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -784,6 +786,19 @@ const InvoiceUpload: React.FC<InvoiceUploadProps> = ({ vendors, currentRole }) =
           <option value="due-asc">Due Soonest</option>
           <option value="vendor-asc">Vendor A-Z</option>
         </select>
+        <SavedViews
+          page="invoices"
+          currentFilters={{ searchTerm, statusFilter, vendorFilter, sortBy, sortDir }}
+          summary={`Status: ${statusFilter} · Vendor: ${vendorFilter} · Sort: ${sortBy} ${sortDir}`}
+          onApply={(f) => {
+            setSearchTerm(f.searchTerm ?? '');
+            setStatusFilter(f.statusFilter ?? 'all');
+            setVendorFilter(f.vendorFilter ?? 'all');
+            if (f.sortBy) setSortBy(f.sortBy as InvoiceSortField);
+            if (f.sortDir) setSortDir(f.sortDir as InvoiceSortDir);
+          }}
+        />
+
         <button onClick={() => { resetForm(); setShowUploadModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors whitespace-nowrap">
           <Upload className="w-4 h-4" /> Upload Invoice
         </button>

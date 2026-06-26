@@ -13,6 +13,8 @@ import { useAuth } from '@/contexts/AuthContext';
 
 
 import ExpenseExportModal from '@/components/race/ExpenseExportModal';
+import SavedViews from '@/components/race/SavedViews';
+
 import ReceiptScanner, { type ScannedData } from '@/components/race/ReceiptScanner';
 
 

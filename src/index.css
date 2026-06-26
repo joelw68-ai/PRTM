@@ -383,3 +383,40 @@ input.time-input-dark-override[type="time"]::-webkit-calendar-picker-indicator {
   height: 0 !important;
   pointer-events: none !important;
 }
+
+
+/* ============================================================
+   NATIVE SELECT / OPTION DARK THEME — GLOBAL FALLBACK
+   The app is dark-themed throughout. Native <select> dropdowns
+   render their <option> list using OS/browser chrome that does
+   NOT inherit Tailwind background utilities, so options can appear
+   blank/white-on-white until hovered. These rules force every
+   native select, option, and optgroup to use a solid dark
+   background with white text so options are always readable,
+   even when the <select> itself uses bg-transparent.
+   Individual components can still override per-option colors;
+   these are sensible defaults that apply everywhere.
+   ============================================================ */
+select {
+  color-scheme: dark;
+}
+
+select option,
+select optgroup {
+  background-color: rgb(30 41 59) !important;  /* slate-800 */
+  color: #ffffff !important;
+}
+
+/* Selected / checked option highlight stays readable */
+select option:checked,
+select option:hover,
+select option:focus {
+  background-color: rgb(51 65 85) !important;  /* slate-700 */
+  color: #ffffff !important;
+}
+
+/* Disabled placeholder-style options remain visible but muted */
+select option:disabled {
+  color: rgb(148 163 184) !important;  /* slate-400 */
+  background-color: rgb(30 41 59) !important;
+}

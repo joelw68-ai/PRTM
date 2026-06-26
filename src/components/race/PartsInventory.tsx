@@ -60,6 +60,8 @@ import {
 import LowStockAlertPanel from './LowStockAlertPanel';
 import ReorderListGenerator from './ReorderListGenerator';
 import CSVImportModal from './CSVImportModal';
+import SavedViews from './SavedViews';
+
 
 
 
@@ -968,14 +970,15 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="py-2 bg-transparent text-white focus:outline-none"
+              className="py-2 bg-slate-800 text-white focus:outline-none"
             >
-              <option value="all">All Categories</option>
+              <option value="all" className="bg-slate-800 text-white">All Categories</option>
               {orderedCategories.map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
+                <option key={cat} value={cat} className="bg-slate-800 text-white">{cat}</option>
               ))}
 
             </select>
+
           </div>
 
           
@@ -990,7 +993,22 @@ const PartsInventory: React.FC<PartsInventoryProps> = ({ currentRole, onNavigate
             <option value="Out of Stock">Out of Stock</option>
             <option value="On Order">On Order</option>
           </select>
+
+          {/* Saved Views — name & re-apply common filter combinations */}
+          <SavedViews
+            page="parts"
+            currentFilters={{ searchTerm, categoryFilter, statusFilter, sortField, sortDirection }}
+            summary={`Category: ${categoryFilter} · Status: ${statusFilter} · Sort: ${String(sortField)} ${sortDirection}`}
+            onApply={(f) => {
+              setSearchTerm(f.searchTerm ?? '');
+              setCategoryFilter(f.categoryFilter ?? 'all');
+              setStatusFilter(f.statusFilter ?? 'all');
+              if (f.sortField) setSortField(f.sortField as keyof PartInventoryItem);
+              if (f.sortDirection) setSortDirection(f.sortDirection);
+            }}
+          />
         </div>
+
 
         {/* Parts Table */}
         <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
