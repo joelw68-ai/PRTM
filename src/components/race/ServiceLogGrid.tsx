@@ -1,6 +1,7 @@
 import React from 'react';
 import { Plus, Trash2, ClipboardList } from 'lucide-react';
 import DateInputDark from '@/components/ui/DateInputDark';
+import Time12Picker from '@/components/ui/Time12Picker';
 import { ServiceLogEntry } from '@/data/proModData';
 
 /**
@@ -58,7 +59,8 @@ const ServiceLogGrid: React.FC<ServiceLogGridProps> = ({ rows, onChange }) => {
 
       <div className="border border-slate-700 rounded-lg overflow-hidden">
         {/* Header row */}
-        <div className="grid grid-cols-[150px_120px_1fr_40px] bg-slate-900/70 border-b border-slate-700 text-xs font-medium text-slate-400">
+        <div className="grid grid-cols-[150px_200px_1fr_40px] bg-slate-900/70 border-b border-slate-700 text-xs font-medium text-slate-400">
+
           <div className="px-3 py-2">Last Service Date</div>
           <div className="px-3 py-2 border-l border-slate-700/60">Last Service Time</div>
           <div className="px-3 py-2 border-l border-slate-700/60">Description / Notes</div>
@@ -75,8 +77,9 @@ const ServiceLogGrid: React.FC<ServiceLogGridProps> = ({ rows, onChange }) => {
           {rows.map((row) => (
             <div
               key={row.id}
-              className="grid grid-cols-[150px_120px_1fr_40px] border-b border-slate-700/40 last:border-b-0 hover:bg-slate-700/10"
+              className="grid grid-cols-[150px_200px_1fr_40px] border-b border-slate-700/40 last:border-b-0 hover:bg-slate-700/10"
             >
+
               <div className="px-1.5 py-1">
                 <DateInputDark
                   value={row.date}
@@ -85,13 +88,12 @@ const ServiceLogGrid: React.FC<ServiceLogGridProps> = ({ rows, onChange }) => {
                 />
               </div>
               <div className="px-1.5 py-1 border-l border-slate-700/40">
-                <input
-                  type="time"
+                <Time12Picker
                   value={row.time || ''}
-                  onChange={(e) => updateRow(row.id, { time: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm text-white"
+                  onChange={(time) => updateRow(row.id, { time })}
                 />
               </div>
+
               <div className="px-1.5 py-1 border-l border-slate-700/40">
                 <input
                   type="text"

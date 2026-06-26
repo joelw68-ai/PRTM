@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 
 import DateInputDark from '@/components/ui/DateInputDark';
+import Time12Picker from '@/components/ui/Time12Picker';
 import { CrewRole } from '@/lib/permissions';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -144,6 +145,21 @@ const readableTextColor = (hex: string): string => {
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return luminance > 0.6 ? '#0f172a' : '#ffffff';
 };
+// Convert a stored 24-hour "HH:mm" time string into a 12-hour display string
+// (e.g. "14:05" -> "2:05 PM"). Returns the original input if it can't be parsed.
+const formatTime12h = (time: string): string => {
+  if (!time) return '';
+  const m = /^(\d{1,2}):(\d{2})/.exec(time.trim());
+  if (!m) return time;
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  if (Number.isNaN(h)) return time;
+  const period = h >= 12 ? 'PM' : 'AM';
+  h = h % 12;
+  if (h === 0) h = 12;
+  return `${h}:${min} ${period}`;
+};
+
 
 type SortMode = 'date' | 'category';
 
@@ -606,12 +622,13 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
       return (
         <div
           key={note.id}
-          className="grid grid-cols-[150px_110px_170px_1fr_84px] border-b border-slate-700/40 last:border-b-0 hover:bg-slate-700/10 items-center"
+          className="grid grid-cols-[150px_200px_170px_1fr_84px] border-b border-slate-700/40 last:border-b-0 hover:bg-slate-700/10 items-center"
         >
           <div className="px-3 py-2 text-sm text-slate-200">{note.date || '—'}</div>
           <div className="px-3 py-2 border-l border-slate-700/40 text-sm text-slate-200">
-            {note.time || '—'}
+            {note.time ? formatTime12h(note.time) : '—'}
           </div>
+
           <div className="px-3 py-2 border-l border-slate-700/40">
             <CategoryBadge name={note.category} />
           </div>
@@ -661,7 +678,7 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
     return (
       <div
         key={note.id}
-        className="grid grid-cols-[150px_110px_170px_1fr_84px] border-b border-slate-700/40 last:border-b-0 bg-blue-500/5"
+        className="grid grid-cols-[150px_200px_170px_1fr_84px] border-b border-slate-700/40 last:border-b-0 bg-blue-500/5"
       >
         <div className="px-1.5 py-1">
           <DateInputDark
@@ -671,13 +688,12 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
           />
         </div>
         <div className="px-1.5 py-1 border-l border-slate-700/40">
-          <input
-            type="time"
+          <Time12Picker
             value={draft.time}
-            onChange={(e) => updateDraft(note.id, { time: e.target.value })}
-            className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm text-white"
+            onChange={(time) => updateDraft(note.id, { time })}
           />
         </div>
+
         <div className="px-1.5 py-1 border-l border-slate-700/40 flex flex-col gap-1">
           <select
             value={
@@ -794,7 +810,8 @@ const GeneralNotes: React.FC<GeneralNotesProps> = ({ currentRole = 'Crew' }) => 
   };
 
   const headerRow = (
-    <div className="grid grid-cols-[150px_110px_170px_1fr_84px] bg-slate-900/70 border-b border-slate-700 text-xs font-medium text-slate-400 sticky top-0 z-10">
+    <div className="grid grid-cols-[150px_200px_170px_1fr_84px] bg-slate-900/70 border-b border-slate-700 text-xs font-medium text-slate-400 sticky top-0 z-10">
+
       <div className="px-3 py-2">Date</div>
       <div className="px-3 py-2 border-l border-slate-700/60">Time</div>
       <div className="px-3 py-2 border-l border-slate-700/60">Category</div>

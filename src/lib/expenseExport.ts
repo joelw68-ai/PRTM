@@ -161,12 +161,27 @@ export interface ExportableNote {
   description: string;
 }
 
+// Convert a stored 24-hour "HH:mm" time string into a 12-hour display string
+// (e.g. "14:05" -> "2:05 PM"). Returns the original input if it can't be parsed.
+const formatNoteTime12h = (time: string): string => {
+  if (!time) return '';
+  const m = /^(\d{1,2}):(\d{2})/.exec(time.trim());
+  if (!m) return time;
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  if (Number.isNaN(h)) return time;
+  const period = h >= 12 ? 'PM' : 'AM';
+  h = h % 12;
+  if (h === 0) h = 12;
+  return `${h}:${min} ${period}`;
+};
+
 export const exportNotesToCSV = (notes: ExportableNote[]): void => {
   const headers = ['Date', 'Time', 'Category', 'Description'];
 
   const rows = notes.map((n) => [
     n.date || '',
-    n.time || '',
+    formatNoteTime12h(n.time || ''),
     n.category || '',
     n.description || '',
   ]);
