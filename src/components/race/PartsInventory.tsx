@@ -55,6 +55,13 @@ import {
   calculatePartLifecycle
 } from '@/data/partsUsageData';
 
+// Sub-components used in the JSX below — these MUST be imported or the page
+// crashes at render time (ReferenceError → black screen).
+import LowStockAlertPanel from './LowStockAlertPanel';
+import ReorderListGenerator from './ReorderListGenerator';
+import CSVImportModal from './CSVImportModal';
+
+
 
 
 
