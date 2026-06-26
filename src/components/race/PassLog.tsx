@@ -1812,7 +1812,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                     <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">1/8 ET</th>
                     <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">MPH</th>
                     <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">Result</th>
-                    <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">SAE</th>
+                    <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">Density Altitude</th>
                     <th className="text-center px-4 py-3 text-sm font-medium text-slate-400">
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -1913,7 +1913,7 @@ const PassLog: React.FC<PassLogProps> = ({ currentRole = 'Crew' }) => {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <span className="text-yellow-400 font-mono">{pass.saeCorrection.toFixed(3)}</span>
+                          <span className="text-cyan-400 font-mono">{(pass.densityAltitude ?? 0).toLocaleString()} ft</span>
                         </td>
                         <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                           <Tooltip>
