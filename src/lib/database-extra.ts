@@ -1214,3 +1214,95 @@ export const deleteAuditLog = async (id: string): Promise<void> => {
   const { error } = await supabase.from('audit_logs').delete().eq('id', id);
   if (error) throw error;
 };
+
+
+// ════════════════════════════════════════════════════════════════════════
+// 13. INVENTORY ADJUSTMENTS (on-hand change history)
+// ════════════════════════════════════════════════════════════════════════
+// Records EVERY on-hand quantity change for a part: deductions from
+// maintenance completions, manual +/- edits, restocks from invoices/POs,
+// part creation and deletion. Each row captures the previous value, the new
+// value, the delta, who made the change, a reason, and a timestamp.
+
+export type InventoryChangeType =
+  | 'deduction'
+  | 'manual_edit'
+  | 'restock'
+  | 'add'
+  | 'delete';
+
+export interface InventoryAdjustment {
+  id: string;
+  userId?: string | null;
+  partId: string;
+  partNumber?: string;
+  description?: string;
+  changeType: InventoryChangeType;
+  source?: string;
+  previousOnHand: number;
+  newOnHand: number;
+  delta: number;
+  reason?: string;
+  performedBy?: string;
+  relatedId?: string;
+  relatedTitle?: string;
+  createdAt?: string;
+}
+
+const toInventoryAdjustment = (row: any): InventoryAdjustment => ({
+  id: row.id,
+  userId: row.user_id,
+  partId: row.part_id || '',
+  partNumber: row.part_number || '',
+  description: row.description || '',
+  changeType: (row.change_type || 'manual_edit') as InventoryChangeType,
+  source: row.source || '',
+  previousOnHand: row.previous_on_hand != null ? parseInt(row.previous_on_hand) : 0,
+  newOnHand: row.new_on_hand != null ? parseInt(row.new_on_hand) : 0,
+  delta: row.delta != null ? parseInt(row.delta) : 0,
+  reason: row.reason || '',
+  performedBy: row.performed_by || '',
+  relatedId: row.related_id || '',
+  relatedTitle: row.related_title || '',
+  createdAt: row.created_at,
+});
+
+export const fetchInventoryAdjustments = async (userId?: string): Promise<InventoryAdjustment[]> => {
+  const { data, error } = await supabase
+    .from('inventory_adjustments')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(1000);
+  if (error) throw error;
+  return (data || []).map(toInventoryAdjustment);
+};
+
+export const insertInventoryAdjustment = async (entry: InventoryAdjustment, userId?: string): Promise<void> => {
+  const effectiveUserId = userId || await getCurrentUserId();
+  // Inventory history is only persisted for authenticated users (RLS requires user_id).
+  if (!effectiveUserId) return;
+  const payload: any = {
+    id: entry.id,
+    user_id: effectiveUserId,
+    part_id: entry.partId,
+    part_number: emptyToNull(entry.partNumber),
+    description: emptyToNull(entry.description),
+    change_type: entry.changeType,
+    source: emptyToNull(entry.source),
+    previous_on_hand: entry.previousOnHand ?? 0,
+    new_on_hand: entry.newOnHand ?? 0,
+    delta: entry.delta ?? 0,
+    reason: emptyToNull(entry.reason),
+    performed_by: emptyToNull(entry.performedBy),
+    related_id: emptyToNull(entry.relatedId),
+    related_title: emptyToNull(entry.relatedTitle),
+    created_at: entry.createdAt || new Date().toISOString(),
+  };
+  const { error } = await supabase.from('inventory_adjustments').insert(payload);
+  if (error) throw error;
+};
+
+export const deleteInventoryAdjustment = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('inventory_adjustments').delete().eq('id', id);
+  if (error) throw error;
+};

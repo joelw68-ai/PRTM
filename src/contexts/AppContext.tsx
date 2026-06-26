@@ -44,7 +44,8 @@ import { PartInventoryItem, partsInventory as initialPartsInventory } from '@/da
 import { RaceEvent } from '@/components/race/RaceCalendar';
 import { TeamMember } from '@/components/race/TeamProfile';
 import * as db from '@/lib/database';
-import { SavedTrack, ToDoItem, TeamNote, LaborEntry, MediaItem, DrivetrainComponent, DrivetrainCategory, DrivetrainSwapLog, VendorRecord, PassHistoryEntry, ComponentPart, TireSet, TreadDepthEntry, TirePressureEntry, TireChangeLog } from '@/lib/database';
+import { insertInventoryAdjustment, type InventoryChangeType } from '@/lib/database-extra';
+
 
 
 
@@ -217,7 +218,8 @@ interface AppContextType {
   
   // Parts Inventory Actions
   addPartInventory: (part: PartInventoryItem) => Promise<void>;
-  updatePartInventory: (id: string, part: Partial<PartInventoryItem>) => Promise<void>;
+  updatePartInventory: (id: string, part: Partial<PartInventoryItem>, meta?: { reason?: string; source?: string; changeType?: InventoryChangeType; performedBy?: string; relatedId?: string; relatedTitle?: string }) => Promise<void>;
+
   deletePartInventory: (id: string) => Promise<void>;
   
   // Track Weather History Actions
@@ -1449,9 +1451,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (mergedItem) await trackSave(() => db.upsertMaintenanceItem(mergedItem!, user?.id), 'updateMaintenance');
   }, [user?.id, trackSave]);
 
-  const updatePartInventory = useCallback(async (id: string, part: Partial<PartInventoryItem>) => {
+  const updatePartInventory = useCallback(async (
+    id: string,
+    part: Partial<PartInventoryItem>,
+    meta?: { reason?: string; source?: string; changeType?: InventoryChangeType; performedBy?: string; relatedId?: string; relatedTitle?: string }
+  ) => {
     let mergedItem: PartInventoryItem | null = null;
-    setPartsInventory(prev => prev.map(p => { if (p.id === id) { mergedItem = { ...p, ...part }; return mergedItem; } return p; }));
+    let prevOnHand: number | undefined;
+    setPartsInventory(prev => prev.map(p => {
+      if (p.id === id) { prevOnHand = p.onHand; mergedItem = { ...p, ...part }; return mergedItem; }
+      return p;
+    }));
     // Persist the merged item. Pass offline-queue info so a connectivity failure
     // is queued and replayed (instead of silently dropped — which previously made
     // deducted/adjusted quantities revert on refresh), and surface a visible error
@@ -1463,7 +1473,40 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       { type: 'upsertPartInventory', data: mergedItem },
       'Inventory change saved locally but failed to sync to the database — the adjusted quantity may revert on refresh.'
     );
+
+    // ── Record an inventory adjustment whenever the on-hand quantity changed ──
+    // This builds a database-backed change history (deductions from maintenance,
+    // manual edits, restocks) with previous value, new value, delta and reason.
+    if (mergedItem && part.onHand != null && prevOnHand != null && part.onHand !== prevOnHand) {
+      const newOnHand = part.onHand;
+      const delta = newOnHand - prevOnHand;
+      const changeType: InventoryChangeType =
+        meta?.changeType || (delta > 0 ? 'restock' : 'deduction');
+      const reason = meta?.reason
+        || (changeType === 'restock' ? 'Stock added'
+          : changeType === 'deduction' ? 'Stock reduced'
+          : 'Manual adjustment');
+      insertInventoryAdjustment({
+        id: `INVADJ-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        partId: id,
+        partNumber: (mergedItem as PartInventoryItem).partNumber,
+        description: (mergedItem as PartInventoryItem).description,
+        changeType,
+        source: meta?.source || 'manual',
+        previousOnHand: prevOnHand,
+        newOnHand,
+        delta,
+        reason,
+        performedBy: meta?.performedBy,
+        relatedId: meta?.relatedId,
+        relatedTitle: meta?.relatedTitle,
+        createdAt: new Date().toISOString(),
+      }, user?.id)
+        .then(() => { try { window.dispatchEvent(new CustomEvent('inventory-adjustment-recorded')); } catch {} })
+        .catch(err => console.warn('[updatePartInventory] inventory adjustment record failed:', err));
+    }
   }, [user?.id, trackSave]);
+
 
 
   const updateTrackWeatherHistoryAction = useCallback(async (track: TrackWeatherHistory) => {
