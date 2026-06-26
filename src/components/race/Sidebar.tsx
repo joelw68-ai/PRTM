@@ -17,7 +17,7 @@ import {
   User, LogOut, LogIn, UserPlus, Play, Bell,
   Loader2,
   Home, HardDrive, Radio, Zap, Activity,
-  PackageCheck, StickyNote
+  PackageCheck, StickyNote, Database
 } from 'lucide-react';
 
 
@@ -94,6 +94,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         { id: 'engines', label: 'Main Components', icon: Cog },
         { id: 'parts', label: 'Parts', icon: Package },
         { id: 'partsusage', label: 'Parts Usage', icon: History },
+        { id: 'partsusagelog', label: 'Usage Log (DB)', icon: Database },
         { id: 'borrowedloaned', label: 'Borrowed or Loaned', icon: ArrowLeftRight },
       ],
     },

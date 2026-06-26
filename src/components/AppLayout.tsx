@@ -29,6 +29,7 @@ import MainComponents from './race/MainComponents';
 
 import PartsInventory from './race/PartsInventory';
 import PartsUsageHistory from './race/PartsUsageHistory';
+import PartsUsageLog from './race/PartsUsageLog';
 import BackupRestore from './race/BackupRestore';
 
 import MaintenanceTracker from './race/MaintenanceTracker';
@@ -312,6 +313,14 @@ const AppLayoutContent: React.FC = () => {
             <PartsUsageHistory />
           </div>
         );
+
+      case 'partsusagelog':
+        return (
+          <div className="bg-slate-900/30">
+            <PartsUsageLog />
+          </div>
+        );
+
 
       case 'borrowedloaned':
         return (

@@ -196,6 +196,11 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
       const carName = 'Race Car'; // Single-car app
       const maintenanceReason = `Maintenance: ${item.component}`;
 
+      // Track whether the authoritative DB write succeeded for every part so we
+      // can warn the user if the parts_usage_log table did not persist.
+      const isRealUser = !!authUser?.id && !authIsDemoMode;
+      let dbWriteFailures = 0;
+      let dbWriteAttempts = 0;
 
       for (const sp of selectedParts) {
         const inventoryPart = partsInventory.find(p => p.id === sp.partId);
@@ -218,7 +223,36 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
             lastUsed: dateCompleted
           });
 
-          // 2b) Write to Parts Usage History (localStorage)
+          // 2b) Write to Supabase parts_usage_log — this is the AUTHORITATIVE
+          //     store for parts usage history. Do this BEFORE the localStorage
+          //     cache so we know whether the durable record actually persisted.
+          if (isRealUser) {
+            dbWriteAttempts++;
+            try {
+              await insertPartsUsage({
+                partId: inventoryPart.id,
+                partNumber: inventoryPart.partNumber,
+                partDescription: inventoryPart.description,
+                quantityUsed: sp.quantity,
+                unitCost: inventoryPart.unitCost,
+                totalCost: inventoryPart.unitCost * sp.quantity,
+                usageDate: dateCompleted,
+                usageType: 'maintenance',
+                relatedId: item.id,
+                relatedTitle: maintenanceReason,
+                notes: `${maintenanceReason}${notes ? ' — ' + notes : ''} | Car: ${carName}${passNumber ? ' | Pass #' + passNumber : ''}`,
+                recordedBy: authUser?.email || 'System',
+                previousOnHand: previousOnHand,
+                newOnHand: newOnHand,
+              }, authUser?.id);
+            } catch (dbErr) {
+              dbWriteFailures++;
+              console.error('Failed to write parts usage to parts_usage_log:', dbErr);
+            }
+          }
+
+          // 2c) Write to Parts Usage History (localStorage cache — mirrors DB
+          //     for instant offline-friendly reads on the legacy history view)
           const usageRecord: PartUsageRecord = {
             id: `PU-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             partId: inventoryPart.id,
@@ -230,36 +264,13 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
             installedOn: maintenanceReason,
             passesAtAction: passNumber ? parseInt(passNumber) : item.currentPasses,
             carId: undefined, // Single-car app — no car_id
-
             carName: carName,
+            quantityUsed: sp.quantity,
             cost: inventoryPart.unitCost * sp.quantity,
             performedBy: authUser?.email || 'System',
             notes: `${maintenanceReason}${notes ? ' — ' + notes : ''} | Qty: ${sp.quantity} | Car: ${carName}`,
           };
           addPartsUsageRecord(usageRecord);
-
-          // 2c) Also write to Supabase parts_usage_log (non-blocking, best-effort)
-          try {
-            await insertPartsUsage({
-              partId: inventoryPart.id,
-              partNumber: inventoryPart.partNumber,
-              partDescription: inventoryPart.description,
-              quantityUsed: sp.quantity,
-              unitCost: inventoryPart.unitCost,
-              totalCost: inventoryPart.unitCost * sp.quantity,
-              usageDate: dateCompleted,
-              usageType: 'maintenance',
-              relatedId: item.id,
-              relatedTitle: maintenanceReason,
-              notes: `${maintenanceReason}${notes ? ' — ' + notes : ''} | Car: ${carName}${passNumber ? ' | Pass #' + passNumber : ''}`,
-              recordedBy: authUser?.email || 'System',
-              previousOnHand: previousOnHand,
-              newOnHand: newOnHand,
-            }, authUser?.id);
-          } catch (dbErr) {
-            // Non-fatal: localStorage record was already saved above
-            console.warn('Failed to write parts usage to Supabase (localStorage record saved):', dbErr);
-          }
 
           if (newOnHand <= inventoryPart.minQuantity) {
             lowStockParts.push({
@@ -273,6 +284,16 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
           }
         }
       }
+
+      // 2d) If any authoritative DB writes failed, tell the user explicitly so
+      //     they know the durable usage log did not fully persist.
+      if (dbWriteFailures > 0) {
+        toast.warning('Parts usage log not fully saved', {
+          description: `${dbWriteFailures} of ${dbWriteAttempts} usage record${dbWriteAttempts > 1 ? 's' : ''} could not be written to the database. Inventory was still deducted. Check your connection and re-log if needed.`,
+          duration: 10000,
+        });
+      }
+
 
       // 3) Log completion in maintenance history (localStorage)
       const historyEntry: MaintenanceHistoryEntry = {
