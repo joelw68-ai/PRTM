@@ -1452,8 +1452,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updatePartInventory = useCallback(async (id: string, part: Partial<PartInventoryItem>) => {
     let mergedItem: PartInventoryItem | null = null;
     setPartsInventory(prev => prev.map(p => { if (p.id === id) { mergedItem = { ...p, ...part }; return mergedItem; } return p; }));
-    if (mergedItem) await trackSave(() => db.upsertPartInventory(mergedItem!, user?.id), 'updatePartInventory');
+    // Persist the merged item. Pass offline-queue info so a connectivity failure
+    // is queued and replayed (instead of silently dropped — which previously made
+    // deducted/adjusted quantities revert on refresh), and surface a visible error
+    // toast for any non-connectivity save failure so the user knows the quantity
+    // didn't actually persist.
+    if (mergedItem) await trackSave(
+      () => db.upsertPartInventory(mergedItem!, user?.id),
+      'updatePartInventory',
+      { type: 'upsertPartInventory', data: mergedItem },
+      'Inventory change saved locally but failed to sync to the database — the adjusted quantity may revert on refresh.'
+    );
   }, [user?.id, trackSave]);
+
 
   const updateTrackWeatherHistoryAction = useCallback(async (track: TrackWeatherHistory) => {
     setTrackWeatherHistory(prev => {
