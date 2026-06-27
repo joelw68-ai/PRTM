@@ -17,7 +17,7 @@ import {
   User, LogOut, LogIn, UserPlus, Play, Bell,
   Loader2,
   Home, HardDrive, Radio, Zap, Activity,
-  PackageCheck, StickyNote, Database
+  StickyNote, Database
 } from 'lucide-react';
 
 
@@ -80,7 +80,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         { id: 'timeline', label: 'Race Day Timeline', icon: Activity },
         { id: 'analytics', label: 'Analytics', icon: BarChart3 },
         { id: 'checklists', label: 'Checklists', icon: CheckSquare },
-        { id: 'packtrailer', label: 'Pack the Trailer', icon: PackageCheck },
+
         { id: 'todo', label: 'To Do', icon: ListTodo },
         { id: 'maintenance', label: 'Maintenance', icon: Wrench },
         { id: 'sfi-certs', label: 'SFI Certifications', icon: Shield },

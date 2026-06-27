@@ -51,7 +51,9 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
 
   const { passLogs, raceEvents, engines, maintenanceItems } = useApp();
 
-  const [timeRange, setTimeRange] = useState<'all' | 'year' | 'month' | 'week'>('year');
+  const [timeRange, setTimeRange] = useState<'all' | 'year' | 'month' | 'week' | 'custom'>('year');
+  const [customStart, setCustomStart] = useState<string>('');
+  const [customEnd, setCustomEnd] = useState<string>('');
   const [selectedEngine, setSelectedEngine] = useState<string>('all');
   const [activeTab, setActiveTab] = useState<'overview' | 'reaction' | 'et' | 'tracks' | 'trends' | 'bestReaction' | 'best60' | 'best330' | 'avgET' | 'avgMPH'>('overview');
   const [distanceView, setDistanceView] = useState<'eighth' | 'quarter'>('eighth');
@@ -81,6 +83,16 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
         const yearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
         passes = passes.filter(p => parseLocalDate(p.date) >= yearAgo);
         break;
+      case 'custom':
+        if (customStart) {
+          const start = parseLocalDate(customStart);
+          passes = passes.filter(p => parseLocalDate(p.date) >= start);
+        }
+        if (customEnd) {
+          const end = parseLocalDate(customEnd);
+          passes = passes.filter(p => parseLocalDate(p.date) <= end);
+        }
+        break;
     }
 
     // Sort chronologically: date ascending, then time ascending within the same date
@@ -93,7 +105,7 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
     });
 
 
-  }, [passLogs, timeRange, selectedEngine]);
+  }, [passLogs, timeRange, selectedEngine, customStart, customEnd]);
 
   // Passes for analytics (excluding aborted)
   const analyticsPasses = useMemo(() => {
@@ -430,24 +442,68 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
     return 'text-orange-400';
   };
 
+  // Build a filename suffix that includes the custom date range when active
+  const getRangeSuffix = () => {
+    if (timeRange === 'custom' && (customStart || customEnd)) {
+      return `-${customStart || 'start'}_to_${customEnd || 'end'}`;
+    }
+    return '';
+  };
+
   const exportAnalytics = () => {
-    const data = {
+    const data: Record<string, unknown> = {
       summary: performanceStats,
       trend: trendAnalysis,
       sessionBreakdown,
       trackPerformance,
       monthlyTrend: monthlyTrendData
     };
-    
+
+    // Include the selected date range in the JSON payload when a custom range is active
+    if (timeRange === 'custom' && (customStart || customEnd)) {
+      data.dateRange = {
+        start: customStart || null,
+        end: customEnd || null
+      };
+    }
+
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `analytics-${getLocalDateString()}.json`;
+    a.download = `analytics-${getLocalDateString()}${getRangeSuffix()}.json`;
 
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // CSV export: one row per pass within the selected range
+  const exportPassesCSV = () => {
+    const headers = ['Date', 'Track', 'Reaction', "60'", "330'", 'ET', 'MPH'];
+    const escape = (val: string | number | null | undefined) => {
+      const s = val === null || val === undefined ? '' : String(val);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const rows = filteredPasses.map(p => [
+      p.date,
+      p.track || '',
+      p.reactionTime !== undefined && p.reactionTime !== null ? p.reactionTime.toFixed(3) : '',
+      p.sixtyFoot > 0 ? p.sixtyFoot.toFixed(3) : '',
+      p.threeThirty > 0 ? p.threeThirty.toFixed(3) : '',
+      p.eighth > 0 ? p.eighth.toFixed(3) : '',
+      p.mph > 0 ? p.mph.toFixed(1) : ''
+    ].map(escape).join(','));
+
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `passes-${getLocalDateString()}${getRangeSuffix()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
 
   // Custom tooltip for charts
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -499,14 +555,25 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
               <option value="month">Last 30 Days</option>
               <option value="year">Last Year</option>
               <option value="all">All Time</option>
+              <option value="custom">Custom Range</option>
             </select>
             <button
               onClick={exportAnalytics}
               className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors"
+              title="Export analytics summary as JSON"
             >
               <Download className="w-4 h-4" />
               Export
             </button>
+            <button
+              onClick={exportPassesCSV}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-700 text-white rounded-lg hover:bg-emerald-600 transition-colors"
+              title="Export one row per pass within the selected range as CSV"
+            >
+              <Download className="w-4 h-4" />
+              Export CSV
+            </button>
+
             {hasQuarterMileData && (
               <button
                 onClick={() => setDistanceView(distanceView === 'eighth' ? 'quarter' : 'eighth')}
@@ -527,6 +594,92 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ currentRole = '
             )}
           </div>
         </div>
+
+        {/* Custom Date Range Selector */}
+        {timeRange === 'custom' && (
+          <div className="mb-6 bg-gradient-to-r from-slate-800/70 to-slate-800/40 rounded-xl border border-purple-500/30 p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Calendar className="w-5 h-5 text-purple-400" />
+              <h3 className="text-lg font-semibold text-white">Compare Logs by Date Range</h3>
+              <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full border border-purple-500/30">
+                {performanceStats.analyticsPassCount} passes in range
+              </span>
+            </div>
+
+            <div className="flex flex-col md:flex-row md:items-end gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-400 uppercase tracking-wider">From</label>
+                <input
+                  type="date"
+                  value={customStart}
+                  max={customEnd || undefined}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                />
+              </div>
+
+              <div className="hidden md:flex items-center justify-center pb-2 text-slate-500">
+                <ArrowUp className="w-4 h-4 rotate-90" />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-400 uppercase tracking-wider">To</label>
+                <input
+                  type="date"
+                  value={customEnd}
+                  min={customStart || undefined}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                />
+              </div>
+
+              {/* Quick presets */}
+              <div className="flex flex-wrap items-center gap-2 md:ml-2">
+                {[
+                  { label: 'This Month', days: 0, mode: 'month' as const },
+                  { label: 'Last 30 Days', days: 30 },
+                  { label: 'Last 90 Days', days: 90 },
+                  { label: 'This Year', days: 0, mode: 'year' as const }
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    onClick={() => {
+                      const now = new Date();
+                      const fmt = (d: Date) => getLocalDateString(d);
+                      let start: Date;
+                      if (preset.mode === 'month') {
+                        start = new Date(now.getFullYear(), now.getMonth(), 1);
+                      } else if (preset.mode === 'year') {
+                        start = new Date(now.getFullYear(), 0, 1);
+                      } else {
+                        start = new Date(now.getTime() - (preset.days || 30) * 24 * 60 * 60 * 1000);
+                      }
+                      setCustomStart(fmt(start));
+                      setCustomEnd(fmt(now));
+                    }}
+                    className="px-3 py-1.5 text-xs bg-slate-700 text-slate-200 rounded-lg hover:bg-purple-600 hover:text-white transition-colors"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+                {(customStart || customEnd) && (
+                  <button
+                    onClick={() => { setCustomStart(''); setCustomEnd(''); }}
+                    className="px-3 py-1.5 text-xs bg-slate-900 text-slate-400 rounded-lg border border-slate-700 hover:text-white hover:border-slate-500 transition-colors"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {!customStart && !customEnd && (
+              <p className="text-slate-500 text-xs mt-3">
+                Pick a start and end date (or use a quick preset) to compare logs within that window. Leaving a field blank leaves that side open-ended.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Aborted Pass Notice */}
         {performanceStats.abortedCount > 0 && (
