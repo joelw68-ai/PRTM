@@ -9,6 +9,7 @@ import { MaintenanceItem } from '@/data/proModData';
 import { PartInventoryItem } from '@/data/partsInventory';
 import { addPartsUsageRecord, PartUsageRecord } from '@/data/partsUsageData';
 import { insertPartsUsage } from '@/lib/teamMembership';
+import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 
 import {
@@ -214,7 +215,7 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
             newOnHand === 0 ? 'Critical' :
             newOnHand <= inventoryPart.minQuantity ? 'Reorder' : 'OK';
 
-          // 2a) Deduct from inventory
+          // 2a) Deduct from inventory (local React state + AppContext persistence path)
           await updatePartInventory(inventoryPart.id, {
             onHand: newOnHand,
             totalValue: newOnHand * inventoryPart.unitCost,
@@ -222,6 +223,45 @@ const CompleteMaintenanceModal: React.FC<CompleteMaintenanceModalProps> = ({
             reorderStatus,
             lastUsed: dateCompleted
           });
+
+          // 2a-bis) AUTHORITATIVE on_hand write — write the new on_hand value
+          //         DIRECTLY to the parts_inventory table and await it so the
+          //         deduction actually persists in the database (not just React
+          //         state). The previous upsert path was reverting on refresh;
+          //         this direct .update() guarantees the row's on_hand changes.
+          //         Logs the result so the DB write can be verified.
+          if (isRealUser) {
+            const { data: invUpdateData, error: invUpdateError } = await supabase
+              .from('parts_inventory')
+              .update({
+                on_hand: newOnHand,
+                total_value: newOnHand * inventoryPart.unitCost,
+                status,
+                reorder_status: reorderStatus,
+                last_used: dateCompleted,
+              })
+              .eq('id', inventoryPart.id)
+              .select();
+
+            if (invUpdateError) {
+              console.error('[CompleteMaintenance] parts_inventory on_hand UPDATE FAILED:', {
+                partId: inventoryPart.id,
+                partNumber: inventoryPart.partNumber,
+                previousOnHand,
+                newOnHand,
+                error: invUpdateError,
+              });
+            } else {
+              console.log('[CompleteMaintenance] parts_inventory on_hand UPDATE OK:', {
+                partId: inventoryPart.id,
+                partNumber: inventoryPart.partNumber,
+                previousOnHand,
+                newOnHand,
+                rowsUpdated: Array.isArray(invUpdateData) ? invUpdateData.length : 0,
+                data: invUpdateData,
+              });
+            }
+          }
 
           // 2b) Write to Supabase parts_usage_log — this is the AUTHORITATIVE
           //     store for parts usage history. Do this BEFORE the localStorage
