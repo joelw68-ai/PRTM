@@ -830,6 +830,99 @@ export const upsertMaintenanceItem = async (item: MaintenanceItem, userId?: stri
 }
 
 
+/**
+ * completeMaintenanceItem — Maintenance-complete handler.
+ *
+ * This is the authoritative DB write for completing a maintenance item with
+ * parts used. It does TWO things, both awaited so they actually persist to the
+ * database (not just local React state):
+ *
+ *   1. Saves the maintenance item itself (resetting the pass counter, status,
+ *      notes, etc.). This goes through upsertMaintenanceItem, which maps
+ *      `component` → the legacy `name` column so the save no longer fails on a
+ *      missing/NOT NULL `name` column.
+ *
+ *   2. For EACH used part, deducts inventory by writing the new on_hand value
+ *      DIRECTLY to the parts_inventory table via
+ *          supabase.from('parts_inventory').update({ on_hand: newQty }).eq('id', partId)
+ *      and awaits it. Without this direct, awaited DB write the deduction only
+ *      lived in React state and reverted on refresh.
+ *
+ * Every update result (data + error) is logged to the console so the database
+ * write can be verified.
+ *
+ * @param item       The maintenance item to mark complete (full record).
+ * @param usedParts  The parts consumed: { partId, newQty } plus optional
+ *                   total_value / status / reorder_status / last_used to keep
+ *                   the row consistent.
+ * @param userId     (optional) auth user id, forwarded to upsertMaintenanceItem.
+ */
+export interface MaintenanceCompletePartUpdate {
+  partId: string;
+  newQty: number;
+  totalValue?: number;
+  status?: string;
+  reorderStatus?: string;
+  lastUsed?: string;
+}
+
+export const completeMaintenanceItem = async (
+  item: MaintenanceItem,
+  usedParts: MaintenanceCompletePartUpdate[] = [],
+  userId?: string,
+): Promise<void> => {
+  // ── 1. Save the maintenance item (confirm it persists; the `name` column
+  //       is satisfied by upsertMaintenanceItem mapping component → name) ──
+  try {
+    await upsertMaintenanceItem(item, userId);
+    console.log('[completeMaintenanceItem] Maintenance item saved OK:', {
+      id: item.id,
+      component: item.component,
+      status: item.status,
+      currentPasses: item.currentPasses,
+    });
+  } catch (mErr) {
+    console.error('[completeMaintenanceItem] FAILED to save maintenance item:', {
+      id: item.id,
+      component: item.component,
+      error: mErr,
+    });
+    throw mErr;
+  }
+
+  // ── 2. Deduct each used part by writing on_hand DIRECTLY to the DB ──
+  for (const used of usedParts) {
+    const updatePayload: Record<string, any> = { on_hand: used.newQty };
+    if (used.totalValue != null) updatePayload.total_value = used.totalValue;
+    if (used.status != null) updatePayload.status = used.status;
+    if (used.reorderStatus != null) updatePayload.reorder_status = used.reorderStatus;
+    if (used.lastUsed != null) updatePayload.last_used = used.lastUsed;
+
+    const { data, error } = await supabase
+      .from('parts_inventory')
+      .update(updatePayload)
+      .eq('id', used.partId)
+      .select();
+
+    if (error) {
+      console.error('[completeMaintenanceItem] parts_inventory on_hand UPDATE FAILED:', {
+        partId: used.partId,
+        newQty: used.newQty,
+        error,
+      });
+    } else {
+      console.log('[completeMaintenanceItem] parts_inventory on_hand UPDATE OK:', {
+        partId: used.partId,
+        newQty: used.newQty,
+        rowsUpdated: Array.isArray(data) ? data.length : 0,
+        data,
+      });
+    }
+  }
+};
+
+
+
 
 
 
