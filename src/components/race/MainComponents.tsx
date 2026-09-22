@@ -9,6 +9,16 @@ import { DrivetrainComponent, DrivetrainCategory, ComponentPart, ComponentExtraF
 import * as db from '@/lib/database';
 import RebuildWizard from './RebuildWizard';
 import TireSetLifecycleLog from './TireSetLifecycleLog';
+import MainComponentsImportExport from './MainComponentsImportExport';
+import {
+  MainComponentTabId,
+  MAIN_COMPONENT_TABS,
+  ExportableComponent,
+  ComponentCsvRow,
+  getTabSingular,
+} from '@/lib/mainComponentsIO';
+
+
 
 
 
@@ -21,8 +31,10 @@ import {
   Zap, Wind, Plus, Edit2, Trash2, X, ChevronDown, ChevronUp,
   Wrench, Save, Package, Play, CheckCircle2, RefreshCw,
   ListChecks, FileText, RotateCcw, Cog, Settings,
-  Check, ClipboardList, AlertCircle, Loader2, Upload, AlertTriangle, Sliders, Circle
+  Check, ClipboardList, AlertCircle, Loader2, Upload, AlertTriangle, Sliders, Circle,
+  Download, CheckSquare, Square
 } from 'lucide-react';
+
 
 
 
@@ -53,7 +65,9 @@ interface ComponentExtraFields {
   currentStator?: string; // Torque Converters only
 }
 
-type TabId = 'engines' | 'powerAdders' | 'transmissions' | 'transmissionDrives' | 'torqueConverters' | 'thirdMemberGears' | 'rearTiresWheels';
+/** Tab ids come from the shared mainComponentsIO module (single source of truth). */
+type TabId = MainComponentTabId;
+
 
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1077,34 +1091,172 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
   };
 
   // ═══════════════════════════════════════════════════════════════════
-  // DELETE HANDLER
+  // CREATE / DELETE MAIN COMPONENTS  +  IMPORT / EXPORT
   // ═══════════════════════════════════════════════════════════════════
 
-  const handleDelete = async (tab: TabId, id: string) => {
-    if (!confirm('Are you sure you want to delete this component?')) return;
+  /** Import / Export modal visibility */
+  const [showImportExport, setShowImportExport] = useState(false);
+  /** Multi-select (for bulk delete) */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** Pending delete confirmation */
+  const [deleteTargets, setDeleteTargets] = useState<{ tab: TabId; ids: string[] } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  /** Delete one component + all of its standalone parts. Caller handles confirmation. */
+  const deleteComponentNow = async (tab: TabId, id: string) => {
     if (tab === 'engines') await deleteEngine(id);
     else if (tab === 'powerAdders') await deleteSupercharger(id);
     else await deleteDrivetrainComponent(id);
-    // Clean up extra fields and DB parts for this component
+
     setExtraFields(prev => { const n = { ...prev }; delete n[id]; return n; });
     setComponentParts(prev => prev.filter(p => p.componentId !== id));
-    db.deleteComponentPartsByComponentId(id).catch(err => console.warn('[handleDelete] DB parts cleanup failed:', err));
+    db.deleteComponentPartsByComponentId(id)
+      .catch(err => console.warn('[deleteComponentNow] DB parts cleanup failed:', err));
+  };
 
+  /** Open the delete confirmation for a single component */
+  const handleDelete = (tab: TabId, id: string) => setDeleteTargets({ tab, ids: [id] });
+
+  const confirmDelete = async () => {
+    if (!deleteTargets) return;
+    setDeleting(true);
+    let ok = 0;
+    let fail = 0;
+    for (const id of deleteTargets.ids) {
+      try { await deleteComponentNow(deleteTargets.tab, id); ok++; }
+      catch (err) { fail++; console.error('[confirmDelete] Delete failed for', id, err); }
+    }
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      deleteTargets.ids.forEach(i => next.delete(i));
+      return next;
+    });
+    setDeleting(false);
+    setDeleteTargets(null);
+    if (fail === 0) toast.success(`Deleted ${ok} component${ok !== 1 ? 's' : ''} and their standalone parts`);
+    else toast.warning(`Deleted ${ok}, but ${fail} failed`);
+  };
+
+  /** Create a main component from an imported CSV/JSON row. Returns the new component id. */
+  const createComponentFromRow = async (tabId: TabId, row: ComponentCsvRow): Promise<string> => {
+    const rand = Math.random().toString(36).slice(2, 6);
+
+    if (tabId === 'engines') {
+      const id = `ENG-${Date.now()}-${rand}`;
+      await addEngine({
+        id, name: row.name, serialNumber: row.serialNumber, builder: '',
+        installDate: row.installDate, totalPasses: row.totalPasses,
+        passesSinceRebuild: row.passesSinceRebuild,
+        status: row.currentlyInstalled ? 'Active' : 'Ready',
+        currentlyInstalled: row.currentlyInstalled, notes: row.notes,
+        components: {} as any,
+      });
+      setExtra(id, { blockSerialNumber: row.serialNumber, removalDate: row.removalDate, refreshDate: row.refreshDate });
+      return id;
+    }
+
+    if (tabId === 'powerAdders') {
+      const id = `SC-${Date.now()}-${rand}`;
+      await addSupercharger({
+        id, name: row.name, serialNumber: row.serialNumber, model: '',
+        installDate: row.installDate, totalPasses: row.totalPasses,
+        passesSinceService: row.passesSinceRebuild,
+        status: row.currentlyInstalled ? 'Active' : 'Ready',
+        currentlyInstalled: row.currentlyInstalled, notes: row.notes,
+      });
+      setExtra(id, { blockSerialNumber: row.serialNumber, removalDate: row.removalDate, refreshDate: row.refreshDate });
+      return id;
+    }
+
+    const catMap: Record<TabId, DrivetrainCategory> = {
+      engines: 'transmission', powerAdders: 'transmission',
+      transmissions: 'transmission', transmissionDrives: 'transmission_drive',
+      torqueConverters: 'torque_converter', thirdMemberGears: 'third_member',
+      rearTiresWheels: 'rear_tire_wheel',
+    };
+    const category = catMap[tabId];
+    const id = `DT-${category.toUpperCase().slice(0, 4)}-${Date.now()}-${rand}`;
+    await addDrivetrainComponent({
+      id, category, name: row.name, make: '', model: '',
+      serialNumber: row.serialNumber, builder: '',
+      installDate: row.installDate, dateRemoved: row.removalDate,
+      totalPasses: row.totalPasses, passesSinceService: row.passesSinceRebuild,
+      hours: 0, status: row.currentlyInstalled ? 'Active' : 'Ready',
+      currentlyInstalled: row.currentlyInstalled, notes: row.notes,
+      components: {},
+    });
+    setExtra(id, { blockSerialNumber: row.serialNumber, removalDate: row.removalDate, refreshDate: row.refreshDate });
+    return id;
+  };
+
+  /** Persist imported standalone parts (create or update) + their wear limits. */
+  const importParts = async (
+    parts: ComponentPart[],
+    wearLimits: Record<string, number>
+  ): Promise<{ saved: number; failed: number }> => {
+    // Merge into local state (by id, so updates replace existing rows)
+    setComponentParts(prev => {
+      const byId = new Map(prev.map(p => [p.id, p]));
+      for (const p of parts) byId.set(p.id, p);
+      return Array.from(byId.values());
+    });
+
+    if (Object.keys(wearLimits).length > 0) {
+      setWearThresholds(prev => ({ ...prev, ...wearLimits }));
+    }
+
+    let saved = 0;
+    let failed = 0;
+    await Promise.all(
+      parts.map(p =>
+        db.upsertComponentPart(p, user?.id)
+          .then(() => { saved++; })
+          .catch(err => { failed++; console.error('[importParts] upsert failed for', p.partName, err); })
+      )
+    );
+    return { saved, failed };
   };
 
   // ═══════════════════════════════════════════════════════════════════
-  // TAB CONFIG
+  // TAB CONFIG — labels come from the shared MAIN_COMPONENT_TABS list
   // ═══════════════════════════════════════════════════════════════════
 
-  const tabConfig: { id: TabId; label: string; icon: any; items: any[]; }[] = [
-    { id: 'engines', label: 'Engines', icon: Zap, items: engines },
-    { id: 'powerAdders', label: 'Power Adders', icon: Wind, items: superchargers },
-    { id: 'transmissions', label: 'Transmissions', icon: Cog, items: transmissions },
-    { id: 'transmissionDrives', label: 'Trans Drives', icon: Settings, items: transmissionDrives },
-    { id: 'torqueConverters', label: 'Torque Conv.', icon: RefreshCw, items: torqueConverters },
-    { id: 'thirdMemberGears', label: '3rd Member & Gears', icon: Wrench, items: thirdMemberGears },
-    { id: 'rearTiresWheels', label: 'Rear Tires & Wheels', icon: Circle, items: rearTiresWheels },
-  ];
+  const TAB_ICONS: Record<TabId, any> = {
+    engines: Zap,
+    powerAdders: Wind,
+    transmissions: Cog,
+    transmissionDrives: Settings,
+    torqueConverters: RefreshCw,
+    thirdMemberGears: Wrench,
+    rearTiresWheels: Circle,
+  };
+
+  const TAB_ITEMS: Record<TabId, any[]> = {
+    engines,
+    powerAdders: superchargers,
+    transmissions,
+    transmissionDrives,
+    torqueConverters,
+    thirdMemberGears,
+    rearTiresWheels,
+  };
+
+  const tabConfig: { id: TabId; label: string; icon: any; items: any[]; }[] =
+    MAIN_COMPONENT_TABS.map(t => ({
+      id: t.id,
+      label: t.label,
+      icon: TAB_ICONS[t.id] || Wrench,
+      items: TAB_ITEMS[t.id] || [],
+    }));
+
 
   // ═══════════════════════════════════════════════════════════════════
   // GET DISPLAY DATA FOR A COMPONENT
@@ -1135,6 +1287,27 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
       currentStator: extra.currentStator || '',
     };
   };
+
+  /** Flat list of every main component, normalised for the Import/Export modal. */
+  const exportableComponents: ExportableComponent[] = tabConfig.flatMap(t =>
+    t.items.map((item: any) => {
+      const d = getComponentData(t.id, item);
+      return {
+        id: d.id,
+        tabId: t.id,
+        name: d.name,
+        serialNumber: d.serialNumber,
+        installDate: d.installDate,
+        removalDate: d.removalDate,
+        refreshDate: d.refreshDate,
+        totalPasses: d.totalPasses,
+        passesSinceRebuild: d.passesSinceRebuild,
+        currentlyInstalled: d.currentlyInstalled,
+        notes: d.notes,
+      } as ExportableComponent;
+    })
+  );
+
 
   // ═══════════════════════════════════════════════════════════════════
   // RENDER STANDALONE PARTS LIST
@@ -1474,6 +1647,17 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
+              {/* Multi-select checkbox (bulk delete) */}
+              <button
+                onClick={(e) => { e.stopPropagation(); toggleSelected(data.id); }}
+                className="text-slate-500 hover:text-orange-400 flex-shrink-0"
+                title={selectedIds.has(data.id) ? 'Deselect' : 'Select for bulk delete'}
+              >
+                {selectedIds.has(data.id)
+                  ? <CheckSquare className="w-5 h-5 text-orange-400" />
+                  : <Square className="w-5 h-5" />}
+              </button>
+
               <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
                 data.currentlyInstalled ? 'bg-green-500/20' : 'bg-slate-700'
               }`}>
@@ -1481,6 +1665,7 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
                   className: `w-6 h-6 ${data.currentlyInstalled ? 'text-green-400' : 'text-slate-400'}`
                 })}
               </div>
+
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-lg font-semibold text-white">{data.name}</h3>
@@ -1626,13 +1811,23 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
             <h2 className="text-2xl font-bold text-white">Main Components</h2>
             <p className="text-sm text-slate-400 mt-1">Track engines, power adders, transmissions, and drivetrain components. Passes are automatically updated when you log a pass.</p>
           </div>
-          <button
-            onClick={() => setShowRebuildWizard(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg font-medium hover:from-amber-400 hover:to-orange-400 transition-all shadow-lg shadow-orange-500/20"
-          >
-            <RotateCcw className="w-4 h-4" />
-            Rebuild / Refresh Wizard
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setShowImportExport(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg font-medium hover:bg-cyan-500 transition-all shadow-lg shadow-cyan-600/20"
+              title="Import / export main components and standalone parts (CSV or JSON)"
+            >
+              <Download className="w-4 h-4" />
+              Import / Export
+            </button>
+            <button
+              onClick={() => setShowRebuildWizard(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg font-medium hover:from-amber-400 hover:to-orange-400 transition-all shadow-lg shadow-orange-500/20"
+            >
+              <RotateCcw className="w-4 h-4" />
+              Rebuild / Refresh Wizard
+            </button>
+          </div>
         </div>
 
 
@@ -1644,7 +1839,7 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
             return (
               <button
                 key={tab.id}
-                onClick={() => { setActiveTab(tab.id); setExpandedId(null); }}
+                onClick={() => { setActiveTab(tab.id); setExpandedId(null); setSelectedIds(new Set()); }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${
                   activeTab === tab.id ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
@@ -1656,16 +1851,51 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
           })}
         </div>
 
-        {/* Add Button */}
-        <div className="flex justify-end mb-4">
+        {/* Bulk-select toolbar + Add button */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-2">
+            {currentItems.length > 0 && (
+              <button
+                onClick={() => {
+                  const allSelected = currentItems.every((i: any) => selectedIds.has(i.id));
+                  setSelectedIds(prev => {
+                    const next = new Set(prev);
+                    currentItems.forEach((i: any) => { if (allSelected) next.delete(i.id); else next.add(i.id); });
+                    return next;
+                  });
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 text-slate-300 rounded-lg text-sm hover:bg-slate-700 border border-slate-700"
+              >
+                <CheckSquare className="w-4 h-4" />
+                {currentItems.every((i: any) => selectedIds.has(i.id)) ? 'Deselect All' : 'Select All'}
+              </button>
+            )}
+            {selectedIds.size > 0 && (
+              <>
+                <span className="text-sm text-orange-400 font-medium">{selectedIds.size} selected</span>
+                <button
+                  onClick={() => setDeleteTargets({
+                    tab: activeTab,
+                    ids: currentItems.filter((i: any) => selectedIds.has(i.id)).map((i: any) => i.id),
+                  })}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-red-500/20 text-red-400 rounded-lg text-sm font-medium hover:bg-red-500/30 border border-red-500/30"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete Selected
+                </button>
+              </>
+            )}
+          </div>
+
           <button
             onClick={() => openAddModal(activeTab)}
             className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition-colors"
           >
             <Plus className="w-4 h-4" />
-            Add {currentTabConfig?.label.replace(/s$/, '').replace('Trans Drive', 'Transmission Drive').replace('Torque Conv.', 'Torque Converter').replace('3rd Member & Gear', '3rd Member / Gear')}
+            New {getTabSingular(activeTab)}
           </button>
         </div>
+
 
         {/* Component List */}
         {currentItems.length === 0 ? (
@@ -2067,6 +2297,85 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
           onClose={() => setShowRebuildWizard(false)}
         />
       )}
+
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {/* DELETE COMPONENT CONFIRMATION */}
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {deleteTargets && (() => {
+        const names = exportableComponents
+          .filter(c => deleteTargets.ids.includes(c.id))
+          .map(c => c.name);
+        const partCount = componentParts.filter(p => deleteTargets.ids.includes(p.componentId)).length;
+        return (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => !deleting && setDeleteTargets(null)}>
+            <div className="bg-slate-800 rounded-xl max-w-md w-full p-6 border border-slate-700" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
+                  <AlertTriangle className="w-5 h-5 text-red-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">
+                    Delete {deleteTargets.ids.length} {getTabSingular(deleteTargets.tab)}{deleteTargets.ids.length !== 1 ? 's' : ''}
+                  </h3>
+                  <p className="text-sm text-slate-400">This action cannot be undone</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-900/50 rounded-lg p-3 mb-4 border border-slate-700/50 max-h-[160px] overflow-y-auto">
+                <div className="flex flex-wrap gap-1.5">
+                  {names.map((n, i) => (
+                    <span key={i} className="px-2.5 py-1 bg-red-500/10 text-red-300 text-xs rounded-full border border-red-500/20">
+                      {n}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <p className="text-sm text-slate-400 mb-5">
+                {partCount > 0
+                  ? <>This will also permanently delete <span className="text-white font-bold">{partCount}</span> standalone part{partCount !== 1 ? 's' : ''} attached to {deleteTargets.ids.length > 1 ? 'these components' : 'this component'}.</>
+                  : <>No standalone parts are attached.</>}
+                {' '}Export a backup first if you might need this data.
+              </p>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setDeleteTargets(null)}
+                  disabled={deleting}
+                  className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  disabled={deleting}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-500 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {deleting
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Deleting…</>
+                    : <><Trash2 className="w-4 h-4" /> Delete</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {/* IMPORT / EXPORT MODAL */}
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      <MainComponentsImportExport
+        open={showImportExport}
+        onClose={() => setShowImportExport(false)}
+        activeTab={activeTab}
+        components={exportableComponents}
+        parts={componentParts}
+        extraFields={extraFields}
+        wearThresholds={wearThresholds}
+        onCreateComponent={createComponentFromRow}
+        onImportParts={importParts}
+      />
+
 
     </section>
 
