@@ -10,13 +10,22 @@ import * as db from '@/lib/database';
 import RebuildWizard from './RebuildWizard';
 import TireSetLifecycleLog from './TireSetLifecycleLog';
 import MainComponentsImportExport from './MainComponentsImportExport';
+import CopyPartsModal from './CopyPartsModal';
+import PartsPrintSheet from './PartsPrintSheet';
 import {
   MainComponentTabId,
   MAIN_COMPONENT_TABS,
   ExportableComponent,
   ComponentCsvRow,
+  MainComponentsBackup,
   getTabSingular,
+  buildPartsCsv,
+  downloadTextFile,
+  fileStamp,
+  newPartId,
 } from '@/lib/mainComponentsIO';
+
+
 
 
 
@@ -32,8 +41,9 @@ import {
   Wrench, Save, Package, Play, CheckCircle2, RefreshCw,
   ListChecks, FileText, RotateCcw, Cog, Settings,
   Check, ClipboardList, AlertCircle, Loader2, Upload, AlertTriangle, Sliders, Circle,
-  Download, CheckSquare, Square
+  Download, CheckSquare, Square, Printer, Copy
 } from 'lucide-react';
+
 
 
 
@@ -1308,6 +1318,173 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
     })
   );
 
+  // ═══════════════════════════════════════════════════════════════════
+  // PER-COMPONENT STANDALONE PARTS EXPORT
+  // ═══════════════════════════════════════════════════════════════════
+  // Lets the user export just the parts attached to the component they
+  // currently have open (e.g. an engine) — CSV for spreadsheets, JSON for
+  // a restorable backup that the Import / Export modal can read back in.
+
+  /** Slugify a component name for use in a download filename. */
+  const fileSafeName = (name: string): string =>
+    (name || 'component')
+      .trim()
+      .toLowerCase()
+      .replace(/[^\w\-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '') || 'component';
+
+  const exportComponentParts = (compId: string, format: 'csv' | 'json') => {
+    const parts = getPartsForComponent(compId);
+    if (parts.length === 0) {
+      toast.info('This component has no standalone parts to export yet');
+      return;
+    }
+
+    const comp = exportableComponents.find(c => c.id === compId);
+    const base = `${fileSafeName(comp?.name || compId)}-parts-${fileStamp()}`;
+
+    // Wear limits scoped to just this component's parts
+    const limits: Record<string, number> = {};
+    for (const p of parts) {
+      const limit = wearThresholds[p.id];
+      if (limit) limits[p.id] = limit;
+    }
+
+    if (format === 'csv') {
+      const csv = buildPartsCsv(parts, comp ? [comp] : [], wearThresholds);
+      downloadTextFile(`${base}.csv`, csv, 'text/csv;charset=utf-8;');
+    } else {
+      const backup: MainComponentsBackup = {
+        version: 1,
+        type: 'main-components-backup',
+        exportedAt: new Date().toISOString(),
+        components: comp ? [comp] : [],
+        parts,
+        extraFields: comp ? { [comp.id]: getExtra(comp.id) } : {},
+        wearThresholds: limits,
+      };
+      downloadTextFile(`${base}.json`, JSON.stringify(backup, null, 2), 'application/json');
+    }
+
+    toast.success(
+      `Exported ${parts.length} part${parts.length !== 1 ? 's' : ''} from ${comp?.name || 'component'}`,
+      { description: format === 'csv' ? 'CSV file downloaded' : 'JSON backup downloaded — re-importable' }
+    );
+  };
+
+  // ═══════════════════════════════════════════════════════════════════
+  // COPY PARTS TO ANOTHER COMPONENT  +  PRINT / PDF
+  // ═══════════════════════════════════════════════════════════════════
+
+  /** Component whose parts are being copied (opens CopyPartsModal) */
+  const [copySourceId, setCopySourceId] = useState<string | null>(null);
+  /** Component being printed (mounts the hidden PartsPrintSheet) */
+  const [printCompId, setPrintCompId] = useState<string | null>(null);
+
+  const copySource = copySourceId
+    ? exportableComponents.find(c => c.id === copySourceId) || null
+    : null;
+  const printComp = printCompId
+    ? exportableComponents.find(c => c.id === printCompId) || null
+    : null;
+
+  /**
+   * Create NEW ComponentPart rows on the target component from the selected
+   * source parts, copy their wear limits across, and persist each one via
+   * db.upsertComponentPart. Duplicate part names on the target are skipped.
+   */
+  const handleCopyParts = async ({
+    targetId,
+    partIds,
+    keepPasses,
+  }: { targetId: string; partIds: string[]; keepPasses: boolean }) => {
+    const target = exportableComponents.find(c => c.id === targetId);
+    const sourceName = copySource?.name || 'component';
+
+    const existingNames = new Set(
+      componentParts
+        .filter(p => p.componentId === targetId)
+        .map(p => p.partName.trim().toLowerCase())
+    );
+
+    const chosen = componentParts.filter(
+      p => p.componentId === copySourceId && partIds.includes(p.id)
+    );
+
+    const newParts: ComponentPart[] = [];
+    const newLimits: Record<string, number> = {};
+    let skipped = 0;
+
+    chosen.forEach((p, idx) => {
+      if (existingNames.has(p.partName.trim().toLowerCase())) { skipped++; return; }
+      // Guard against duplicates WITHIN this batch too
+      existingNames.add(p.partName.trim().toLowerCase());
+
+      const id = newPartId(`${idx}-`);
+      newParts.push({
+        id,
+        componentId: targetId,
+        componentType: target ? tabToComponentType(target.tabId) : p.componentType,
+        partName: p.partName,
+        passesOnPart: keepPasses ? (p.passesOnPart ?? 0) : 0,
+        dateReplaced: keepPasses ? p.dateReplaced : undefined,
+        notes: p.notes ? `${p.notes} | Copied from ${sourceName}` : `Copied from ${sourceName}`,
+      });
+
+      // Carry the wear limit over to the new part id
+      const limit = wearThresholds[p.id];
+      if (limit) newLimits[id] = limit;
+    });
+
+    if (newParts.length === 0) {
+      toast.info('Nothing to copy', {
+        description: `All ${skipped} selected part${skipped !== 1 ? 's' : ''} already exist on ${target?.name || 'the target'}.`,
+      });
+      return { copied: 0, skipped, failed: 0 };
+    }
+
+    // Optimistic local update
+    setComponentParts(prev => [...prev, ...newParts]);
+    if (Object.keys(newLimits).length > 0) {
+      setWearThresholds(prev => ({ ...prev, ...newLimits }));
+    }
+
+    // Persist
+    let copied = 0;
+    let failed = 0;
+    await Promise.all(
+      newParts.map(p =>
+        db.upsertComponentPart(p, user?.id)
+          .then(() => { copied++; })
+          .catch(err => {
+            failed++;
+            console.error('[handleCopyParts] upsert failed for', p.partName, err);
+          })
+      )
+    );
+
+    const desc = [
+      skipped > 0 ? `${skipped} skipped as duplicate${skipped !== 1 ? 's' : ''}` : null,
+      failed > 0 ? `${failed} failed to save` : null,
+      Object.keys(newLimits).length > 0 ? 'wear limits copied' : null,
+    ].filter(Boolean).join(' · ');
+
+    if (failed === 0) {
+      toast.success(
+        `Copied ${copied} part${copied !== 1 ? 's' : ''} to ${target?.name || 'target component'}`,
+        { description: desc || undefined, duration: 5000 }
+      );
+    } else {
+      toast.warning(
+        `Copied ${copied} of ${newParts.length} parts to ${target?.name || 'target component'}`,
+        { description: desc, duration: 7000 }
+      );
+    }
+
+    return { copied, skipped, failed };
+  };
+
 
   // ═══════════════════════════════════════════════════════════════════
   // RENDER STANDALONE PARTS LIST
@@ -1324,7 +1501,8 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
 
     return (
       <div className="mt-4 border-t border-slate-700/50 pt-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+
           <h4 className="font-medium text-white flex items-center gap-2">
             <Package className="w-4 h-4 text-orange-400" />
             Standalone Parts List ({parts.length})
@@ -1346,7 +1524,54 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
             )}
           </h4>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {/* ── EXPORT THIS COMPONENT'S STANDALONE PARTS ── */}
+            <button
+              onClick={(e) => { e.stopPropagation(); exportComponentParts(compId, 'csv'); }}
+              disabled={parts.length === 0}
+              className="flex items-center gap-1 px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded text-xs hover:bg-emerald-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={parts.length === 0
+                ? 'No parts on this component to export'
+                : `Export these ${parts.length} standalone part${parts.length !== 1 ? 's' : ''} to a CSV spreadsheet`}
+            >
+              <Download className="w-3 h-3" />
+              Export CSV
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); exportComponentParts(compId, 'json'); }}
+              disabled={parts.length === 0}
+              className="flex items-center gap-1 px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs hover:bg-blue-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={parts.length === 0
+                ? 'No parts on this component to export'
+                : 'Export a JSON backup of this component + its parts (re-importable)'}
+            >
+              <FileText className="w-3 h-3" />
+              Export JSON
+            </button>
+
+            {/* ── PRINT / PDF SHEET ── */}
+            <button
+              onClick={(e) => { e.stopPropagation(); setPrintCompId(compId); }}
+              className="flex items-center gap-1 px-2 py-1 bg-slate-500/20 text-slate-300 rounded text-xs hover:bg-slate-500/30"
+              title="Open a clean printable parts sheet (print or save as PDF)"
+            >
+              <Printer className="w-3 h-3" />
+              Print / PDF
+            </button>
+
+            {/* ── COPY PARTS TO ANOTHER COMPONENT ── */}
+            <button
+              onClick={(e) => { e.stopPropagation(); setCopySourceId(compId); }}
+              disabled={parts.length === 0}
+              className="flex items-center gap-1 px-2 py-1 bg-fuchsia-500/20 text-fuchsia-300 rounded text-xs hover:bg-fuchsia-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={parts.length === 0
+                ? 'No parts on this component to copy'
+                : 'Copy these standalone parts onto another main component'}
+            >
+              <Copy className="w-3 h-3" />
+              Copy to Component
+            </button>
+
             {hasTemplate && (
               <button
                 onClick={(e) => { e.stopPropagation(); applyTemplateToComponent(compId, templateKey); }}
@@ -1373,6 +1598,7 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
               Add Part
             </button>
           </div>
+
         </div>
 
         {/* Add part form */}
@@ -2376,8 +2602,34 @@ const MainComponents: React.FC<MainComponentsProps> = ({ currentRole = 'Crew' })
         onImportParts={importParts}
       />
 
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {/* COPY PARTS TO ANOTHER COMPONENT */}
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      <CopyPartsModal
+        open={!!copySourceId}
+        onClose={() => setCopySourceId(null)}
+        source={copySource}
+        sourceParts={copySourceId ? getPartsForComponent(copySourceId) : []}
+        allComponents={exportableComponents}
+        allParts={componentParts}
+        onConfirm={handleCopyParts}
+      />
+
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {/* PRINT / PDF SHEET (hidden on screen, visible only when printing) */}
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {printComp && (
+        <PartsPrintSheet
+          key={printComp.id}
+          component={printComp}
+          parts={getPartsForComponent(printComp.id)}
+          wearThresholds={wearThresholds}
+          onDone={() => setPrintCompId(null)}
+        />
+      )}
 
     </section>
+
 
 
   );
